@@ -1,3 +1,4 @@
+pub mod settings;
 pub mod types;
 
 use tauri::menu::{Menu, MenuItem};

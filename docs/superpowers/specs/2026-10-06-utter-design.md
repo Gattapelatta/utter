@@ -219,7 +219,7 @@ Rust-ядро владеет всей системной логикой и со�
 | `pipeline/` | `run(job) -> JobResult`. Диктовка: transcribe → фильтр галлюцинаций → cleanup (если включён). Перевод: transcribe → фильтр → translate(style). При ошибке LLM-шага возвращает сырую расшифровку с флагом `degraded`. Промпты — в `pipeline/prompts/*.md`, подключаются через `include_str!`. | `providers` |
 | `output/` | `deliver(text, method) -> DeliveryOutcome { Pasted, Typed, CopiedOnly(reason) }`. Детали — §8.1. `macos.rs` (NSPasteboard + CGEvent), `windows.rs` (Clipboard Win32 + SendInput). | ОС |
 | `jobs/` | FIFO-очередь задач обработки; задачи обрабатываются параллельно, но результаты доставляются строго в порядке создания. | `pipeline`, `output` |
-| `settings/` | Типизированная структура настроек с версией схемы и миграциями, хранение в JSON (`tauri-plugin-store`), значения по умолчанию в одном месте. | — |
+| `settings/` | Типизированная структура настроек с версией схемы и миграциями, хранение в собственном serde-JSON с атомарной записью (temp + rename), значения по умолчанию в одном месте. | — |
 | `secrets/` | API-ключи в Keychain / Credential Manager через `keyring`. Ключи никогда не пишутся в лог и не отдаются в UI целиком (только маска). | `keyring` |
 | `history/` | Последние 50 записей в JSON-файле в app data; атомарная запись (temp + rename). | — |
 | `usage/` | Счётчики за текущую локальную дату, сброс при смене даты. | — |
@@ -236,7 +236,7 @@ Rust-ядро владеет всей системной логикой и со�
 
 ### 6.4 Плагины Tauri
 
-`tauri-plugin-store`, `tauri-plugin-autostart`, `tauri-plugin-updater`, `tauri-plugin-single-instance`, tray API ядра Tauri; на macOS — `tauri-nspanel`, `window-vibrancy` не используется (дизайн матовый). `macOSPrivateApi: true` для прозрачных окон.
+`tauri-plugin-autostart`, `tauri-plugin-updater`, `tauri-plugin-single-instance`, tray API ядра Tauri; на macOS — `tauri-nspanel`, `window-vibrancy` не используется (дизайн матовый). `macOSPrivateApi: true` для прозрачных окон.
 
 ### 6.5 Модели и промпты
 
