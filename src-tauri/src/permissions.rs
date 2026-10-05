@@ -38,13 +38,16 @@ mod imp {
             return false;
         };
         let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
-        let tx = std::sync::Mutex::new(Some(tx));
-        let block = block2::RcBlock::new(move |granted: objc2::runtime::Bool| {
-            if let Some(tx) = tx.lock().ok().and_then(|mut t| t.take()) {
-                let _ = tx.send(granted.as_bool());
-            }
-        });
-        unsafe { AVCaptureDevice::requestAccessForMediaType_completionHandler(audio, &block) };
+        {
+            // The block is dropped before awaiting so the future stays `Send`.
+            let tx = std::sync::Mutex::new(Some(tx));
+            let block = block2::RcBlock::new(move |granted: objc2::runtime::Bool| {
+                if let Some(tx) = tx.lock().ok().and_then(|mut t| t.take()) {
+                    let _ = tx.send(granted.as_bool());
+                }
+            });
+            unsafe { AVCaptureDevice::requestAccessForMediaType_completionHandler(audio, &block) };
+        }
         rx.await.unwrap_or(false)
     }
 

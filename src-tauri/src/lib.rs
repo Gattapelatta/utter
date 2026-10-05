@@ -45,12 +45,85 @@ pub fn debug_deliver(args: &[String]) -> Option<String> {
     Some(format!("{outcome:?}"))
 }
 
+struct LogGuard(#[allow(dead_code)] Option<tracing_appender::non_blocking::WorkerGuard>);
+
+fn init_core(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    use std::sync::Arc;
+
+    use app::commands::AppState;
+    use app::orchestrator::{Deps, Orchestrator, Shared};
+    use app::services::{HotkeyService, HttpProviders, SystemOutput, SystemPermissions};
+    use tauri::Emitter;
+
+    let data_dir = app.path().app_data_dir()?;
+    let log_dir = app.path().app_log_dir()?;
+    app.manage(LogGuard(app::diagnostics::init_logging(&log_dir)));
+    app::diagnostics::install_panic_hook();
+    tracing::info!("Utter {} starting", env!("CARGO_PKG_VERSION"));
+
+    let lang = sys_locale::get_locale();
+    let settings = settings::load(&data_dir.join("settings.json"), lang.as_deref());
+    let shared = Arc::new(Shared::new(settings.clone(), data_dir));
+    shared.remove_orphan_audio();
+
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let (level_tx, mut level_rx) = tokio::sync::watch::channel(0.0f32);
+    let recorder = Arc::new(recorder::Recorder::new(level_tx));
+    let secrets: Arc<dyn secrets::SecretStore> = Arc::new(secrets::KeychainStore::new());
+    let providers: Arc<dyn app::orchestrator::ProviderFactory> = Arc::new(HttpProviders);
+    let hotkeys = Arc::new(HotkeyService::new(settings.hotkeys.clone(), tx.clone()));
+
+    app::overlay::configure(app.handle());
+    let deps = Deps {
+        secrets: secrets.clone(),
+        audio: recorder,
+        providers: providers.clone(),
+        output: Arc::new(SystemOutput),
+        overlay: Arc::new(app::overlay::TauriOverlay { app: app.handle().clone() }),
+        permissions: Arc::new(SystemPermissions),
+        hotkeys: hotkeys.clone(),
+    };
+    let orchestrator = Orchestrator::new(deps, shared.clone(), tx.clone());
+    tauri::async_runtime::spawn(orchestrator.run(rx));
+
+    let handle = app.handle().clone();
+    tauri::async_runtime::spawn(async move {
+        while level_rx.changed().await.is_ok() {
+            let level = *level_rx.borrow_and_update();
+            let _ = handle.emit_to("overlay", "overlay://level", level);
+        }
+    });
+
+    let needs_setup = secrets.get(settings.provider).is_none() || !permissions::accessibility(false);
+    app.manage(AppState { shared, tx, secrets, hotkeys, providers, log_dir });
+    if needs_setup {
+        show_settings(app.handle());
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_settings(app);
         }))
+        .invoke_handler(tauri::generate_handler![
+            app::commands::get_settings,
+            app::commands::save_settings,
+            app::commands::set_api_key,
+            app::commands::api_key_mask,
+            app::commands::verify_key,
+            app::commands::capture_key,
+            app::commands::permissions_status,
+            app::commands::request_microphone,
+            app::commands::open_accessibility_settings,
+            app::commands::history_list,
+            app::commands::history_retry,
+            app::commands::usage_today,
+            app::commands::copy_diagnostics,
+            app::commands::overlay_action,
+        ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
@@ -82,6 +155,7 @@ pub fn run() {
                     }
                 });
             }
+            init_core(app)?;
             Ok(())
         })
         .run(tauri::generate_context!())

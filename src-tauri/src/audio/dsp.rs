@@ -106,7 +106,7 @@ pub fn voiced_range(samples: &[f32], rate: u32) -> Option<Range<usize>> {
     let pad = (rate * PAD_MS / 1000) as usize;
     let voiced = |(_, f): &(usize, &[f32])| rms(f) > VOICE_RMS;
     let first = samples.chunks(frame).enumerate().find(voiced)?.0;
-    let last = samples.chunks(frame).enumerate().filter(voiced).last()?.0;
+    let last = samples.chunks(frame).enumerate().rev().find(voiced)?.0;
     let start = (first * frame).saturating_sub(pad);
     let end = ((last + 1) * frame + pad).min(samples.len());
     Some(start..end)
