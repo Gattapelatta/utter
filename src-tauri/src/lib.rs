@@ -1,5 +1,6 @@
 pub mod audio;
 pub mod controller;
+pub mod providers;
 pub mod secrets;
 pub mod settings;
 pub mod types;
