@@ -1,5 +1,6 @@
 pub mod audio;
 pub mod controller;
+pub mod jobs;
 pub mod pipeline;
 pub mod providers;
 pub mod secrets;
