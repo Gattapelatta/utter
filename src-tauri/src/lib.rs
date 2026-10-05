@@ -1,3 +1,4 @@
+pub mod controller;
 pub mod secrets;
 pub mod settings;
 pub mod types;
