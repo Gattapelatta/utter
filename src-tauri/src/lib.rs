@@ -1,3 +1,4 @@
+pub mod audio;
 pub mod controller;
 pub mod secrets;
 pub mod settings;
