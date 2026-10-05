@@ -1,5 +1,7 @@
 pub mod audio;
+pub mod app;
 pub mod controller;
+pub mod history;
 pub mod hotkey;
 pub mod jobs;
 pub mod output;
@@ -9,6 +11,7 @@ pub mod providers;
 pub mod recorder;
 pub mod secrets;
 pub mod settings;
+pub mod usage;
 pub mod types;
 
 use tauri::menu::{Menu, MenuItem};

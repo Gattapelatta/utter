@@ -32,6 +32,10 @@ rubato = "0.16"
 hound = "3"
 arboard = { version = "3", default-features = false }
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+tracing-appender = "0.2"
+chrono = { version = "0.4", features = ["serde", "clock"] }
+regex = "1"
 keyring = { version = "3", features = ["apple-native", "windows-native"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
