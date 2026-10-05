@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod controller;
 pub mod jobs;
+pub mod output;
 pub mod pipeline;
 pub mod providers;
 pub mod secrets;
@@ -16,6 +17,26 @@ fn show_settings(app: &AppHandle) {
         let _ = w.show();
         let _ = w.set_focus();
     }
+}
+
+/// Debug-only: `utter --debug-deliver <text> --method paste|type --delay <secs>`
+/// delivers `text` to the focused app and exits. Used by `scripts/paste-matrix.sh`.
+#[cfg(all(debug_assertions, target_os = "macos"))]
+pub fn debug_deliver(args: &[String]) -> Option<String> {
+    let pos = args.iter().position(|a| a == "--debug-deliver")?;
+    let text = args.get(pos + 1)?.clone();
+    let value = |flag: &str| args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1));
+    let method = match value("--method").map(String::as_str) {
+        Some("type") => settings::InsertMethod::Type,
+        _ => settings::InsertMethod::Paste,
+    };
+    let delay: f64 = value("--delay").and_then(|d| d.parse().ok()).unwrap_or(0.0);
+    std::thread::sleep(std::time::Duration::from_secs_f64(delay));
+    let outcome = match output::clipboard::ArboardClipboard::new() {
+        Ok(mut cb) => output::deliver(&text, method, &mut cb, &output::macos::MacInput),
+        Err(e) => return Some(format!("clipboard unavailable: {e}")),
+    };
+    Some(format!("{outcome:?}"))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
