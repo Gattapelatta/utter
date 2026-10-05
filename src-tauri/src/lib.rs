@@ -1,5 +1,6 @@
 pub mod audio;
 pub mod controller;
+pub mod hotkey;
 pub mod jobs;
 pub mod output;
 pub mod pipeline;
