@@ -30,6 +30,9 @@ impl Provider for GeminiClient {
     async fn verify_key(&self) -> Result<(), ProviderError> {
         GeminiClient::verify_key(self).await
     }
+    fn direct(&self) -> Option<&dyn crate::providers::AudioLlm> {
+        Some(self)
+    }
 }
 
 pub struct HttpProviders;

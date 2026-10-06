@@ -15,7 +15,7 @@ use crate::jobs::{JobIds, OrderedDelivery};
 use crate::output::{CopyReason, DeliveryOutcome};
 use crate::permissions::PermStatus;
 use crate::pipeline::{self, JobError, JobOutput, PipelineOptions};
-use crate::providers::{ProviderError, SpeechToText, TextModel};
+use crate::providers::{AudioLlm, ProviderError, SpeechToText, TextModel};
 use crate::recorder::AudioSource;
 use crate::secrets::SecretStore;
 use crate::settings::{Hotkeys, InsertMethod, ProviderKind, Settings, TranslateStyle};
@@ -78,6 +78,10 @@ pub trait HotkeyControl: Send + Sync {
 pub trait Provider: SpeechToText + TextModel {
     async fn prewarm(&self);
     async fn verify_key(&self) -> Result<(), ProviderError>;
+    /// A one-request audio→text model, when the provider has one.
+    fn direct(&self) -> Option<&dyn AudioLlm> {
+        None
+    }
 }
 
 pub trait ProviderFactory: Send + Sync {
@@ -139,6 +143,7 @@ impl Shared {
 
 pub struct JobResult {
     mode: Mode,
+    submitted: Instant,
     /// Set when this job retries an existing history entry.
     history_id: Option<u64>,
     audio_path: Option<PathBuf>,
@@ -420,11 +425,15 @@ impl Orchestrator {
             style: s.translate_style,
         };
         let created_at_ms = now_ms();
+        let submitted = Instant::now();
         tokio::spawn(async move {
             let (wav, secs, audio_path) = match audio_in {
                 AudioInput::Wav { bytes, secs } => (Some(bytes), secs, None),
                 AudioInput::Captured(c) => {
-                    match tokio::task::spawn_blocking(move || audio::prepare(c)).await.ok().flatten() {
+                    let t_prep = Instant::now();
+                    let prepared = tokio::task::spawn_blocking(move || audio::prepare(c)).await.ok().flatten();
+                    tracing::info!(prepare_ms = t_prep.elapsed().as_millis() as u64, "timing: audio prepare");
+                    match prepared {
                         Some(p) => {
                             let path = audio_dir.join(format!("{id}.wav"));
                             let saved = std::fs::create_dir_all(&audio_dir)
@@ -439,9 +448,14 @@ impl Orchestrator {
             let outcome = match (wav, provider) {
                 (None, _) => Err(JobError::NothingHeard),
                 (Some(_), None) => Err(JobError::Provider(ProviderError::Unauthorized)),
-                (Some(wav), Some(p)) => pipeline::run(mode, wav, secs, &opts, p.as_ref(), p.as_ref()).await,
+                (Some(wav), Some(p)) => match p.direct() {
+                    Some(direct) if pipeline::audio_system_prompt(mode, &opts, secs).is_some() => {
+                        pipeline::run_direct(mode, wav, secs, &opts, direct, p.as_ref()).await
+                    }
+                    _ => pipeline::run(mode, wav, secs, &opts, p.as_ref(), p.as_ref()).await,
+                },
             };
-            let result = JobResult { mode, history_id, audio_path, audio_secs: secs, created_at_ms, outcome };
+            let result = JobResult { mode, submitted, history_id, audio_path, audio_secs: secs, created_at_ms, outcome };
             let _ = tx.send(Input::JobDone(id, Box::new(result)));
         });
     }
@@ -467,9 +481,15 @@ impl Orchestrator {
                 let text = out.text.clone();
                 let method = s.insert_method;
                 let output = self.deps.output.clone();
+                let t_deliver = Instant::now();
                 let delivered = tokio::task::spawn_blocking(move || output.deliver(&text, method))
                     .await
                     .unwrap_or(DeliveryOutcome::CopiedOnly(CopyReason::InputFailed));
+                tracing::info!(
+                    deliver_ms = t_deliver.elapsed().as_millis() as u64,
+                    total_ms = r.submitted.elapsed().as_millis() as u64,
+                    "timing: delivered (release → text inserted)"
+                );
                 let status = if out.degraded { EntryStatus::Degraded } else { EntryStatus::Done };
                 let state = OverlayState::Done { outcome: outcome_name(delivered).into(), degraded: out.degraded };
                 (status, out.text, out.raw, false, state, DONE_VISIBLE)
@@ -592,10 +612,20 @@ mod tests {
         slow: Result<String, ProviderError>,
         fast: Result<String, ProviderError>,
         stt_calls: AtomicUsize,
+        /// When set, the provider offers a one-request audio→text path returning this.
+        direct_reply: Option<String>,
+        direct_calls: AtomicUsize,
     }
     impl FakeProvider {
         fn new(slow: Result<String, ProviderError>, fast: Result<String, ProviderError>) -> Self {
-            Self { slow, fast, stt_calls: AtomicUsize::new(0) }
+            Self { slow, fast, stt_calls: AtomicUsize::new(0), direct_reply: None, direct_calls: AtomicUsize::new(0) }
+        }
+    }
+    #[async_trait::async_trait]
+    impl AudioLlm for FakeProvider {
+        async fn complete_audio(&self, _: &str, _: Vec<u8>, _: Option<String>, _: f32) -> Result<Completion, ProviderError> {
+            self.direct_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Completion { text: self.direct_reply.clone().unwrap_or_default(), total_tokens: 5 })
         }
     }
     #[async_trait::async_trait]
@@ -622,6 +652,9 @@ mod tests {
         async fn prewarm(&self) {}
         async fn verify_key(&self) -> Result<(), ProviderError> {
             Ok(())
+        }
+        fn direct(&self) -> Option<&dyn AudioLlm> {
+            self.direct_reply.as_ref().map(|_| self as &dyn AudioLlm)
         }
     }
     struct FakeFactory(Arc<FakeProvider>);
@@ -842,5 +875,18 @@ mod tests {
         assert!(!audio.exists());
         let h = r.shared.history.lock().unwrap();
         assert_eq!(h.get(id).map(|e| e.text.as_str()), Some("снова"));
+    }
+
+    #[tokio::test]
+    async fn direct_provider_makes_one_request() {
+        let mut p = FakeProvider::new(Ok("x".into()), Ok("raw".into()));
+        p.direct_reply = Some("Hello there.".into());
+        let mut r = rig(p, true);
+        r.shared.settings.lock().unwrap().cleanup = true;
+        r.record(Mode::Translate, speech(1.0), Instant::now(), 1).await;
+        r.settle(1).await;
+        assert_eq!(*r.out.0.lock().unwrap(), vec!["Hello there.".to_string()]);
+        assert_eq!(r.provider.direct_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(r.provider.stt_calls.load(Ordering::SeqCst), 0);
     }
 }

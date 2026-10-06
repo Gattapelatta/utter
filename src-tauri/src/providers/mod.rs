@@ -2,6 +2,8 @@ mod client;
 pub mod defaults;
 mod error;
 mod gemini;
+#[cfg(test)]
+mod bench;
 
 pub use client::{parse_reset, request_timeout, OpenAiCompatible};
 pub use error::ProviderError;
@@ -37,4 +39,17 @@ pub trait SpeechToText: Send + Sync {
 #[async_trait::async_trait]
 pub trait TextModel: Send + Sync {
     async fn complete(&self, system: &str, user: &str) -> Result<Completion, ProviderError>;
+}
+
+/// A model that turns audio straight into final text in one request
+/// (transcription plus cleanup or translation).
+#[async_trait::async_trait]
+pub trait AudioLlm: Send + Sync {
+    async fn complete_audio(
+        &self,
+        system: &str,
+        wav: Vec<u8>,
+        language: Option<String>,
+        audio_secs: f32,
+    ) -> Result<Completion, ProviderError>;
 }

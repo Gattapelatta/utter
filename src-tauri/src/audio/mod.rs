@@ -59,4 +59,13 @@ mod tests {
         assert_eq!(r.spec().sample_rate, 16_000);
         assert_eq!(r.spec().channels, 1);
     }
+
+    #[test]
+    #[ignore = "benchmark: prints prepare() time for 10 s of 48 kHz stereo"]
+    fn bench_prepare_10s() {
+        let c = Captured { samples: stereo_speech(48_000).repeat(3), rate: 48_000, channels: 2 };
+        let t = std::time::Instant::now();
+        let p = prepare(c).unwrap();
+        println!("prepare 12 s @48k stereo: {} ms (audio {:.1} s)", t.elapsed().as_millis(), p.audio_secs);
+    }
 }

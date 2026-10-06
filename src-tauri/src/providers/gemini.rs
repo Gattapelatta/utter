@@ -7,7 +7,7 @@ use reqwest::{Response, StatusCode};
 use serde_json::{json, Value};
 
 use super::client::{map_reqwest, parse_reset, request_timeout};
-use super::{Completion, ProviderConfig, ProviderError, SpeechToText, TextModel};
+use super::{AudioLlm, Completion, ProviderConfig, ProviderError, SpeechToText, TextModel};
 
 const RETRY_DELAY: Duration = Duration::from_secs(1);
 
@@ -191,13 +191,44 @@ impl TextModel for GeminiClient {
             "model": self.cfg.text_model,
             "system_instruction": system,
             "input": user,
-            "generation_config": {"temperature": 0.2},
+            "generation_config": {"temperature": 0.2, "thinking_level": "minimal"},
             "store": false,
         });
         let v = self.interact(&body, self.timeout(0.0)).await?;
-        let text = output_text(&v).ok_or_else(|| ProviderError::BadResponse("no output".into()))?;
-        let total_tokens = v.pointer("/usage/total_tokens").and_then(Value::as_u64).unwrap_or(0) as u32;
-        Ok(Completion { text, total_tokens })
+        completion(&v)
+    }
+}
+
+fn completion(v: &Value) -> Result<Completion, ProviderError> {
+    let text = output_text(v).ok_or_else(|| ProviderError::BadResponse("no output".into()))?;
+    let total_tokens = v.pointer("/usage/total_tokens").and_then(Value::as_u64).unwrap_or(0) as u32;
+    Ok(Completion { text, total_tokens })
+}
+
+#[async_trait::async_trait]
+impl AudioLlm for GeminiClient {
+    async fn complete_audio(
+        &self,
+        system: &str,
+        wav: Vec<u8>,
+        language: Option<String>,
+        audio_secs: f32,
+    ) -> Result<Completion, ProviderError> {
+        let data = base64::engine::general_purpose::STANDARD.encode(&wav);
+        let hint = match language.as_deref().and_then(gemini_language_code) {
+            Some(locale) => format!("Process the attached audio. The speaker most likely uses {locale}."),
+            None => "Process the attached audio.".to_string(),
+        };
+        let body = json!({
+            "model": self.cfg.text_model,
+            "system_instruction": system,
+            "input": [{"type": "text", "text": hint}, {"type": "audio", "mime_type": "audio/wav", "data": data}],
+            // Minimal thinking: measured ~1.3 s vs ~2.8 s with the default level.
+            "generation_config": {"temperature": 0.2, "thinking_level": "minimal"},
+            "store": false,
+        });
+        let v = self.interact(&body, self.timeout(audio_secs)).await?;
+        completion(&v)
     }
 }
 
@@ -353,5 +384,39 @@ mod tests {
         assert_eq!(gemini_language_code("en"), Some("en-US"));
         assert_eq!(gemini_language_code("uk"), Some("uk-UA"));
         assert_eq!(gemini_language_code("xx"), None);
+    }
+
+    #[tokio::test]
+    async fn audio_complete_sends_system_audio_and_minimal_thinking() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/interactions"))
+            .and(body_partial_json(serde_json::json!({
+                "model": "llm-x", "system_instruction": "sys", "store": false,
+                "generation_config": {"thinking_level": "minimal"}
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "steps": [{"type": "thought", "signature": "abc"},
+                          {"type": "model_output", "content": [{"type": "text", "text": "Готово."}]}],
+                "usage": {"total_tokens": 40}
+            })))
+            .mount(&server)
+            .await;
+        let c = crate::providers::AudioLlm::complete_audio(&client(&server), "sys", b"RIFF".to_vec(), None, 2.0).await.unwrap();
+        assert_eq!((c.text.as_str(), c.total_tokens), ("Готово.", 40));
+        let body = String::from_utf8_lossy(&server.received_requests().await.unwrap()[0].body).to_string();
+        assert!(body.contains("\"type\":\"audio\"") && body.contains("UklGRg=="), "{body}");
+    }
+
+    #[tokio::test]
+    async fn complete_uses_minimal_thinking() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(body_partial_json(serde_json::json!({"generation_config": {"thinking_level": "minimal"}})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"output_text": "ok"})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        client(&server).complete("s", "u").await.unwrap();
     }
 }

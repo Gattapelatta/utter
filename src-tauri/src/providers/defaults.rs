@@ -5,7 +5,8 @@ use crate::settings::ProviderKind;
 
 pub const GEMINI_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
 pub const GEMINI_STT_MODEL: &str = "gemini-3.5-transcribe";
-pub const GEMINI_TEXT_MODEL: &str = "gemini-3.5-flash";
+/// Flash-Lite: ~1.3 s audio→text in one request and 15 RPM on the free tier (Flash: 5 RPM).
+pub const GEMINI_TEXT_MODEL: &str = "gemini-3.5-flash-lite";
 
 pub const GROQ_BASE_URL: &str = "https://api.groq.com/openai/v1";
 pub const GROQ_STT_MODEL: &str = "whisper-large-v3-turbo";
