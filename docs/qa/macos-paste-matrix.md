@@ -7,7 +7,7 @@ Result: ✅ inserted correctly · ⚠️ copied only (expected for the case) · 
 
 | Layout | Paste | Type | Date | Notes |
 |---|---|---|---|---|
-| EN | | | | |
+| EN | 5/5 ✅ | 5/5 ✅ | 2026-10-07 | two consecutive runs; latin, Cyrillic, emoji, multi-line, long text |
 | RU | | | | |
 
 ## Manual
@@ -43,9 +43,11 @@ Result: ✅ inserted correctly · ⚠️ copied only (expected for the case) · 
 
 ## Budgets (spec §8.4)
 
+Measured 2026-10-07 on the user's Mac (release build, Gemini one-request path, app log `timing:` lines).
+
 | Metric | Target | Measured |
 |---|---|---|
 | KeyDown → overlay visible | < 50 ms | |
 | KeyDown → first sample | < 100 ms | |
-| Release → inserted (10 s speech, Groq) | ≤ 1.5 s p50 | |
+| Release → inserted (2–5 s speech, Gemini) | ≤ 1.5 s p50 | 1.33–1.51 s (3 runs); local prepare 3–7 ms, deliver 2–8 ms |
 | Idle CPU / RAM | ~0% / < 80 MB | |

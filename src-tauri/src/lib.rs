@@ -42,6 +42,9 @@ pub fn debug_deliver(args: &[String]) -> Option<String> {
         Ok(mut cb) => output::deliver(&text, method, &mut cb, &output::macos::MacInput),
         Err(e) => return Some(format!("clipboard unavailable: {e}")),
     };
+    // Synthetic key events can be dropped if the posting process exits at once
+    // (measured: 2/5 pastes lost without this pause, 10/10 with it).
+    std::thread::sleep(std::time::Duration::from_millis(500));
     Some(format!("{outcome:?}"))
 }
 

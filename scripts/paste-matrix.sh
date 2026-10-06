@@ -26,15 +26,17 @@ for method in paste type; do
     osascript -e 'tell application "TextEdit" to activate' \
               -e 'tell application "TextEdit" to make new document' >/dev/null
     sleep 0.5
-    open -W -n "$APP" --args --debug-deliver "$text" --method "$method" --delay 1
+    OUT=$(mktemp)
+    open -W -n "$APP" --args --debug-deliver "$text" --method "$method" --delay 1 --out "$OUT"
+    outcome=$(cat "$OUT"); rm -f "$OUT"
     sleep 0.5
     got=$(osascript -e 'tell application "TextEdit" to get text of document 1')
     # Shift+Return in TextEdit inserts U+2028 LINE SEPARATOR; treat it as a newline.
     got=$(printf '%s' "$got" | perl -CS -pe 's/\x{2028}/\n/g')
     if [ "$got" == "$text" ]; then
-      echo "PASS  [$method] ${text:0:40}"; pass=$((pass+1))
+      echo "PASS  [$method] ($outcome) ${text:0:40}"; pass=$((pass+1))
     else
-      echo "FAIL  [$method] expected: ${text:0:60}"; echo "             got: ${got:0:60}"; fail=$((fail+1))
+      echo "FAIL  [$method] ($outcome) expected: ${text:0:60}"; echo "             got: ${got:0:60}"; fail=$((fail+1))
     fi
     osascript -e 'tell application "TextEdit" to close document 1 saving no' >/dev/null
   done
