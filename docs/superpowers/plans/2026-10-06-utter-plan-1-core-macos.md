@@ -17,6 +17,7 @@
 - macOS 13+; приложение не показывается в Dock (`ActivationPolicy::Accessory`); `macOSPrivateApi: true`.
 - Порог записи **0,3 с**; лимит **10 мин**; предупреждение за **30 с** до лимита.
 - Запрос к провайдеру: таймаут **15 с**, для аудио > 2 мин — **15 с + 5 с за каждую минуту**; на 5xx — **один** повтор через **1 с**.
+- Gemini (по умолчанию, Task 12b): base `https://generativelanguage.googleapis.com/v1beta`, STT `gemini-3.5-transcribe`, текст `gemini-3.5-flash`.
 - Groq: base URL `https://api.groq.com/openai/v1`, STT `whisper-large-v3-turbo`, текст `openai/gpt-oss-120b`. OpenAI: `https://api.openai.com/v1`, STT `gpt-4o-mini-transcribe`, текст `gpt-4o-mini`. Все — только в `providers/defaults.rs`.
 - STT: `temperature=0`, `language` передаётся, только если не «Авто».
 - Абзацы: только если настройка включена **и** запись > **30 с**; разделитель `\n\n`.
@@ -566,6 +567,24 @@ UI (простая версия; полировка — План 2): `Pill.tsx` 
 - [ ] **Step 6: Commit + push** (`feat: end-to-end dictation and translation on macOS`).
 
 ---
+
+### Task 12b: Провайдер Google Gemini (по умолчанию)
+
+Добавлена 2026-10-06 по решению пользователя: регистрация Groq зацикливается, ключ Gemini получается в один клик через Google-аккаунт.
+
+**Files:**
+- Create: `src-tauri/src/providers/gemini.rs`
+- Modify: `src-tauri/src/settings.rs` (`ProviderKind::Gemini`, по умолчанию), `src-tauri/src/secrets.rs` (account `gemini`), `src-tauri/src/providers/{mod.rs,defaults.rs,client.rs}`, `src-tauri/src/app/services.rs` (фабрика), `src/lib/types.ts`, `src/settings/DevSettings.tsx`
+
+**Interfaces:**
+- Produces: `ProviderKind::Gemini`; `pub struct GeminiClient` — `new(cfg: ProviderConfig)`, `with_timeout_override`, `with_retry_delay`, `prewarm()`, `verify_key()`, реализует `SpeechToText`, `TextModel`, `Provider`; `pub fn gemini_language_code(code: &str) -> Option<&'static str>` (`"ru"` → `"ru-RU"`).
+- Запросы: `POST {base}/interactions`, заголовок `x-goog-api-key`; STT — `{"model", "input":[{"type":"audio","data":<base64>,"mime_type":"audio/wav"}], "generation_config":{"transcription_config":{"language_codes":[..]}}, "store":false}`; текст — `{"model", "system_instruction", "input":<user>, "generation_config":{"temperature":0.2}, "store":false}`. Ответ: `output_text`, иначе склейка `steps[].content[].text`; токены — `usage.total_tokens`. `verify_key` — `GET {base}/models`.
+- Ошибки: 401/403 и 400 с текстом «API key» → `Unauthorized`; 429 → `RateLimited` (`retry-after` или `retryDelay` вида `"30s"` в теле); 5xx → один повтор.
+
+- [ ] **Step 1: Тесты** (`wiremock`): `transcribe_sends_inline_audio_and_language`, `transcribe_reads_steps_when_no_output_text`, `complete_sends_system_instruction_and_reads_usage`, `invalid_key_400_maps_unauthorized`, `rate_limit_reads_retry_delay_from_body`, `server_error_retries_once`, `verify_key_uses_models_endpoint`, `language_code_mapping`; в `settings` — `defaults_match_spec` ожидает `ProviderKind::Gemini`.
+- [ ] **Step 2:** FAIL. **Step 3:** реализовать. **Step 4:** PASS.
+- [ ] **Step 5: Живая проверка с ключом пользователя:** «Проверить» → ✓; диктовка RU и перевод. Если `gemini-3.5-transcribe` не принимает inline-аудио — сравнить с распознаванием через `gemini-3.5-flash` (inline) и выбрать модель; решение — в ledger и `defaults.rs`.
+- [ ] **Step 6: Commit + push** (`feat(core): Google Gemini provider as default`).
 
 ### Task 13: Матрица вставки, стресс и бюджеты на macOS
 
