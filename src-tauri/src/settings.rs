@@ -26,6 +26,7 @@ pub enum TranslateStyle {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ProviderKind {
+    Gemini,
     Groq,
     OpenAi,
 }
@@ -95,7 +96,7 @@ impl Settings {
             theme: Theme::Dark,
             ui_language: UiLanguage::Auto,
             translate_style: TranslateStyle::Business,
-            provider: ProviderKind::Groq,
+            provider: ProviderKind::Gemini,
             hotkeys: default_hotkeys(),
             history_enabled: true,
             onboarding_done: false,
@@ -197,7 +198,7 @@ mod tests {
         assert_eq!(s.theme, Theme::Dark);
         assert_eq!(s.ui_language, UiLanguage::Auto);
         assert_eq!(s.translate_style, TranslateStyle::Business);
-        assert_eq!(s.provider, ProviderKind::Groq);
+        assert_eq!(s.provider, ProviderKind::Gemini);
         assert_eq!(s.hotkeys.dictation, KeyId::RightAlt);
         #[cfg(target_os = "macos")]
         assert_eq!(s.hotkeys.translate, KeyId::RightMeta);

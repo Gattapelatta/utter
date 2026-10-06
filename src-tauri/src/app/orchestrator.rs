@@ -696,7 +696,8 @@ mod tests {
         let shared = Arc::new(Shared::new(settings, dir.path().to_path_buf()));
         let secrets = Arc::new(MemoryStore::default());
         if with_key {
-            secrets.set(ProviderKind::Groq, "gsk_test").unwrap();
+            let provider = shared.settings().provider;
+            secrets.set(provider, "test-key").unwrap();
         }
         let audio = Arc::new(FakeAudio::default());
         let provider = Arc::new(provider);

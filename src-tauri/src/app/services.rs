@@ -8,7 +8,7 @@ use super::orchestrator::{Deliverer, HotkeyControl, Input, PermissionCheck, Prov
 use crate::hotkey::{self, HotkeyHandle};
 use crate::output::{self, DeliveryOutcome};
 use crate::permissions::{self, PermStatus};
-use crate::providers::{defaults, OpenAiCompatible, ProviderError};
+use crate::providers::{defaults, GeminiClient, OpenAiCompatible, ProviderError};
 use crate::settings::{Hotkeys, InsertMethod, ProviderKind};
 use crate::types::KeyId;
 
@@ -22,11 +22,25 @@ impl Provider for OpenAiCompatible {
     }
 }
 
+#[async_trait::async_trait]
+impl Provider for GeminiClient {
+    async fn prewarm(&self) {
+        GeminiClient::prewarm(self).await
+    }
+    async fn verify_key(&self) -> Result<(), ProviderError> {
+        GeminiClient::verify_key(self).await
+    }
+}
+
 pub struct HttpProviders;
 
 impl ProviderFactory for HttpProviders {
     fn make(&self, kind: ProviderKind, key: String) -> Arc<dyn Provider> {
-        Arc::new(OpenAiCompatible::new(defaults::config_for(kind, key)))
+        let cfg = defaults::config_for(kind, key);
+        match kind {
+            ProviderKind::Gemini => Arc::new(GeminiClient::new(cfg)),
+            ProviderKind::Groq | ProviderKind::OpenAi => Arc::new(OpenAiCompatible::new(cfg)),
+        }
     }
 }
 

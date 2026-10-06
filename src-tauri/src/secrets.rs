@@ -20,6 +20,7 @@ pub trait SecretStore: Send + Sync {
 
 fn account(provider: ProviderKind) -> &'static str {
     match provider {
+        ProviderKind::Gemini => "gemini",
         ProviderKind::Groq => "groq",
         ProviderKind::OpenAi => "openai",
     }

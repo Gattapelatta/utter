@@ -1,9 +1,11 @@
 mod client;
 pub mod defaults;
 mod error;
+mod gemini;
 
 pub use client::{parse_reset, request_timeout, OpenAiCompatible};
 pub use error::ProviderError;
+pub use gemini::{gemini_language_code, GeminiClient};
 
 use crate::settings::ProviderKind;
 

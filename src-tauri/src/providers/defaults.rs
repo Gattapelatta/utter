@@ -3,6 +3,10 @@
 use super::ProviderConfig;
 use crate::settings::ProviderKind;
 
+pub const GEMINI_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
+pub const GEMINI_STT_MODEL: &str = "gemini-3.5-transcribe";
+pub const GEMINI_TEXT_MODEL: &str = "gemini-3.5-flash";
+
 pub const GROQ_BASE_URL: &str = "https://api.groq.com/openai/v1";
 pub const GROQ_STT_MODEL: &str = "whisper-large-v3-turbo";
 pub const GROQ_TEXT_MODEL: &str = "openai/gpt-oss-120b";
@@ -13,6 +17,7 @@ pub const OPENAI_TEXT_MODEL: &str = "gpt-4o-mini";
 
 pub fn config_for(kind: ProviderKind, api_key: String) -> ProviderConfig {
     let (base, stt, text) = match kind {
+        ProviderKind::Gemini => (GEMINI_BASE_URL, GEMINI_STT_MODEL, GEMINI_TEXT_MODEL),
         ProviderKind::Groq => (GROQ_BASE_URL, GROQ_STT_MODEL, GROQ_TEXT_MODEL),
         ProviderKind::OpenAi => (OPENAI_BASE_URL, OPENAI_STT_MODEL, OPENAI_TEXT_MODEL),
     };

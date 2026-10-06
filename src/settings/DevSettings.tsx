@@ -119,6 +119,7 @@ export function DevSettings() {
         <h2>Провайдер</h2>
         <div className="row">
           <select value={s.provider} onChange={(e) => update({ provider: e.target.value as ProviderKind })}>
+            <option value="Gemini">Google Gemini (бесплатно, вход через Google)</option>
             <option value="Groq">Groq (бесплатно)</option>
             <option value="OpenAi">OpenAI</option>
           </select>
@@ -131,7 +132,9 @@ export function DevSettings() {
           <span>{verify}</span>
         </div>
         <p className="muted">
-          Бесплатный ключ Groq: console.groq.com → API Keys → Create API Key.
+          {s.provider === "Gemini" && "Бесплатный ключ: aistudio.google.com/apikey → войди Google-аккаунтом → «Create API key»."}
+          {s.provider === "Groq" && "Бесплатный ключ: console.groq.com → API Keys → Create API Key."}
+          {s.provider === "OpenAi" && "Ключ: platform.openai.com → API keys (оплата по факту, не подписка ChatGPT)."}
         </p>
       </section>
 

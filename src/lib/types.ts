@@ -4,7 +4,7 @@ export type Mode = "Dictation" | "Translate";
 export type TranslateStyle = "Business" | "Casual";
 export type RecordMode = "Hold" | "Toggle";
 export type InsertMethod = "Paste" | "Type";
-export type ProviderKind = "Groq" | "OpenAi";
+export type ProviderKind = "Gemini" | "Groq" | "OpenAi";
 export type Theme = "Dark" | "Light" | "System";
 export type UiLanguage = "Auto" | "Ru" | "En";
 

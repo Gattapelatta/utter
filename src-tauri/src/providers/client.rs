@@ -173,7 +173,7 @@ fn retry_after(headers: &HeaderMap) -> Option<Duration> {
         .find_map(|name| headers.get(*name)?.to_str().ok().and_then(parse_reset))
 }
 
-fn map_reqwest(e: reqwest::Error) -> ProviderError {
+pub(super) fn map_reqwest(e: reqwest::Error) -> ProviderError {
     if e.is_timeout() {
         ProviderError::Timeout
     } else if e.is_decode() || e.is_body() {
