@@ -1,0 +1,92 @@
+<!doctype html>
+<!-- Approved 2026-10-08: reference prototype of the «Капля» recording pill (spec §4.2, §5.4).
+     The app implementation must match its shapes, springs and timings. Open in a browser. -->
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Капля — эталон</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@600&display=swap">
+<style>
+body{margin:0;background:#3a4256;font-family:-apple-system,system-ui,sans-serif;color:#fff;padding:24px}
+button{font:inherit;padding:6px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.3);background:rgba(255,255,255,.08);color:#fff;cursor:pointer}
+.isl{position:relative;width:360px;height:104px;background:#000;border-radius:0 0 40px 40px;margin:0 auto}
+.row{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:44px}
+.tm{font-family:'Manrope',sans-serif;font-weight:600;color:#e6e8ea;font-size:21px;line-height:1;font-variant-numeric:tabular-nums;min-width:48px}
+.big{background:#000;border-radius:12px;height:250px;display:flex;align-items:center;justify-content:center;margin-top:12px}
+</style>
+</head>
+<body>
+<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+<button id="rec">Запись</button><button id="stop">Стоп → готово</button><button id="err">Стоп → ошибка</button><button id="mode">Режим: диктовка</button>
+</div>
+<div class="isl"><div class="row"><svg id="s1" viewBox="13 14 74 76" width="58" height="60" style="overflow:visible"></svg><span class="tm" id="tm">0:00</span></div></div>
+<div class="big"><svg id="s2" viewBox="-15 -16 130 116" width="280" height="250" style="overflow:visible"></svg></div>
+<script>
+const BODY='M50 14 C74 14 87 36 87 58 C87 77 71 90 50 90 C29 90 13 77 13 58 C13 36 26 14 50 14Z';
+const EYES=[[38,55],[62,55]],RX=7.6,RY=11.5,NR=3;let uid=0;
+const STAR='M0 -1 L.22 -.22 L1 0 L.22 .22 L0 1 L-.22 .22 L-1 0 L-.22 -.22Z';
+const CLOUD='M-12 4 C-16 4 -16 -3 -11 -3 C-11 -9 -3 -10 -1 -5 C1 -10 10 -9 10 -3 C15 -3 15 4 11 4Z';
+const CL=[[34,6,.62,0,-1],[54,-3,.9,.22,1],[73,5,.55,.44,-1]];
+function mk(svg){const id='g'+(uid++);let rings='';for(let i=0;i<NR;i++)rings+=`<circle class="ring" cx="50" cy="54" fill="none" stroke-width="1.4" opacity="0"/>`;
+ svg.innerHTML=`<defs><radialGradient id="${id}" cx="50%" cy="50%" r="50%"><stop offset="0" stop-opacity=".55"/><stop offset=".45" stop-opacity=".16"/><stop offset="1" stop-opacity="0"/></radialGradient></defs>
+ <g>${rings}</g><g class="orbB">${[0,1,2,3,4,5,6].map(()=>`<circle fill="#fff" opacity="0"/>`).join('')}</g>
+ <g class="a"><circle class="glow" cx="50" cy="55" r="58" fill="url(#${id})"/><path d="${BODY}" fill="#fff"/><g class="e"><path class="l" fill="#000" stroke="#000" stroke-width="1.6" stroke-linejoin="round"/><path class="r" fill="#000" stroke="#000" stroke-width="1.6" stroke-linejoin="round"/></g></g>
+ <g class="orbF">${[0,1,2,3,4,5,6].map(()=>`<circle fill="#fff" opacity="0"/>`).join('')}</g>
+ <g class="glints">${[0,1,2].map(()=>`<path d="${STAR}" fill="#fff" opacity="0"/>`).join('')}</g>
+ <g class="clouds">${CL.map((c,i)=>`<g opacity="0"><path d="${CLOUD}" fill="#9aa3ad"/>${i===1?'<line class="dr" x1="-4" y1="6" x2="-4.5" y2="9" stroke="#9aa3ad" stroke-width="1.3" stroke-linecap="round"/><line class="dr" x1="4" y1="6" x2="3.5" y2="9" stroke="#9aa3ad" stroke-width="1.3" stroke-linecap="round"/>':''}</g>`).join('')}</g>`;
+ const q=s=>svg.querySelector(s);
+ return{a:q('.a'),e:q('.e'),l:q('.l'),r:q('.r'),glow:q('.glow'),stops:[...svg.querySelectorAll('stop')],rings:[...svg.querySelectorAll('.ring')],ob:[...q('.orbB').children],of:[...q('.orbF').children],glints:[...q('.glints').children],clouds:[...q('.clouds').children],drops:[...svg.querySelectorAll('.dr')]}}
+const V=[mk(document.getElementById('s1')),mk(document.getElementById('s2'))];
+// Critically damped springs: k = w², c = 2w (no overshoot, no jerks).
+function sp(x,w){return{x,v:0,t:x,k:w*w,c:2*w}}
+function step(s,dt){const n=4,h=dt/n;for(let i=0;i<n;i++){const a=s.k*(s.t-s.x)-s.c*s.v;s.v+=a*h;s.x+=s.v*h}}
+const P={close:sp(0,7),blink:sp(0,22),smile:sp(0,7),y:sp(0,6),rot:sp(0,6),ex:sp(0,5.5),ey:sp(0,5.5),env:sp(0,4.5),fx:sp(0,4),glow:sp(.75,4.5),cool:sp(0,4)};
+const mix=(a,b,t)=>a+(b-a)*t,cl=x=>Math.max(0,Math.min(1,x)),ease=p=>p<.5?2*p*p:1-Math.pow(-2*p+2,2)/2,bell=p=>Math.sin(Math.PI*cl(p));
+function eye(cx,cy,u,s){const k=1.333;let top=cy-k*RY*(1-u),bot=cy+k*RY*(1-.8*u);top=mix(top,cy-k*RY*.55,s);bot=mix(bot,cy-k*RY*.22,s);const y=mix(cy,cy+2.5,s);
+ return `M${cx-RX} ${y} C${cx-RX} ${top} ${cx+RX} ${top} ${cx+RX} ${y} C${cx+RX} ${bot} ${cx-RX} ${bot} ${cx-RX} ${y}Z`}
+let state='idle',start=0,raw=0,target=0,phase=0,last=performance.now(),nextBlink=performance.now()+2600,nextLook=0,flow=0,fxKind=null,fxT0=0,translate=false;
+const LOOK_IDLE=[[0,0],[-8,0],[8,0],[-6,-5],[6,-5],[0,-5.5],[-8,2],[8,2]],LOOK_PROC=[[-6,-5.5],[6,-5.5],[0,-6],[-8,-2],[8,-2]];
+const tm=document.getElementById('tm'),W=(f,ms)=>setTimeout(f,ms);
+function blink(){P.blink.t=1;W(()=>P.blink.t=0,90)}
+document.getElementById('rec').onclick=()=>{if(state==='rec')return;P.close.t=1;P.smile.t=0;P.ey.t=0;P.ex.t=0;start=performance.now();state='rec'};
+function finish(ok){if(state!=='rec')return;state='proc';P.close.t=0;nextLook=performance.now()+500;
+ W(()=>{P.ex.t=0;P.ey.t=0;fxT0=performance.now();
+  if(ok){state='done';fxKind='good';P.smile.t=1;P.y.t=-3;W(()=>{P.y.t=0},900);W(()=>{P.smile.t=0;W(()=>state='idle',700)},2000)}
+  else{state='err';fxKind='bad';P.close.t=1;P.ey.t=4.5;P.y.t=2.5;P.glow.t=.35;W(()=>{P.close.t=0;P.ey.t=0;P.y.t=0;P.glow.t=.75;W(()=>state='idle',900)},2800)}},1800)}
+document.getElementById('stop').onclick=()=>finish(true);
+document.getElementById('err').onclick=()=>finish(false);
+document.getElementById('mode').onclick=e=>{translate=!translate;P.cool.t=translate?1:0;e.target.textContent='Режим: '+(translate?'перевод':'диктовка')};
+function fx(v,now){const t=(now-fxT0)/1000;
+ [...v.ob,...v.of,...v.glints,...v.clouds].forEach(x=>x.setAttribute('opacity',0));
+ if(fxKind==='good'){const p=cl(t/1.7),env=bell(p);
+  for(let i=0;i<7;i++){const a=-Math.PI/2+ease(p)*Math.PI*2.15-i*.12;const x=50+Math.cos(a)*48,y=54+Math.sin(a)*15;const front=Math.sin(a)>0;const o=front?v.of[i]:v.ob[i];
+   o.setAttribute('cx',x.toFixed(2));o.setAttribute('cy',y.toFixed(2));o.setAttribute('r',(1.9-i*.2).toFixed(2));o.setAttribute('opacity',(env*(1-i/7)*(front?1:.4)).toFixed(3))}
+  [[84,22,5],[93,36,3.4],[73,11,3.8]].forEach(([x,y,s],i)=>{const q=cl((t-.35-i*.18)/.95),e=bell(q);v.glints[i].setAttribute('transform',`translate(${x} ${y}) rotate(${q*40}) scale(${(s*e).toFixed(3)})`);v.glints[i].setAttribute('opacity',e.toFixed(3))});
+  if(t>2.4)fxKind=null}
+ if(fxKind==='bad'){CL.forEach(([x,y,s,d,dir],i)=>{const p=cl((t-d)/2.6),e=Math.min(1,p*5)*Math.min(1,(1-p)*4);const rise=(1-ease(Math.min(1,p*4)))*4;
+   v.clouds[i].setAttribute('transform',`translate(${(x+dir*Math.sin(t*.9+i)*1.6).toFixed(2)} ${(y-rise).toFixed(2)}) scale(${s})`);v.clouds[i].setAttribute('opacity',(e*.95).toFixed(3))});
+  v.drops.forEach((d,i)=>{const q=((t*.85+i*.5)%1);d.setAttribute('transform',`translate(0 ${(q*5).toFixed(2)})`);d.setAttribute('opacity',(bell(q)*cl(t*2)*cl((3.2-t)*2)).toFixed(3))});
+  if(t>3.3)fxKind=null}}
+function frame(now){let dt=Math.min(.05,(now-last)/1000);last=now;
+ if(Math.random()<.06)target=.3+Math.random()*.7;raw+=(target-raw)*Math.min(1,dt*12);
+ P.env.t=state==='rec'?raw:0;P.fx.t=state==='rec'?1:0;
+ if(state==='rec'){phase+=dt*Math.PI*2*.4;const e=P.env.x;P.rot.t=Math.sin(phase)*(2+e*5);P.y.t=-e*2.2;P.glow.t=.75+e*.25;const sec=Math.floor((now-start)/1000);tm.textContent=Math.floor(sec/60)+':'+String(sec%60).padStart(2,'0')}
+ else{P.rot.t=0;if(state==='idle'||state==='proc'){if(state==='proc'&&P.y.t<0)P.y.t=0;
+  if(now>nextLook){const L=state==='proc'?LOOK_PROC:LOOK_IDLE;const [x,y]=L[Math.floor(Math.random()*L.length)];P.ex.t=x;P.ey.t=y;nextLook=now+1400+Math.random()*1800}
+  if(state==='idle'&&now>nextBlink){blink();nextBlink=now+2800+Math.random()*2600}}}
+ for(const k in P)step(P[k],dt);
+ flow+=dt*(.3+P.env.x*.45);const fxA=cl(P.fx.x),e=P.env.x,w=cl(P.cool.x);
+ const rc=`rgb(${Math.round(mix(255,74,w))},${Math.round(mix(255,216,w))},${Math.round(mix(255,236,w))})`;
+ V.forEach(v=>{v.a.setAttribute('transform',`rotate(${P.rot.x.toFixed(3)} 50 90) translate(0 ${P.y.x.toFixed(3)})`);
+  v.e.setAttribute('transform',`translate(${P.ex.x.toFixed(3)} ${P.ey.x.toFixed(3)})`);
+  const u=Math.max(cl(P.close.x),cl(P.blink.x)),s=cl(P.smile.x);
+  v.l.setAttribute('d',eye(EYES[0][0],EYES[0][1],u,s));v.r.setAttribute('d',eye(EYES[1][0],EYES[1][1],u,s));
+  v.glow.setAttribute('opacity',Math.max(0,P.glow.x).toFixed(3));v.stops.forEach(x=>x.setAttribute('stop-color',rc));
+  v.rings.forEach((r,i)=>{const p=((flow*.8+i/NR)%1);const rad=38+ease(p)*28;const o=fxA*Math.pow(1-p,1.6)*Math.min(1,p*6)*(.12+e*.45);r.setAttribute('r',rad.toFixed(2));r.setAttribute('opacity',o.toFixed(3));r.setAttribute('stroke',rc)});
+  fx(v,now)});
+ requestAnimationFrame(frame)}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

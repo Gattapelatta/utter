@@ -337,7 +337,7 @@ it("Keycap reflects pressed state")           // data-pressed
   - `update_settings`: при изменении `autostart` — `app.autolaunch().enable()/disable()`; при старте приложения — сверить состояние плагина с настройкой (`MacosLauncher::LaunchAgent`).
 
 Содержимое:
-- **Основное:** Режим записи (Segmented Удержание/Нажатие), Способ вставки (Вставка/Печать), Основной язык речи (Select), Чистовая обработка (Switch), Абзацы в длинных текстах (Switch, подпись «для записей длиннее 30 с»), Звуки, Автозапуск, Тема (Тёмная/Светлая/Как в системе — смена применяется сразу с кроссфейдом 250 мс), Язык интерфейса (Авто/Русский/English).
+- **Основное:** Режим записи (Segmented Удержание/Нажатие), Способ вставки (Вставка/Печать), Основной язык речи (Select), Чистовая обработка (Switch), Абзацы в длинных текстах (Switch, подпись «для записей длиннее 30 с»), Автозапуск, Тема (Тёмная/Светлая/Как в системе — смена применяется сразу с кроссфейдом 250 мс), Язык интерфейса (Авто/Русский/English).
 - **Клавиши:** строки «Диктовка» и «Перевод»: `Keycap` с названием клавиши (`keyLabel`), кнопка «Изменить» → состояние «Нажми клавишу… (Esc — отмена)» + кнопка «Отмена» (`cancelCapture`); ошибки под полем: `taken` («Эта клавиша уже назначена на {mode}»), `not_assignable` («Подойдёт правый модификатор, Fn, Caps Lock или F-клавиша»), `timeout`; при размонтировании во время захвата — `cancelCapture`. `Keycap` нажимается при реальном нажатии своей горячей клавиши (`ui://hotkey`).
 - **Перевод:** стиль по умолчанию (Segmented Деловой/Разговорный) и две карточки с одной и той же фразой в двух стилях; выбранная подсвечена `accent-translate`. Фразы — в словарях (`translate.example_source`, `translate.example_business`, `translate.example_casual`); для RU-интерфейса исходник по-русски, для EN — по-испански.
 
@@ -527,3 +527,64 @@ it("shows a calm message when the check fails")
 - [ ] **Step 7: Commit + push** — `test: Plan 2 live QA, budgets and docs`.
 
 После Task 13: финальное ревью всей ветки свежим ревьюером на самой сильной модели, затем superpowers:finishing-a-development-branch (слияние в `main` — только с согласия пользователя). Иконка приложения и бренд — отдельным шагом через скил `brandkit` после этого плана.
+
+
+---
+
+## Изменения после утверждения дизайна «Капли» (2026-10-08)
+
+Пользователь утвердил новый облик пилюли (спецификация §4.2, §5.2–5.4 переписаны; эталон — `docs/design/drop-prototype.html`) и отказался от звуков. Задачи 4 и 5 выполнены по старому дизайну; их результат заменяют задачи 4R и 5R ниже, звук убирает задача 2R. Выполняются **до** Task 6, в порядке 2R → 4R → 5R. В Task 7 переключателя «Звуки» нет.
+
+### Task 2R: Убрать звуки
+
+**Files:** Delete `src-tauri/src/sounds.rs`; Modify `src-tauri/src/{lib.rs,settings.rs}`, `src-tauri/src/app/{orchestrator.rs,services.rs}`, `src-tauri/Cargo.toml` (если фичи objc2 больше не нужны), `src/lib/types.ts`, `src/lib/store.test.ts`, `src/i18n/{ru,en}.json` (ключи `general.sounds*`).
+
+- [ ] **Step 1: Тест** `settings::tests::old_file_with_sounds_field_still_loads` — файл `{"schema_version":1,"sounds":true,"cleanup":false}` загружается, `cleanup == false`. Удалить тесты `sounds_*` оркестратора и `sounds.rs`.
+- [ ] **Step 2:** FAIL (поле ещё есть — тест проходит; поэтому сначала удалить поле `sounds` из `Settings` и убедиться, что тест компилируется и проходит, а старые тесты звука не компилируются → удалить их). **Step 3:** удалить `Sounds`, `Cue`, `TauriSounds`, поле `Deps.sounds`. **Step 4:** `cargo test --lib`, clippy 0, `pnpm test`.
+- [ ] **Step 5: Commit + push** — `refactor: remove start/stop sounds (user decision)`.
+
+### Task 4R: Капля — персонаж и остров (React)
+
+**Files:**
+- Create: `src/overlay/drop/springs.ts`, `src/overlay/drop/eye.ts`, `src/overlay/drop/effects.ts`, `src/overlay/drop/Drop.tsx`, `src/overlay/drop/Island.tsx`, `src/overlay/drop/drop.test.ts`, `src/overlay/drop/Island.test.tsx`
+- Modify: `src/overlay/main.tsx`, `src/overlay/overlay.css`, `src/styles/app.css` (Manrope), `package.json` (`@fontsource-variable/manrope`), словари (`pill.copied_short` = «⌘V»)
+- Delete: `src/overlay/{Pill.tsx,Pill.test.tsx,Wave.tsx,Check.tsx,pillMotion.ts,pillMotion.test.ts}`
+
+**Interfaces:**
+- `springs.ts`: `export interface Spring { x: number; v: number; t: number; k: number; c: number }`; `export function spring(x: number, omega: number): Spring` (k = ω², c = 2ω); `export function stepSpring(s: Spring, dt: number): void` (4 подшага).
+- `eye.ts`: `export function eyePath(cx: number, cy: number, lid: number, smile: number): string` — формулы эталона (RX 7.6, RY 11.5).
+- `effects.ts`: `export function satellite(t: number): { x: number; y: number; r: number; opacity: number; front: boolean }[]`, `export function glints(t: number): { x: number; y: number; scale: number; rotate: number; opacity: number }[]`, `export function clouds(t: number): { x: number; y: number; scale: number; opacity: number }[]` — чистые функции времени с параметрами эталона.
+- `Drop.tsx`: `export type Mood = "idle" | "listening" | "thinking" | "happy" | "sad"`; `export function Drop(props: { mood: Mood; level: number; translate: boolean; reduced: boolean })` — SVG рисуется один раз, анимация — `requestAnimationFrame`, атрибуты меняются через refs (без ре-рендера React на кадр); цикл останавливается, когда все пружины в покое и эффектов нет.
+- `Island.tsx`: `export function moodFor(s: OverlayState): Mood` и `export function Island(props: { state: OverlayState; level: number; now: number })` — чёрный остров 360 × 104 (`0 0 40 40`), пара Капля (58 × 60) + правый блок (таймер Manrope 600 21 px / текст ошибки / «⌘V») по центру, промежуток 44 px; таймер — только при записи; при `pending > 0` — маленькая цифра у таймера.
+
+- [ ] **Step 1: Тесты:**
+
+```ts
+it("critically damped spring reaches the target without overshoot") // spring(0,7), t=1; 2 с шагами 1/60 → x ∈ [0.999,1], никогда > 1
+it("closed eye is a thin crescent, open eye is tall")               // высота path при lid 1 < 4, при lid 0 > 20
+it("smile lifts the eye above its centre")                           // все y пути при smile 1 ≤ cy + 2.5
+it("satellite makes one lap and fades out")                          // opacity(0)=0, opacity(0.85)>0.5, opacity(1.7)=0; front меняется
+it("clouds appear in sequence and vanish by 3.1 s")
+it("moodFor maps overlay states")    // recording→listening, processing→thinking, done pasted→happy, done failed→sad, error→sad
+it("island shows the timer only while recording and error text on errors")
+it("translate mode turns rings cyan")   // при translate stroke колец → rgb(74,216,236) после схождения пружины
+it("reduced motion keeps the character still")
+```
+
+- [ ] **Step 2:** FAIL. **Step 3:** реализовать, перенося формулы из эталона (не «на глаз»). **Step 4:** PASS, `pnpm build`.
+- [ ] **Step 5: Визуальная сверка** с `docs/design/drop-prototype.html` в браузере (dev-панель состояний под `import.meta.env.DEV`): все пять настроений и оба режима.
+- [ ] **Step 6: Commit + push** — `feat(overlay): the Drop character in a notch island`.
+
+### Task 5R: Окно-остров у чёлки
+
+**Files:** Modify `src-tauri/src/app/overlay.rs`, `src-tauri/src/app/orchestrator.rs` (`DONE_VISIBLE` 2200 мс, `ERROR_VISIBLE` 3000 мс), `src-tauri/tauri.conf.json` (окно `overlay` 440 × 170), `src/overlay/main.tsx`, `src/lib/ipc.ts`.
+
+**Interfaces:**
+- `pub struct Notch { pub width: f64, pub height: f64 }`; `pub fn island_origin(screen_x: f64, screen_y: f64, screen_w: f64, window_w: f64) -> (f64, f64)` — верх по центру экрана (чистая функция, в точках).
+- macOS: размер выреза — `NSScreen.safeAreaInsets.top` и `auxiliaryTopLeftArea/RightArea` экрана под курсором; событие `overlay://screen` `{ notch: { width, height } | null }` перед показом; остров вырастает от размера выреза (или от 0 × 0 у верхнего края без выреза).
+- Окно у верхнего края экрана (не рабочей области), уровень выше строки меню (оставить 101), `HIDE_AFTER` = 500 мс (втягивание острова).
+
+- [ ] **Step 1: Тесты:** `island_origin_is_top_centre` (экран x=0, w=1512, окно 440 → (536, 0)); `island_origin_on_second_display` (x=1512, w=1920 → (2252, 0)).
+- [ ] **Step 2:** FAIL. **Step 3:** реализовать. **Step 4:** PASS, clippy 0.
+- [ ] **Step 5: Живая проверка с пользователем:** остров вырастает из чёлки на MacBook, на внешнем мониторе — из-под верхнего края; Капля не срезана камерой (если срезана — уменьшить Каплю, форму острова не трогать); фокус остаётся в приложении; нагрузка CPU во время записи по `ps` — записать.
+- [ ] **Step 7: Commit + push** — `feat(overlay): notch island window`.
