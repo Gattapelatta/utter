@@ -117,6 +117,8 @@ impl Live {
 }
 
 fn open() -> Result<Live, RecorderError> {
+    // Budget §8.4: start → first recorded sample < 100 ms. Logged once per stream.
+    let first_sample = Arc::new(Mutex::new(Some(std::time::Instant::now())));
     let device = cpal::default_host().default_input_device().ok_or(RecorderError::NoDevice)?;
     let config = device.default_input_config().map_err(|e| RecorderError::Stream(e.to_string()))?;
     let rate = config.sample_rate().0;
@@ -131,23 +133,24 @@ fn open() -> Result<Live, RecorderError> {
         }
     };
     let b = buf.clone();
+    let f = first_sample;
     let stream_config = config.config();
     let stream = match config.sample_format() {
         cpal::SampleFormat::F32 => device.build_input_stream(
             &stream_config,
-            move |d: &[f32], _: &_| push(&b, to_f32(SampleChunk::F32(d))),
+            move |d: &[f32], _: &_| push(&b, &f, to_f32(SampleChunk::F32(d))),
             on_err,
             None,
         ),
         cpal::SampleFormat::I16 => device.build_input_stream(
             &stream_config,
-            move |d: &[i16], _: &_| push(&b, to_f32(SampleChunk::I16(d))),
+            move |d: &[i16], _: &_| push(&b, &f, to_f32(SampleChunk::I16(d))),
             on_err,
             None,
         ),
         cpal::SampleFormat::U16 => device.build_input_stream(
             &stream_config,
-            move |d: &[u16], _: &_| push(&b, to_f32(SampleChunk::U16(d))),
+            move |d: &[u16], _: &_| push(&b, &f, to_f32(SampleChunk::U16(d))),
             on_err,
             None,
         ),
@@ -158,7 +161,10 @@ fn open() -> Result<Live, RecorderError> {
     Ok(Live { _stream: stream, buf, failed, rate, channels })
 }
 
-fn push(buf: &Arc<Mutex<Vec<f32>>>, samples: Vec<f32>) {
+fn push(buf: &Arc<Mutex<Vec<f32>>>, first: &Mutex<Option<std::time::Instant>>, samples: Vec<f32>) {
+    if let Some(t) = first.lock().ok().and_then(|mut f| f.take()) {
+        tracing::info!(first_sample_ms = t.elapsed().as_millis() as u64, "timing: start→first sample");
+    }
     if let Ok(mut b) = buf.lock() {
         b.extend(samples);
     }

@@ -37,6 +37,16 @@ function Overlay() {
     };
   }, []);
 
+  // Budget §8.4: report the first painted frame of each new recording.
+  const wasRecording = useRef(false);
+  useEffect(() => {
+    const recording = state.kind === "recording";
+    if (recording && !wasRecording.current) {
+      requestAnimationFrame(() => requestAnimationFrame(() => ipc.overlayPainted().catch(() => {})));
+    }
+    wasRecording.current = recording;
+  }, [state]);
+
   const onClick = () => {
     if (state.kind === "error" && state.action) ipc.overlayAction(state.action);
   };

@@ -81,13 +81,14 @@ fn init_core(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let providers: Arc<dyn app::orchestrator::ProviderFactory> = Arc::new(HttpProviders);
     let hotkeys = Arc::new(HotkeyService::new(settings.hotkeys.clone(), tx.clone()));
 
+    app.manage(app::overlay::OverlayTiming::default());
     app::overlay::configure(app.handle());
     let deps = Deps {
         secrets: secrets.clone(),
         audio: recorder,
         providers: providers.clone(),
         output: Arc::new(SystemOutput::default()),
-        overlay: Arc::new(app::overlay::TauriOverlay { app: app.handle().clone() }),
+        overlay: Arc::new(app::overlay::TauriOverlay { app: app.handle().clone(), gate: Default::default() }),
         permissions: Arc::new(SystemPermissions),
         hotkeys: hotkeys.clone(),
         ui: Arc::new(app::services::TauriUi { app: app.handle().clone() }),
@@ -114,7 +115,10 @@ fn init_core(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(tauri_nspanel::init());
+    builder
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_settings(app);
         }))
@@ -136,6 +140,7 @@ pub fn run() {
             app::commands::usage_today,
             app::commands::copy_diagnostics,
             app::commands::overlay_action,
+            app::commands::overlay_painted,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]

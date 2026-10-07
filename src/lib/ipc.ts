@@ -31,6 +31,7 @@ export const ipc = {
   usageToday: () => invoke<UsageDay | null>("usage_today"),
   copyDiagnostics: () => invoke<string>("copy_diagnostics"),
   overlayAction: (action: string) => invoke<void>("overlay_action", { action }),
+  overlayPainted: () => invoke<void>("overlay_painted"),
 };
 
 export const events = {

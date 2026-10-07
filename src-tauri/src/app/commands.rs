@@ -171,3 +171,11 @@ pub fn overlay_action(app: AppHandle, _action: String) {
         let _ = w.set_focus();
     }
 }
+
+/// The pill's first painted frame of a recording (budget §8.4: < 50 ms).
+#[tauri::command]
+pub fn overlay_painted(timing: State<super::overlay::OverlayTiming>) {
+    if let Some(t) = timing.0.lock().ok().and_then(|mut t| t.take()) {
+        tracing::info!(painted_ms = t.elapsed().as_millis() as u64, "timing: show→pill painted");
+    }
+}

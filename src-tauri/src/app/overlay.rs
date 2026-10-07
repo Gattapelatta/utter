@@ -1,22 +1,81 @@
-//! The recording pill: a transparent, click-through window that never takes focus.
+//! The recording pill: a transparent, click-through, non-activating panel.
+
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewWindow};
 
 use super::orchestrator::{OverlaySink, OverlayState};
 
 const LABEL: &str = "overlay";
-/// Distance from the bottom of the usable screen area, in points.
-const BOTTOM_MARGIN: f64 = 48.0;
+/// Window bottom above the work area's bottom edge, in points. The pill sits 24 pt
+/// higher inside the window (room for its shadow), i.e. 48 pt above the edge (§4.2).
+const BOTTOM_MARGIN: f64 = 24.0;
+/// The window is ordered out only after the pill's exit animation (160 ms / 120 ms).
+const HIDE_AFTER: Duration = Duration::from_millis(200);
+const CANCEL_HIDE_AFTER: Duration = Duration::from_millis(140);
+
+/// Each overlay state gets a generation; a delayed hide only runs if no newer state came.
+#[derive(Default)]
+pub struct HideGate {
+    gen: u64,
+}
+
+impl HideGate {
+    pub fn on_state(&mut self) -> u64 {
+        self.gen += 1;
+        self.gen
+    }
+
+    pub fn still_current(&self, gen: u64) -> bool {
+        self.gen == gen
+    }
+}
+
+/// When the last recording pill was requested, for the `overlay_painted` latency log.
+#[derive(Default)]
+pub struct OverlayTiming(pub Mutex<Option<Instant>>);
 
 pub struct TauriOverlay {
     pub app: AppHandle,
+    pub gate: Arc<Mutex<HideGate>>,
 }
 
 impl OverlaySink for TauriOverlay {
     fn show(&self, s: &OverlayState) {
+        let gen = match self.gate.lock() {
+            Ok(mut g) => g.on_state(),
+            Err(_) => return,
+        };
+        if matches!(s, OverlayState::Recording { warn: false, .. }) {
+            if let Some(t) = self.app.try_state::<OverlayTiming>() {
+                if let Ok(mut t) = t.0.lock() {
+                    *t = Some(Instant::now());
+                }
+            }
+        }
         let app = self.app.clone();
-        let s = s.clone();
-        let _ = self.app.run_on_main_thread(move || apply(&app, &s));
+        let state = s.clone();
+        let _ = self.app.run_on_main_thread(move || apply(&app, &state));
+        let delay = match s {
+            OverlayState::Hidden => HIDE_AFTER,
+            OverlayState::Cancelled => CANCEL_HIDE_AFTER,
+            _ => return,
+        };
+        let app = self.app.clone();
+        let gate = self.gate.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(delay).await;
+            let current = gate.lock().map(|g| g.still_current(gen)).unwrap_or(false);
+            if current {
+                let a = app.clone();
+                let _ = app.run_on_main_thread(move || {
+                    if let Some(w) = a.get_webview_window(LABEL) {
+                        order_out(&w);
+                    }
+                });
+            }
+        });
     }
 }
 
@@ -24,7 +83,10 @@ fn apply(app: &AppHandle, s: &OverlayState) {
     let Some(w) = app.get_webview_window(LABEL) else { return };
     let _ = app.emit_to(LABEL, "overlay://state", s);
     match s {
-        OverlayState::Hidden => order_out(&w),
+        // The window stays up while the pill animates out; see `TauriOverlay::show`.
+        OverlayState::Hidden | OverlayState::Cancelled => {
+            let _ = w.set_ignore_cursor_events(true);
+        }
         _ => {
             place(app, &w);
             let clickable = matches!(s, OverlayState::Error { action: Some(_), .. });
@@ -68,7 +130,35 @@ mod mac {
         unsafe { ptr.as_ref() }
     }
 
+    mod class {
+        tauri_nspanel::tauri_panel! {
+            panel!(OverlayPanel {
+                config: {
+                    can_become_key_window: false,
+                    can_become_main_window: false,
+                    is_floating_panel: true
+                }
+            })
+        }
+    }
+
+    /// Turns the window into a non-activating NSPanel, so clicking the pill never
+    /// activates Utter or steals focus from the app being typed into.
+    fn make_panel(w: &WebviewWindow) {
+        use tauri_nspanel::{StyleMask, WebviewWindowExt};
+        match w.to_panel::<class::OverlayPanel>() {
+            Ok(panel) => {
+                if let Err(e) = panel.add_style_mask(StyleMask::empty().nonactivating_panel().into()) {
+                    tracing::warn!("overlay panel style: {e:?}");
+                }
+            }
+            Err(e) => tracing::warn!("overlay stays a plain window: {e}"),
+        }
+    }
+
     pub fn configure(w: &WebviewWindow) {
+        make_panel(w);
+        // The panel is the same NSWindow object with a new class; configure it as before.
         let Some(win) = ns(w) else { return };
         let behavior = CAN_JOIN_ALL_SPACES | STATIONARY | IGNORES_CYCLE | FULL_SCREEN_AUXILIARY;
         unsafe {
@@ -118,4 +208,18 @@ pub fn configure(app: &AppHandle) {
     }
     #[cfg(not(target_os = "macos"))]
     let _ = app;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_state_cancels_pending_hide() {
+        let mut gate = HideGate::default();
+        let hide = gate.on_state();
+        let recording = gate.on_state();
+        assert!(!gate.still_current(hide));
+        assert!(gate.still_current(recording));
+    }
 }
