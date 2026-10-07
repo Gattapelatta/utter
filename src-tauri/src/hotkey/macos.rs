@@ -146,8 +146,14 @@ pub(super) fn spawn_tap(
                             let repeat = event.get_integer_value_field(EventField::KEYBOARD_EVENT_AUTOREPEAT) != 0;
                             let code = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
                             let down = matches!(etype, CGEventType::KeyDown);
-                            // Auto-repeat presses never reach the router.
-                            (!(down && repeat)).then(|| Decoded { key: keycode_to_key(code), down, tap_only: false })
+                            let key = keycode_to_key(code);
+                            if down && repeat {
+                                // Auto-repeat never reaches the router, but repeats of a
+                                // swallowed key (a held Esc) must not leak to the app.
+                                let swallowed = router.lock().map(|r| r.swallows_repeat(&key)).unwrap_or(false);
+                                return if swallowed { swallow(event) } else { Some(event.clone()) };
+                            }
+                            Some(Decoded { key, down, tap_only: false })
                         }
                         _ => None,
                     };

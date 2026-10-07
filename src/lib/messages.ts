@@ -17,6 +17,7 @@ export const overlayText = {
     no_key: "Добавь API-ключ",
     no_accessibility: "Нужен доступ Accessibility",
     no_microphone: "Микрофон не найден",
+    no_microphone_access: "Нет доступа к микрофону — открой Настройки",
     nothing_heard: "Ничего не услышал",
     network: "Нет соединения",
     bad_key: "Ключ не подходит — проверь в Настройках",

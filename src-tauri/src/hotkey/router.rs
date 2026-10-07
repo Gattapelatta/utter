@@ -60,6 +60,11 @@ impl Router {
         }
     }
 
+    /// Auto-repeat of a key whose press was swallowed must be swallowed too.
+    pub fn swallows_repeat(&self, key: &KeyId) -> bool {
+        self.swallowed.contains(key)
+    }
+
     pub fn set_recording(&mut self, on: bool) {
         self.recording = on;
     }
@@ -243,5 +248,16 @@ mod tests {
         r.set_recording(true);
         assert!(!r.filter(KeyId::RightAlt, true, false).swallow);
         assert!(!r.filter(KeyId::RightAlt, false, false).swallow);
+    }
+
+    #[test]
+    fn repeats_of_swallowed_keys_are_swallowed() {
+        let mut r = router();
+        r.set_recording(true);
+        r.filter(KeyId::Escape, true, false);
+        assert!(r.swallows_repeat(&KeyId::Escape));
+        assert!(!r.swallows_repeat(&KeyId::Raw(14)));
+        r.filter(KeyId::Escape, false, false);
+        assert!(!r.swallows_repeat(&KeyId::Escape));
     }
 }

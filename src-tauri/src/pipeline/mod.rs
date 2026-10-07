@@ -89,6 +89,11 @@ pub fn is_hallucination(text: &str) -> bool {
     HALLUCINATIONS.lines().map(str::trim).filter(|l| !l.is_empty()).any(|l| t == l)
 }
 
+const PREFACE_NOUNS: &[&str] = &[
+    "translation", "translated", "cleaned", "corrected", "revised", "transcript", "text",
+    "перевод", "исправлен", "очищен", "отредактир", "текст",
+];
+
 /// Removes framing an LLM sometimes adds despite instructions.
 pub fn postprocess(llm_text: &str) -> String {
     let mut t = llm_text.trim().to_string();
@@ -97,8 +102,11 @@ pub fn postprocess(llm_text: &str) -> String {
     }
     if let Some((first, rest)) = t.split_once('\n') {
         let f = first.trim();
-        let preface = ["Here is", "Here's", "Sure", "Вот"].iter().any(|p| f.starts_with(p));
-        if preface && f.ends_with(':') {
+        let lower = f.to_lowercase();
+        let preface = ["here is", "here's", "sure", "вот"].iter().any(|p| lower.starts_with(p));
+        // Only a preface that talks about the output itself; "Вот что нужно сделать:" is the user's text.
+        let names_output = PREFACE_NOUNS.iter().any(|n| lower.contains(n));
+        if preface && names_output && f.ends_with(':') && f.chars().count() <= 80 {
             t = rest.trim().to_string();
         }
     }
@@ -171,7 +179,9 @@ pub async fn run_direct(
     match result {
         Ok(c) => {
             let text = postprocess(&c.text);
-            if text.is_empty() || is_hallucination(&text) {
+            // The phrase list describes Whisper-style transcripts; a translation such as
+            // "Bye!" or "You." is a legitimate result.
+            if text.is_empty() || (mode == Mode::Dictation && is_hallucination(&text)) {
                 return Err(JobError::NothingHeard);
             }
             Ok(JobOutput { raw: text.clone(), text, degraded: false, tokens: c.total_tokens, llm_used: true })
@@ -288,6 +298,7 @@ mod tests {
         assert_eq!(postprocess("Hello \"world\""), "Hello \"world\"");
         assert_eq!(postprocess("\"Hi\" she said, \"bye\""), "\"Hi\" she said, \"bye\"");
         assert_eq!(postprocess("  Line one\n\nLine two  "), "Line one\n\nLine two");
+        assert_eq!(postprocess("Here is the cleaned text:\nHi."), "Hi.");
     }
 
     #[tokio::test]
@@ -435,6 +446,23 @@ mod tests {
         async fn transcribe(&self, _: Vec<u8>, _: Option<String>, _: f32) -> Result<String, ProviderError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok("x".into())
+        }
+    }
+
+    #[test]
+    fn postprocess_keeps_users_own_first_line() {
+        assert_eq!(postprocess("Вот что нужно сделать:\n1. Купить хлеб"), "Вот что нужно сделать:\n1. Купить хлеб");
+        assert_eq!(postprocess("Here's the plan:\n- ship it"), "Here's the plan:\n- ship it");
+    }
+
+    #[tokio::test]
+    async fn run_direct_translation_keeps_short_phrases() {
+        for reply in ["Bye!", "You."] {
+            let audio = FakeAudioLlm::new(Ok(Completion { text: reply.into(), total_tokens: 1 }));
+            let out = run_direct(Mode::Translate, vec![], 1.0, &opts(true, false, TranslateStyle::Casual), &audio, &FakeStt(Ok("x".into())))
+                .await
+                .unwrap();
+            assert_eq!(out.text, reply);
         }
     }
 }

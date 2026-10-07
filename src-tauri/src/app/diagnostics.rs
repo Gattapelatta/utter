@@ -15,7 +15,7 @@ const REPORT_LINES: usize = 200;
 
 fn key_pattern() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"(gsk_|sk-)[A-Za-z0-9_\-]{8,}").unwrap_or_else(|_| Regex::new("$^").expect("trivial regex")))
+    RE.get_or_init(|| Regex::new(r"(gsk_|sk-)[A-Za-z0-9_\-]{8,}|AIza[0-9A-Za-z_\-]{20,}").unwrap_or_else(|_| Regex::new("$^").expect("trivial regex")))
 }
 
 pub fn redact(text: &str) -> String {
@@ -79,6 +79,7 @@ mod tests {
         assert_eq!(redact("key=gsk_abcdefghijklmnop ok"), "key=[redacted] ok");
         assert_eq!(redact("Bearer sk-proj-ABCDEFGH12345678"), "Bearer [redacted]");
         assert_eq!(redact("nothing here"), "nothing here");
+        assert_eq!(redact("key AIzaSyA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q ok"), "key [redacted] ok");
     }
 
     #[test]

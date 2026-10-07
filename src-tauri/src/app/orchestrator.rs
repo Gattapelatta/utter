@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use serde::Serialize;
 use tokio::sync::mpsc::UnboundedSender;
@@ -24,7 +24,7 @@ use crate::usage::Usage;
 
 const DONE_VISIBLE: Duration = Duration::from_millis(1200);
 const ERROR_VISIBLE: Duration = Duration::from_millis(2500);
-/// A gap this long between 100 ms ticks means the machine was asleep.
+/// A wall-clock gap this long between 100 ms ticks means the machine was asleep.
 const WAKE_GAP: Duration = Duration::from_secs(10);
 const HOTKEY_CHECK: Duration = Duration::from_secs(2);
 
@@ -183,7 +183,9 @@ pub struct Orchestrator {
     /// When the oldest unfinished job started processing (for the "slow" hint).
     processing_since: i64,
     provider: Option<(ProviderKind, String, Arc<dyn Provider>)>,
-    last_tick: Option<Instant>,
+    /// `Instant` stops during sleep on macOS, so the tick gap is measured in wall time.
+    wall_clock: Box<dyn Fn() -> SystemTime + Send>,
+    last_tick_wall: Option<SystemTime>,
     last_hotkey_check: Option<Instant>,
 }
 
@@ -235,13 +237,19 @@ impl Orchestrator {
             deferred: None,
             processing_since: 0,
             provider: None,
-            last_tick: None,
+            wall_clock: Box::new(SystemTime::now),
+            last_tick_wall: None,
             last_hotkey_check: None,
         }
     }
 
     pub fn controller_state(&self) -> &State {
         self.controller.state()
+    }
+
+    /// Wake detection needs a clock that keeps running during sleep (tests inject one).
+    pub fn set_wall_clock(&mut self, clock: Box<dyn Fn() -> SystemTime + Send>) {
+        self.wall_clock = clock;
     }
 
     pub fn set_provider_factory(&mut self, f: Arc<dyn ProviderFactory>) {
@@ -296,14 +304,15 @@ impl Orchestrator {
     }
 
     async fn tick(&mut self, now: Instant) {
-        if let Some(last) = self.last_tick {
-            if now.saturating_duration_since(last) > WAKE_GAP {
+        let wall = (self.wall_clock)();
+        if let Some(last) = self.last_tick_wall {
+            if wall.duration_since(last).is_ok_and(|gap| gap > WAKE_GAP) {
                 tracing::info!("woke from sleep; restarting hotkeys and HTTP client");
                 self.deps.hotkeys.restart();
                 self.provider = None;
             }
         }
-        self.last_tick = Some(now);
+        self.last_tick_wall = Some(wall);
         let due = self.last_hotkey_check.is_none_or(|t| now.saturating_duration_since(t) >= HOTKEY_CHECK);
         if due {
             self.last_hotkey_check = Some(now);
@@ -403,6 +412,10 @@ impl Orchestrator {
         if !self.deps.permissions.accessibility() {
             return self.fail_start(OverlayState::error("no_accessibility", Some("open_permissions")));
         }
+        // Denied access yields silent audio from the OS; say so instead of "nothing heard".
+        if self.deps.permissions.microphone() == PermStatus::Denied {
+            return self.fail_start(OverlayState::error("no_microphone_access", Some("open_permissions")));
+        }
         if let Err(e) = self.deps.audio.start() {
             tracing::warn!("recorder failed to start: {e}");
             return self.fail_start(OverlayState::error("no_microphone", None));
@@ -461,7 +474,8 @@ impl Orchestrator {
         };
         let created_at_ms = now_ms();
         let submitted = Instant::now();
-        tokio::spawn(async move {
+        let supervisor_tx = tx.clone();
+        let job = tokio::spawn(async move {
             let (wav, secs, audio_path) = match audio_in {
                 AudioInput::Wav { bytes, secs } => (Some(bytes), secs, None),
                 AudioInput::Captured(c) => {
@@ -470,7 +484,8 @@ impl Orchestrator {
                     tracing::info!(prepare_ms = t_prep.elapsed().as_millis() as u64, "timing: audio prepare");
                     match prepared {
                         Some(p) => {
-                            let path = audio_dir.join(format!("{id}.wav"));
+                            // Job ids restart at 1 on every launch; the timestamp keeps names unique.
+                            let path = audio_dir.join(format!("{created_at_ms}-{id}.wav"));
                             let saved = std::fs::create_dir_all(&audio_dir)
                                 .and_then(|_| std::fs::write(&path, &p.wav))
                                 .is_ok();
@@ -490,8 +505,23 @@ impl Orchestrator {
                     _ => pipeline::run(mode, wav, secs, &opts, p.as_ref(), p.as_ref()).await,
                 },
             };
-            let result = JobResult { mode, submitted, history_id, audio_path, audio_secs: secs, created_at_ms, outcome };
-            let _ = tx.send(Input::JobDone(id, Box::new(result)));
+            JobResult { mode, submitted, history_id, audio_path, audio_secs: secs, created_at_ms, outcome }
+        });
+        // A bug in one job must fail that job only, never stall the ordered queue.
+        tokio::spawn(async move {
+            let result = job.await.unwrap_or_else(|e| {
+                tracing::error!("job {id} crashed: {e}");
+                JobResult {
+                    mode,
+                    submitted,
+                    history_id,
+                    audio_path: None,
+                    audio_secs: 0.0,
+                    created_at_ms,
+                    outcome: Err(JobError::Provider(ProviderError::BadResponse("internal error".into()))),
+                }
+            });
+            let _ = supervisor_tx.send(Input::JobDone(id, Box::new(result)));
         });
     }
 
@@ -649,11 +679,13 @@ mod tests {
         stt_calls: AtomicUsize,
         /// When set, the provider offers a one-request audio→text path returning this.
         direct_reply: Option<String>,
+        /// Long (slow) audio makes transcription panic.
+        panic_on_slow: bool,
         direct_calls: AtomicUsize,
     }
     impl FakeProvider {
         fn new(slow: Result<String, ProviderError>, fast: Result<String, ProviderError>) -> Self {
-            Self { slow, fast, stt_calls: AtomicUsize::new(0), direct_reply: None, direct_calls: AtomicUsize::new(0) }
+            Self { slow, fast, stt_calls: AtomicUsize::new(0), direct_reply: None, panic_on_slow: false, direct_calls: AtomicUsize::new(0) }
         }
     }
     #[async_trait::async_trait]
@@ -668,6 +700,7 @@ mod tests {
         async fn transcribe(&self, _: Vec<u8>, _: Option<String>, secs: f32) -> Result<String, ProviderError> {
             self.stt_calls.fetch_add(1, Ordering::SeqCst);
             if secs > 1.5 {
+                assert!(!self.panic_on_slow, "simulated bug in a job");
                 tokio::time::sleep(Duration::from_millis(300)).await;
                 self.slow.clone()
             } else {
@@ -727,19 +760,20 @@ mod tests {
         }
     }
 
-    struct AllGranted;
+    struct AllGranted(Mutex<PermStatus>);
     impl PermissionCheck for AllGranted {
         fn accessibility(&self) -> bool {
             true
         }
         fn microphone(&self) -> PermStatus {
-            PermStatus::Granted
+            *self.0.lock().unwrap()
         }
     }
 
     #[derive(Default)]
     struct NoHotkeys {
         recording: std::sync::atomic::AtomicBool,
+        restarts: AtomicUsize,
     }
     impl HotkeyControl for NoHotkeys {
         fn set_bindings(&self, _: crate::settings::Hotkeys) {}
@@ -749,7 +783,9 @@ mod tests {
         fn ensure_running(&self) -> bool {
             true
         }
-        fn restart(&self) {}
+        fn restart(&self) {
+            self.restarts.fetch_add(1, Ordering::SeqCst);
+        }
     }
 
     struct Rig {
@@ -761,6 +797,7 @@ mod tests {
         overlay: Arc<FakeOverlay>,
         shared: Arc<Shared>,
         hotkeys: Arc<NoHotkeys>,
+        perms: Arc<AllGranted>,
         _dir: tempfile::TempDir,
     }
 
@@ -779,18 +816,19 @@ mod tests {
         let out = Arc::new(FakeOutput::default());
         let overlay = Arc::new(FakeOverlay::default());
         let hotkeys = Arc::new(NoHotkeys::default());
+        let perms = Arc::new(AllGranted(Mutex::new(PermStatus::Granted)));
         let deps = Deps {
             secrets,
             audio: audio.clone(),
             providers: Arc::new(FakeFactory(provider.clone())),
             output: out.clone(),
             overlay: overlay.clone(),
-            permissions: Arc::new(AllGranted),
+            permissions: perms.clone(),
             hotkeys: hotkeys.clone(),
         };
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let orch = Orchestrator::new(deps, shared.clone(), tx);
-        Rig { orch, rx, audio, provider, out, overlay, shared, hotkeys, _dir: dir }
+        Rig { orch, rx, audio, provider, out, overlay, shared, hotkeys, perms, _dir: dir }
     }
 
     impl Rig {
@@ -958,5 +996,69 @@ mod tests {
         assert_eq!(r.overlay.last_error(), None, "no error over an active recording");
         r.orch.handle(Input::Hotkey(HotkeyEvent::Escape), t0 + Duration::from_secs(4)).await;
         assert_eq!(r.overlay.last_error().as_deref(), Some("network"));
+    }
+
+    #[tokio::test]
+    async fn wake_gap_restarts_hotkeys_even_though_instant_pauses_in_sleep() {
+        let mut r = rig(FakeProvider::new(Ok("x".into()), Ok("x".into())), true);
+        let wall = Arc::new(Mutex::new(std::time::SystemTime::now()));
+        let w = wall.clone();
+        r.orch.set_wall_clock(Box::new(move || *w.lock().unwrap()));
+        let t0 = Instant::now();
+        r.orch.handle(Input::Tick, t0).await;
+        // The machine sleeps for an hour: Instant (uptime) barely moves, wall time does.
+        *wall.lock().unwrap() += Duration::from_secs(3600);
+        r.orch.handle(Input::Tick, t0 + Duration::from_millis(100)).await;
+        assert_eq!(r.hotkeys.restarts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn retry_audio_survives_restart() {
+        let mut r = rig(FakeProvider::new(Ok("x".into()), Err(ProviderError::Network)), true);
+        r.record(Mode::Dictation, speech(1.0), Instant::now(), 1).await;
+        r.settle(1).await;
+        let old = r.shared.history.lock().unwrap().entries().front().unwrap().audio_file.clone().unwrap();
+        // Restart: a fresh orchestrator over the same data directory, next job succeeds.
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let deps = Deps {
+            secrets: {
+                let s = Arc::new(MemoryStore::default());
+                s.set(r.shared.settings().provider, "k").unwrap();
+                s
+            },
+            audio: r.audio.clone(),
+            providers: Arc::new(FakeFactory(Arc::new(FakeProvider::new(Ok("x".into()), Ok("new".into()))))),
+            output: r.out.clone(),
+            overlay: r.overlay.clone(),
+            permissions: r.perms.clone(),
+            hotkeys: r.hotkeys.clone(),
+        };
+        r.orch = Orchestrator::new(deps, r.shared.clone(), tx);
+        r.rx = rx;
+        r.record(Mode::Dictation, speech(1.0), Instant::now(), 1).await;
+        r.settle(1).await;
+        assert!(old.exists(), "the failed entry's audio must not be overwritten or deleted");
+    }
+
+    #[tokio::test]
+    async fn denied_microphone_shows_error_without_recording() {
+        let mut r = rig(FakeProvider::new(Ok("x".into()), Ok("x".into())), true);
+        *r.perms.0.lock().unwrap() = PermStatus::Denied;
+        r.orch.handle(Input::Hotkey(HotkeyEvent::Down(Mode::Dictation)), Instant::now()).await;
+        assert_eq!(r.overlay.last_error().as_deref(), Some("no_microphone_access"));
+        assert_eq!(r.audio.starts.load(Ordering::SeqCst), 0);
+        assert!(matches!(r.orch.controller_state(), crate::controller::State::Idle));
+    }
+
+    #[tokio::test]
+    async fn panicking_job_still_releases_queue() {
+        let mut p = FakeProvider::new(Ok("never".into()), Ok("two".into()));
+        p.panic_on_slow = true;
+        let mut r = rig(p, true);
+        let t0 = Instant::now();
+        r.record(Mode::Dictation, speech(2.0), t0, 2).await;
+        r.record(Mode::Dictation, speech(1.0), t0 + Duration::from_secs(3), 1).await;
+        r.settle(2).await;
+        assert_eq!(*r.out.0.lock().unwrap(), vec!["two".to_string()]);
     }
 }
