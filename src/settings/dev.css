@@ -1,0 +1,18 @@
+@import "../styles/tokens.css";
+
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 var(--font); }
+.dev { max-width: 760px; margin: 0 auto; padding: 24px; }
+h1 { font-weight: 500; letter-spacing: -0.01em; margin: 0 0 4px; }
+h2 { font-size: 15px; font-weight: 500; margin: 0 0 8px; }
+section { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin: 12px 0; }
+.row { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
+.grow { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.muted { color: var(--text-secondary); }
+button, select, input[type="password"] {
+  background: var(--surface-raised); color: var(--text); border: 1px solid var(--border-strong);
+  border-radius: 8px; padding: 6px 10px; font: inherit;
+}
+button { cursor: pointer; transition: transform 120ms ease-out; }
+button:active { transform: scale(0.97); }
+button:disabled { opacity: 0.4; cursor: default; }
+input[type="password"] { flex: 1; }

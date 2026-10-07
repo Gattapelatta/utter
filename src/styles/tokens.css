@@ -1,0 +1,17 @@
+/* Spec §5.1 — dark theme tokens (light theme arrives in Plan 2). */
+:root {
+  --bg: #0a0a0a;
+  --surface: #141518;
+  --surface-raised: #1f2228;
+  --border: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  --text: #ffffff;
+  --text-secondary: #7d8187;
+  --accent-record: #4ad8ec;
+  --accent-translate: #9d79f7;
+  --accent-success: #2bb585;
+  --accent-danger: #f2555a;
+  --accent-warning: #f5b544;
+  --font: ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+}

@@ -1,0 +1,40 @@
+@import "../styles/tokens.css";
+
+html, body, #root { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+#root { display: flex; align-items: center; justify-content: center; font-family: var(--font); }
+
+.pill {
+  display: flex; align-items: center; gap: 10px;
+  height: 44px; padding: 0 16px; border-radius: 22px;
+  background: rgba(10, 10, 10, 0.85);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  color: var(--text); font-size: 13px; white-space: nowrap;
+  --accent: var(--accent-record);
+}
+.pill[data-mode="translate"] { --accent: var(--accent-translate); }
+.pill[data-tone="success"] { --accent: var(--accent-success); }
+.pill[data-tone="danger"] { --accent: var(--accent-danger); }
+.pill[data-clickable] { cursor: pointer; }
+
+.bars { display: flex; align-items: center; gap: 2px; height: 22px; }
+.bars span {
+  width: 3px; height: 22px; border-radius: 2px; background: var(--accent);
+  transform-origin: center; transition: transform 90ms linear;
+}
+.label { color: var(--text); }
+.timer { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+.timer[data-warn] { color: var(--accent-warning); }
+.pending { color: var(--text-secondary); font-size: 11px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.shimmer {
+  width: 60px; height: 2px; border-radius: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent-record), transparent);
+  background-size: 200% 100%; animation: shimmer 1.2s linear infinite;
+}
+@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .bars span { transition: none; }
+  .shimmer { animation: none; background: var(--accent-record); opacity: 0.6; }
+}
