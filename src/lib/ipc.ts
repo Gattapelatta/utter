@@ -42,4 +42,5 @@ export const events = {
     listen<{ mode: Mode; down: boolean }>("ui://hotkey", (e) => cb(e.payload)),
   trial: (cb: (o: TrialOutcome) => void): Promise<UnlistenFn> => listen<TrialOutcome>("ui://trial", (e) => cb(e.payload)),
   history: (cb: () => void): Promise<UnlistenFn> => listen("ui://history", () => cb()),
+  settings: (cb: (s: Settings) => void): Promise<UnlistenFn> => listen<Settings>("ui://settings", (e) => cb(e.payload)),
 };
