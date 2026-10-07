@@ -671,7 +671,10 @@ impl Orchestrator {
                 ERROR_VISIBLE,
             ),
             Err(JobError::Provider(e)) => (
-                EntryStatus::Failed { message: e.to_string() },
+                {
+                    tracing::warn!("job failed: {}", super::diagnostics::redact(&e.to_string()));
+                    EntryStatus::Failed { message: e.to_string() }
+                },
                 String::new(),
                 String::new(),
                 true,

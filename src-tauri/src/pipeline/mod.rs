@@ -177,7 +177,12 @@ pub async fn run_direct(
     };
     let t = std::time::Instant::now();
     let result = audio.complete_audio(&system, wav.clone(), opts.language.clone(), audio_secs).await;
-    tracing::info!(direct_ms = t.elapsed().as_millis() as u64, audio_secs, "timing: audio→text (one request)");
+    tracing::info!(
+        direct_ms = t.elapsed().as_millis() as u64,
+        audio_secs,
+        error = result.as_ref().err().map(|e| e.to_string()),
+        "timing: audio→text (one request)"
+    );
     match result {
         Ok(c) => {
             let text = postprocess(&c.text);
