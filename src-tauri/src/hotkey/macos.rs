@@ -158,7 +158,7 @@ pub(super) fn spawn_tap(
                         _ => None,
                     };
                     let Some(d) = decoded else { return Some(event.clone()) };
-                    let routed = router.lock().ok().map(|mut r| r.filter(d.key, d.down, d.tap_only));
+                    let routed = router.lock().ok().map(|mut r| r.filter(d.key, d.down, d.tap_only, std::time::Instant::now()));
                     let Some(routed) = routed else { return Some(event.clone()) };
                     if let Some(ev) = routed.event {
                         let _ = tx.send(ev);
