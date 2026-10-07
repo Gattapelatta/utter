@@ -38,14 +38,18 @@ pub fn debug_deliver(args: &[String]) -> Option<String> {
     };
     let delay: f64 = value("--delay").and_then(|d| d.parse().ok()).unwrap_or(0.0);
     std::thread::sleep(std::time::Duration::from_secs_f64(delay));
+    let caret = {
+        use output::InputPlatform;
+        output::macos::MacInput.caret_context()
+    };
     let outcome = match output::clipboard::ArboardClipboard::new() {
-        Ok(mut cb) => output::deliver(&text, method, &mut cb, &output::macos::MacInput),
+        Ok(mut cb) => output::deliver(&text, method, &mut cb, &output::macos::MacInput, None),
         Err(e) => return Some(format!("clipboard unavailable: {e}")),
     };
     // Synthetic key events can be dropped if the posting process exits at once
     // (measured: 2/5 pastes lost without this pause, 10/10 with it).
     std::thread::sleep(std::time::Duration::from_millis(500));
-    Some(format!("{outcome:?}"))
+    Some(format!("{outcome:?} caret={caret:?}"))
 }
 
 struct LogGuard(#[allow(dead_code)] Option<tracing_appender::non_blocking::WorkerGuard>);
@@ -81,7 +85,7 @@ fn init_core(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         secrets: secrets.clone(),
         audio: recorder,
         providers: providers.clone(),
-        output: Arc::new(SystemOutput),
+        output: Arc::new(SystemOutput::default()),
         overlay: Arc::new(app::overlay::TauriOverlay { app: app.handle().clone() }),
         permissions: Arc::new(SystemPermissions),
         hotkeys: hotkeys.clone(),

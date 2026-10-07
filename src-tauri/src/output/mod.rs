@@ -3,6 +3,7 @@
 pub mod clipboard;
 #[cfg(target_os = "macos")]
 pub mod macos;
+pub mod spacing;
 
 use std::time::Duration;
 
@@ -29,7 +30,18 @@ pub enum DeliveryOutcome {
     CopiedOnly(CopyReason),
 }
 
+/// What precedes the caret in the focused text field.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CaretContext {
+    Char(char),
+    StartOfField,
+    /// The app does not expose its text (some Electron apps, terminals).
+    Unknown,
+}
+
 pub trait InputPlatform {
+    fn caret_context(&self) -> CaretContext;
+    fn frontmost_pid(&self) -> Option<i32>;
     fn frontmost_is_self(&self) -> bool;
     fn frontmost_is_elevated(&self) -> bool;
     fn wait_modifiers_released(&self, timeout: Duration);
@@ -69,12 +81,27 @@ pub fn split_for_typing(text: &str) -> Vec<TypingChunk> {
     out
 }
 
+/// `fallback_prev` is the last character Utter itself inserted into this app,
+/// used only when the app does not expose the text before the caret.
 pub fn deliver(
     text: &str,
     method: InsertMethod,
     cb: &mut dyn Clipboard,
     input: &dyn InputPlatform,
+    fallback_prev: Option<char>,
 ) -> DeliveryOutcome {
+    let prev = match input.caret_context() {
+        CaretContext::Char(c) => Some(c),
+        CaretContext::StartOfField => None,
+        CaretContext::Unknown => fallback_prev,
+    };
+    let spaced;
+    let text = if spacing::needs_leading_space(prev, text) {
+        spaced = format!(" {text}");
+        spaced.as_str()
+    } else {
+        text
+    };
     // The text always ends up in the clipboard, whatever happens next.
     if set_and_verify(cb, text, CLIPBOARD_CONFIRM).is_err() {
         return DeliveryOutcome::CopiedOnly(CopyReason::ClipboardFailed);
@@ -117,10 +144,17 @@ mod tests {
         own: bool,
         elevated: bool,
         fail: bool,
+        caret: Option<CaretContext>,
         calls: RefCell<Vec<String>>,
     }
 
     impl InputPlatform for FakeInput {
+        fn caret_context(&self) -> CaretContext {
+            self.caret.unwrap_or(CaretContext::Unknown)
+        }
+        fn frontmost_pid(&self) -> Option<i32> {
+            Some(1)
+        }
         fn frontmost_is_self(&self) -> bool {
             self.own
         }
@@ -183,7 +217,7 @@ mod tests {
     fn paste_flow_order() {
         let mut cb = FakeClipboard::new();
         let input = FakeInput::default();
-        assert_eq!(deliver("Привет", InsertMethod::Paste, &mut cb, &input), DeliveryOutcome::Pasted);
+        assert_eq!(deliver("Привет", InsertMethod::Paste, &mut cb, &input, None), DeliveryOutcome::Pasted);
         assert_eq!(*input.calls.borrow(), vec!["wait".to_string(), "paste".to_string()]);
         assert_eq!(cb.value.as_deref(), Some("Привет"));
     }
@@ -192,7 +226,7 @@ mod tests {
     fn own_window_copies_only() {
         let mut cb = FakeClipboard::new();
         let input = FakeInput { own: true, ..Default::default() };
-        assert_eq!(deliver("x", InsertMethod::Paste, &mut cb, &input), DeliveryOutcome::CopiedOnly(CopyReason::OwnWindow));
+        assert_eq!(deliver("x", InsertMethod::Paste, &mut cb, &input, None), DeliveryOutcome::CopiedOnly(CopyReason::OwnWindow));
         assert!(input.calls.borrow().is_empty());
         assert_eq!(cb.value.as_deref(), Some("x"));
     }
@@ -201,7 +235,7 @@ mod tests {
     fn elevated_copies_only() {
         let mut cb = FakeClipboard::new();
         let input = FakeInput { elevated: true, ..Default::default() };
-        assert_eq!(deliver("x", InsertMethod::Paste, &mut cb, &input), DeliveryOutcome::CopiedOnly(CopyReason::Elevated));
+        assert_eq!(deliver("x", InsertMethod::Paste, &mut cb, &input, None), DeliveryOutcome::CopiedOnly(CopyReason::Elevated));
     }
 
     #[test]
@@ -209,7 +243,7 @@ mod tests {
         let mut cb = FakeClipboard::new();
         cb.fail_writes = usize::MAX;
         let input = FakeInput::default();
-        assert_eq!(deliver("x", InsertMethod::Paste, &mut cb, &input), DeliveryOutcome::CopiedOnly(CopyReason::ClipboardFailed));
+        assert_eq!(deliver("x", InsertMethod::Paste, &mut cb, &input, None), DeliveryOutcome::CopiedOnly(CopyReason::ClipboardFailed));
         assert!(input.calls.borrow().is_empty());
     }
 
@@ -217,7 +251,7 @@ mod tests {
     fn type_flow_uses_shift_enter() {
         let mut cb = FakeClipboard::new();
         let input = FakeInput::default();
-        assert_eq!(deliver("a\nb", InsertMethod::Type, &mut cb, &input), DeliveryOutcome::Typed);
+        assert_eq!(deliver("a\nb", InsertMethod::Type, &mut cb, &input, None), DeliveryOutcome::Typed);
         assert_eq!(*input.calls.borrow(), vec!["wait", "type:a", "shift_enter", "type:b"]);
         assert_eq!(cb.value.as_deref(), Some("a\nb"));
     }
@@ -226,6 +260,33 @@ mod tests {
     fn input_failure_reports_copied() {
         let mut cb = FakeClipboard::new();
         let input = FakeInput { fail: true, ..Default::default() };
-        assert_eq!(deliver("x", InsertMethod::Paste, &mut cb, &input), DeliveryOutcome::CopiedOnly(CopyReason::InputFailed));
+        assert_eq!(deliver("x", InsertMethod::Paste, &mut cb, &input, None), DeliveryOutcome::CopiedOnly(CopyReason::InputFailed));
+    }
+
+    #[test]
+    fn paste_adds_space_after_previous_sentence() {
+        let mut cb = FakeClipboard::new();
+        let input = FakeInput { caret: Some(CaretContext::Char('.')), ..Default::default() };
+        deliver("Привет", InsertMethod::Paste, &mut cb, &input, None);
+        assert_eq!(cb.value.as_deref(), Some(" Привет"));
+    }
+
+    #[test]
+    fn no_space_at_start_of_field() {
+        let mut cb = FakeClipboard::new();
+        let input = FakeInput { caret: Some(CaretContext::StartOfField), ..Default::default() };
+        deliver("Привет", InsertMethod::Paste, &mut cb, &input, Some('.'));
+        assert_eq!(cb.value.as_deref(), Some("Привет"));
+    }
+
+    #[test]
+    fn unknown_caret_uses_fallback() {
+        let mut cb = FakeClipboard::new();
+        let input = FakeInput::default();
+        deliver("Hi", InsertMethod::Paste, &mut cb, &input, Some('.'));
+        assert_eq!(cb.value.as_deref(), Some(" Hi"));
+        let mut cb = FakeClipboard::new();
+        deliver("Hi", InsertMethod::Paste, &mut cb, &input, None);
+        assert_eq!(cb.value.as_deref(), Some("Hi"));
     }
 }

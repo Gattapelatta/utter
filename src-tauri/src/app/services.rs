@@ -47,7 +47,11 @@ impl ProviderFactory for HttpProviders {
     }
 }
 
-pub struct SystemOutput;
+/// Delivers text and remembers the last insertion for smart spacing.
+#[derive(Default)]
+pub struct SystemOutput {
+    recent: Mutex<Option<output::spacing::RecentInsert>>,
+}
 
 impl Deliverer for SystemOutput {
     fn deliver(&self, text: &str, method: InsertMethod) -> DeliveryOutcome {
@@ -59,7 +63,22 @@ impl Deliverer for SystemOutput {
             }
         };
         #[cfg(target_os = "macos")]
-        let outcome = output::deliver(text, method, &mut cb, &output::macos::MacInput);
+        let outcome = {
+            use output::InputPlatform;
+            let input = output::macos::MacInput;
+            let pid = input.frontmost_pid();
+            let now = std::time::Instant::now();
+            let recent = self.recent.lock().ok().and_then(|r| *r);
+            let fallback = output::spacing::fallback_prev(recent.as_ref(), pid, now);
+            tracing::info!(caret = ?input.caret_context(), ?fallback, "spacing context");
+            let outcome = output::deliver(text, method, &mut cb, &input, fallback);
+            if matches!(outcome, DeliveryOutcome::Pasted | DeliveryOutcome::Typed) {
+                if let (Some(pid), Some(last), Ok(mut r)) = (pid, text.chars().last(), self.recent.lock()) {
+                    *r = Some(output::spacing::RecentInsert { pid, at: now, last });
+                }
+            }
+            outcome
+        };
         #[cfg(not(target_os = "macos"))]
         let outcome = {
             let _ = (method, &mut cb, text);

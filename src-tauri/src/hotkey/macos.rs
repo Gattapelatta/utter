@@ -18,6 +18,14 @@ pub fn is_synthetic(user_data: i64) -> bool {
     user_data == SYNTHETIC_MARK
 }
 
+/// Drops a key event. With this crate, returning `None` from the tap callback
+/// passes the original event through, so the event is turned into a Null event
+/// (which the system ignores) and returned instead.
+pub fn swallow(event: &core_graphics::event::CGEvent) -> Option<core_graphics::event::CGEvent> {
+    event.set_type(core_graphics::event::CGEventType::Null);
+    Some(event.clone())
+}
+
 // Device-dependent modifier bits (NX_DEVICE*KEYMASK) distinguish left from right.
 const NX_LCTL: u64 = 0x0001;
 const NX_LSHIFT: u64 = 0x0002;
@@ -150,7 +158,7 @@ pub(super) fn spawn_tap(
                         let _ = tx.send(ev);
                     }
                     if routed.swallow {
-                        None
+                        swallow(event)
                     } else {
                         Some(event.clone())
                     }
@@ -238,5 +246,15 @@ mod tests {
     fn synthetic_mark_is_recognised() {
         assert!(is_synthetic(SYNTHETIC_MARK));
         assert!(!is_synthetic(0));
+    }
+
+    #[test]
+    fn swallowed_event_becomes_null() {
+        use core_graphics::event::{CGEvent, CGEventType};
+        use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+        let src = CGEventSource::new(CGEventSourceStateID::Private).unwrap();
+        let ev = CGEvent::new_keyboard_event(src, 14, true).unwrap();
+        let out = swallow(&ev).expect("an event must be returned to the system");
+        assert_eq!(out.get_type() as u32, CGEventType::Null as u32);
     }
 }
