@@ -70,7 +70,6 @@ impl Deliverer for SystemOutput {
             let now = std::time::Instant::now();
             let recent = self.recent.lock().ok().and_then(|r| *r);
             let fallback = output::spacing::fallback_prev(recent.as_ref(), pid, now);
-            tracing::info!(caret = ?input.caret_context(), ?fallback, "spacing context");
             let outcome = output::deliver(text, method, &mut cb, &input, fallback);
             if matches!(outcome, DeliveryOutcome::Pasted | DeliveryOutcome::Typed) {
                 if let (Some(pid), Some(last), Ok(mut r)) = (pid, text.chars().last(), self.recent.lock()) {
