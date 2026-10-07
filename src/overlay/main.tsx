@@ -1,18 +1,32 @@
 import React, { useEffect, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { Pill } from "./Pill";
-import { pillVariants } from "./pillMotion";
+import { Island } from "./drop/Island";
 import { events, ipc } from "../lib/ipc";
 import { useApp } from "../lib/store";
 import type { OverlayState } from "../lib/types";
 import "./overlay.css";
 
-const BARS = 24;
+/** The island grows out of the notch and folds back into it: no overshoot (§5.4). */
+const grow = { type: "spring" as const, bounce: 0, duration: 0.5 };
+const islandVariants = {
+  hidden: { opacity: 0, transform: "scaleX(0.45) scaleY(0.3)" },
+  visible: { opacity: 1, transform: "scaleX(1) scaleY(1)", transition: grow },
+  leave: (cancelled: boolean) => ({
+    opacity: 0,
+    transform: "scaleX(0.45) scaleY(0.3)",
+    transition: { ...grow, duration: cancelled ? 0.3 : 0.45 },
+  }),
+};
+const fadeOnly = {
+  hidden: { opacity: 0 },
+  visible: { opacity: 1, transition: { duration: 0.15 } },
+  leave: { opacity: 0, transition: { duration: 0.15 } },
+};
 
 function Overlay() {
   const [state, setState] = useState<OverlayState>({ kind: "hidden" });
-  const [levels, setLevels] = useState<number[]>(() => Array(BARS).fill(0));
+  const [level, setLevel] = useState(0);
   const [now, setNow] = useState(Date.now());
   const reduced = useReducedMotion() ?? false;
   // The last visible state stays on screen while the pill animates out.
@@ -22,12 +36,9 @@ function Overlay() {
 
   useEffect(() => {
     const stopStore = useApp.getState().init();
-    const un1 = events.overlayState((s) => {
-      setState(s);
-      if (s.kind === "recording" && !s.warn) setLevels(Array(BARS).fill(0));
-    });
-    // Speech RMS rarely exceeds ~0.3; scale so normal speech fills the bars.
-    const un2 = events.overlayLevel((l) => setLevels((prev) => [...prev.slice(1), Math.min(1, Math.sqrt(l) * 2.2)]));
+    const un1 = events.overlayState((s) => setState(s));
+    // Speech RMS rarely exceeds ~0.3; scale so normal speech reaches ~1.
+    const un2 = events.overlayLevel((l) => setLevel(Math.min(1, Math.sqrt(l) * 2.2)));
     const timer = setInterval(() => setNow(Date.now()), 250);
     return () => {
       stopStore.then((f) => f());
@@ -56,31 +67,31 @@ function Overlay() {
       <AnimatePresence custom={state.kind === "cancelled"}>
         {visible && (
           <motion.div
-            key="pill"
+            key="island"
             onClick={onClick}
-            variants={pillVariants(reduced)}
+            variants={reduced ? fadeOnly : islandVariants}
             initial="hidden"
             animate="visible"
             exit="leave"
-            style={{ transformOrigin: "bottom center" }}
+            style={{ transformOrigin: "top center" }}
           >
-            <Pill state={shown.current} levels={levels} now={now} />
+            <Island state={shown.current} level={level} now={now} />
           </motion.div>
         )}
       </AnimatePresence>
-      {import.meta.env.DEV && <DevStates onState={setState} onLevels={setLevels} />}
+      {import.meta.env.DEV && <DevStates onState={setState} onLevel={setLevel} />}
     </>
   );
 }
 
 /** Development-only buttons to walk through every pill state in a browser. */
-function DevStates({ onState, onLevels }: { onState: (s: OverlayState) => void; onLevels: (l: number[]) => void }) {
+function DevStates({ onState, onLevel }: { onState: (s: OverlayState) => void; onLevel: (l: number) => void }) {
   const [on, setOn] = useState(false);
   useEffect(() => {
     if (!on) return;
-    const t = setInterval(() => onLevels(Array.from({ length: BARS }, () => Math.random() * 0.9)), 33);
+    const t = setInterval(() => onLevel(Math.random() < 0.1 ? 0.05 : 0.3 + Math.random() * 0.7), 120);
     return () => clearInterval(t);
-  }, [on, onLevels]);
+  }, [on, onLevel]);
   const now = Date.now();
   const states: [string, OverlayState][] = [
     ["rec", { kind: "recording", mode: "Dictation", style: "Business", started_at_ms: now, warn: false, pending: 0 }],
@@ -88,13 +99,14 @@ function DevStates({ onState, onLevels }: { onState: (s: OverlayState) => void; 
     ["proc", { kind: "processing", pending: 1, since_ms: now }],
     ["done", { kind: "done", outcome: "pasted", degraded: false }],
     ["copied", { kind: "done", outcome: "copied", degraded: false }],
+    ["slow", { kind: "processing", pending: 1, since_ms: now - 5_000 }],
     ["err", { kind: "error", message_key: "rate_limited", action: null, minutes: 12, provider: "Gemini" }],
     ["no key", { kind: "error", message_key: "no_key", action: "open_provider", minutes: null, provider: null }],
     ["hide", { kind: "hidden" }],
     ["esc", { kind: "cancelled" }],
   ];
   return (
-    <div style={{ position: "fixed", top: 4, left: 4, display: "flex", gap: 4, flexWrap: "wrap" }}>
+    <div style={{ position: "fixed", bottom: 4, left: 4, display: "flex", gap: 4, flexWrap: "wrap" }}>
       {states.map(([name, s]) => (
         <button key={name} onClick={() => onState(s)}>{name}</button>
       ))}

@@ -9,69 +9,54 @@ body,
   overflow: hidden;
 }
 
-/* The pill sits at the bottom of a taller window that leaves room for its shadow
-   and entrance motion (§4.2: 48 pt above the work area's bottom edge). */
+/* The island hangs from the top edge of the screen (spec §4.2). The window is larger
+   than the island so the rings and effects around the character are not clipped. */
 #root {
   display: flex;
-  align-items: flex-end;
+  align-items: flex-start;
   justify-content: center;
-  padding-bottom: 24px;
-  box-sizing: border-box;
 }
 
-.pill {
-  background: rgba(10, 10, 10, 0.85);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid var(--border-strong);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
-  white-space: nowrap;
-  transform-origin: bottom center;
+.island {
+  position: relative;
+  width: 360px;
+  height: 104px;
+  background: #000;
+  border-radius: 0 0 40px 40px;
+  transform-origin: top center;
 }
-
-/* Errors tint the pill red; the tint fades in rather than flashing. */
-.pill::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: var(--accent-danger);
-  opacity: 0;
-  transition: opacity 150ms ease;
-  pointer-events: none;
-}
-.pill[data-tone="danger"]::before {
-  opacity: 0.12;
-}
-.pill[data-clickable] {
+.island[data-clickable] {
   cursor: pointer;
 }
 
-.pill-shimmer {
-  background: linear-gradient(90deg, transparent, var(--accent-record), transparent);
-  background-size: 200% 100%;
-  animation: pill-shimmer 1.2s linear infinite;
-}
-@keyframes pill-shimmer {
-  from { background-position: 200% 0; }
-  to { background-position: -200% 0; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .pill-shimmer {
-    background: var(--accent-record);
-    animation: pill-pulse 1.2s ease-in-out infinite alternate;
-  }
-  @keyframes pill-pulse {
-    from { opacity: 0.35; }
-    to { opacity: 0.9; }
-  }
+/* Character and the right-hand block sit together in the centre, 44 px apart. */
+.island-row {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 44px;
 }
 
-@media (prefers-reduced-transparency: reduce) {
-  .pill {
-    background: #0a0a0a;
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-  }
+.island-timer {
+  font-family: "Manrope Variable", "Manrope", sans-serif;
+  font-weight: 600;
+  font-size: 21px;
+  line-height: 1;
+  color: #e6e8ea;
+  font-variant-numeric: tabular-nums;
+  min-width: 48px;
+}
+
+.island-text {
+  max-width: 200px;
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.3;
+  color: #e6e8ea;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
