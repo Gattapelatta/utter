@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "vite",
+      "runtimeExecutable": "/bin/sh",
+      "runtimeArgs": ["-c", "PATH=$HOME/.local/node/bin:$PATH exec pnpm dev"],
+      "port": 1420
+    }
+  ]
+}

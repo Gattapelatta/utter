@@ -1,15 +1,21 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { render } from "@testing-library/react";
 import { Pill } from "./Pill";
+import { useApp } from "../lib/store";
 import type { OverlayState } from "../lib/types";
 
 const levels = Array.from({ length: 24 }, (_, i) => i / 24);
 
+beforeEach(() => useApp.setState({ lang: "ru" }));
+
 describe("Pill", () => {
-  it("renders nothing when hidden", () => {
-    const { container } = render(<Pill state={{ kind: "hidden" }} levels={levels} now={0} />);
-    expect(container.textContent).toBe("");
+  it("renders nothing for hidden and cancelled", () => {
+    for (const s of [{ kind: "hidden" }, { kind: "cancelled" }] as OverlayState[]) {
+      const { container, unmount } = render(<Pill state={s} levels={levels} now={0} />);
+      expect(container.textContent).toBe("");
+      unmount();
+    }
   });
 
   it("shows mode label and timer while recording", () => {
@@ -20,7 +26,14 @@ describe("Pill", () => {
     expect(container.querySelectorAll("[data-bar]").length).toBe(24);
   });
 
-  it("shows pending jobs while recording", () => {
+  it("shows translated labels in English", () => {
+    useApp.setState({ lang: "en" });
+    const s: OverlayState = { kind: "recording", mode: "Translate", style: "Casual", started_at_ms: 0, warn: false, pending: 0 };
+    const { container } = render(<Pill state={s} levels={levels} now={0} />);
+    expect(container.textContent).toContain("→ EN · Casual");
+  });
+
+  it("shows pending jobs and the limit warning while recording", () => {
     const s: OverlayState = { kind: "recording", mode: "Dictation", style: "Business", started_at_ms: 0, warn: true, pending: 1 };
     const { container } = render(<Pill state={s} levels={levels} now={1000} />);
     expect(container.textContent).toContain("Диктовка");
@@ -34,7 +47,6 @@ describe("Pill", () => {
       [{ kind: "done", outcome: "pasted", degraded: false }, "Вставлено"],
       [{ kind: "done", outcome: "copied", degraded: false }, "Скопировано — нажми ⌘V"],
       [{ kind: "done", outcome: "pasted", degraded: true }, "Вставлено без обработки"],
-      [{ kind: "error", message_key: "rate_limited", action: null, minutes: 3, provider: "Gemini" }, "сбросится через 3 мин"],
       [{ kind: "error", message_key: "no_key", action: "open_provider", minutes: null, provider: null }, "Добавь API-ключ"],
     ];
     for (const [s, text] of cases) {
@@ -42,6 +54,31 @@ describe("Pill", () => {
       expect(container.textContent).toContain(text);
       unmount();
     }
+  });
+
+  it("names the provider in rate-limit errors", () => {
+    const s: OverlayState = { kind: "error", message_key: "rate_limited", action: null, minutes: 3, provider: "Gemini" };
+    const { container } = render(<Pill state={s} levels={levels} now={0} />);
+    expect(container.textContent).toContain("Лимит Gemini исчерпан, сбросится через 3 мин");
+    const later: OverlayState = { ...s, minutes: null };
+    const { container: c2 } = render(<Pill state={later} levels={levels} now={0} />);
+    expect(c2.textContent).toContain("попробуй позже");
+  });
+
+  it("renders the success check for shown trial results", () => {
+    const s: OverlayState = { kind: "done", outcome: "shown", degraded: false };
+    const { container } = render(<Pill state={s} levels={levels} now={0} />);
+    expect(container.textContent).toContain("Готово");
+    expect(container.querySelector("[data-check]")).not.toBeNull();
+  });
+
+  it("label is truncated, not wrapped", () => {
+    const s: OverlayState = { kind: "error", message_key: "service_down", action: null, minutes: null, provider: "OpenAI" };
+    const { container } = render(<Pill state={s} levels={levels} now={0} />);
+    const label = container.querySelector("[data-label]") as HTMLElement;
+    expect(label.className).toMatch(/truncate/);
+    const pill = container.querySelector("[data-pill]") as HTMLElement;
+    expect(pill.className).toMatch(/max-w-\[448px\]/);
   });
 
   it("hints at a slow connection after 4 seconds of processing", () => {

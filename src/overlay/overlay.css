@@ -1,0 +1,77 @@
+@import "../styles/app.css";
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+/* The pill sits at the bottom of a taller window that leaves room for its shadow
+   and entrance motion (§4.2: 48 pt above the work area's bottom edge). */
+#root {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 24px;
+  box-sizing: border-box;
+}
+
+.pill {
+  background: rgba(10, 10, 10, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  white-space: nowrap;
+  transform-origin: bottom center;
+}
+
+/* Errors tint the pill red; the tint fades in rather than flashing. */
+.pill::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--accent-danger);
+  opacity: 0;
+  transition: opacity 150ms ease;
+  pointer-events: none;
+}
+.pill[data-tone="danger"]::before {
+  opacity: 0.12;
+}
+.pill[data-clickable] {
+  cursor: pointer;
+}
+
+.pill-shimmer {
+  background: linear-gradient(90deg, transparent, var(--accent-record), transparent);
+  background-size: 200% 100%;
+  animation: pill-shimmer 1.2s linear infinite;
+}
+@keyframes pill-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pill-shimmer {
+    background: var(--accent-record);
+    animation: pill-pulse 1.2s ease-in-out infinite alternate;
+  }
+  @keyframes pill-pulse {
+    from { opacity: 0.35; }
+    to { opacity: 0.9; }
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .pill {
+    background: #0a0a0a;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
