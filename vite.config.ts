@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 // @ts-expect-error type error without @types/node package
 import { resolve } from "node:path";
 // @ts-expect-error type error without @types/node package
@@ -8,7 +9,10 @@ const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(() => ({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
+
+  // tokens.test.ts reads the token file as text; Vitest blanks CSS unless included.
+  test: { css: { include: [/tokens\.css/] } },
 
   build: {
     rollupOptions: {

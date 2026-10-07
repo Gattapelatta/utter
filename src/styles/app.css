@@ -1,0 +1,36 @@
+@import "tailwindcss";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+@import "./tokens.css";
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text);
+  --color-text-secondary: var(--text-secondary);
+  --color-record: var(--accent-record);
+  --color-translate: var(--accent-translate);
+  --color-success: var(--accent-success);
+  --color-danger: var(--accent-danger);
+  --color-warning: var(--accent-warning);
+  --font-sans: var(--font);
+  --font-mono: var(--mono);
+}
+
+@layer base {
+  html {
+    font-family: var(--font);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  h1, h2, h3 {
+    font-weight: 500;
+    line-height: 1.15;
+  }
+  h1 { letter-spacing: -0.01em; }
+}
