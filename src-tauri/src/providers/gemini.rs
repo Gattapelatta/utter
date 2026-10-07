@@ -42,6 +42,8 @@ impl GeminiClient {
     pub fn new(cfg: ProviderConfig) -> Self {
         let client = reqwest::Client::builder()
             .pool_idle_timeout(Duration::from_secs(90))
+            // Offline, DNS/TCP would otherwise hang until the full request timeout.
+            .connect_timeout(Duration::from_secs(3))
             .build()
             .unwrap_or_default();
         Self { client, cfg, timeout_override: None, retry_delay: RETRY_DELAY }

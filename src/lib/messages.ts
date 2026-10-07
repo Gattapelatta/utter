@@ -4,6 +4,7 @@ export const overlayText = {
   dictation: "Диктовка",
   translate: { Business: "→ EN · Деловой", Casual: "→ EN · Разговорный" },
   processing: "Обработка…",
+  slow: "Жду ответа сервера…",
   pending: (n: number) => `ещё ${n} в обработке`,
   done: {
     pasted: "Вставлено",

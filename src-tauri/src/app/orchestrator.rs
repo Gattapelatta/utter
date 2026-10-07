@@ -33,7 +33,7 @@ const HOTKEY_CHECK: Duration = Duration::from_secs(2);
 pub enum OverlayState {
     Hidden,
     Recording { mode: Mode, style: TranslateStyle, started_at_ms: i64, warn: bool, pending: u32 },
-    Processing { pending: u32 },
+    Processing { pending: u32, since_ms: i64 },
     Done { outcome: String, degraded: bool },
     Error { message_key: String, action: Option<String>, minutes: Option<u32> },
 }
@@ -69,6 +69,8 @@ pub trait PermissionCheck: Send + Sync {
 
 pub trait HotkeyControl: Send + Sync {
     fn set_bindings(&self, b: Hotkeys);
+    /// While on, Escape and chord keys are consumed instead of reaching the focused app.
+    fn set_recording(&self, on: bool);
     /// Starts the listener if it is not running (e.g. permission was just granted).
     fn ensure_running(&self) -> bool;
     fn restart(&self);
@@ -176,6 +178,10 @@ pub struct Orchestrator {
     in_flight: u32,
     overlay_seq: u64,
     recording: Option<(Mode, i64)>,
+    /// A result that finished while a recording was on screen; shown when it ends.
+    deferred: Option<(OverlayState, Duration)>,
+    /// When the oldest unfinished job started processing (for the "slow" hint).
+    processing_since: i64,
     provider: Option<(ProviderKind, String, Arc<dyn Provider>)>,
     last_tick: Option<Instant>,
     last_hotkey_check: Option<Instant>,
@@ -226,6 +232,8 @@ impl Orchestrator {
             in_flight: 0,
             overlay_seq: 0,
             recording: None,
+            deferred: None,
+            processing_since: 0,
             provider: None,
             last_tick: None,
             last_hotkey_check: None,
@@ -264,6 +272,10 @@ impl Orchestrator {
             Input::Tick => self.tick(now).await,
             Input::JobDone(id, result) => {
                 self.in_flight = self.in_flight.saturating_sub(1);
+                if self.in_flight > 0 {
+                    // Approximation: the next job's wait is measured from now.
+                    self.processing_since = now_ms();
+                }
                 for (_, r) in self.queue.push(id, *result) {
                     self.finish(r).await;
                 }
@@ -301,6 +313,10 @@ impl Orchestrator {
         self.exec(cmds).await;
     }
 
+    fn processing_state(&self) -> OverlayState {
+        OverlayState::Processing { pending: self.in_flight, since_ms: self.processing_since }
+    }
+
     fn show(&mut self, s: OverlayState) {
         self.overlay_seq += 1;
         self.deps.overlay.show(&s);
@@ -309,10 +325,13 @@ impl Orchestrator {
     /// Shows a transient result unless a recording is on screen, then hides it later.
     fn show_result(&mut self, s: OverlayState, visible: Duration) {
         if self.recording.is_some() {
+            if matches!(s, OverlayState::Error { .. }) {
+                self.deferred = Some((s, visible));
+            }
             return;
         }
         if self.in_flight > 0 && matches!(s, OverlayState::Done { .. }) {
-            self.show(OverlayState::Processing { pending: self.in_flight });
+            self.show(self.processing_state());
             return;
         }
         self.show(s);
@@ -341,11 +360,13 @@ impl Orchestrator {
             match cmd {
                 Command::Start(mode) => self.start(mode),
                 Command::Submit { mode, .. } => self.submit(mode),
-                Command::Cancel(_) => {
+                Command::Cancel(reason) => {
+                    tracing::info!("recording cancelled: {reason:?}");
                     self.deps.audio.cancel();
-                    self.recording = None;
-                    if self.in_flight > 0 {
-                        self.show(OverlayState::Processing { pending: self.in_flight });
+                    if let Some((state, visible)) = self.end_recording() {
+                        self.show_result(state, visible);
+                    } else if self.in_flight > 0 {
+                        self.show(self.processing_state());
                     } else {
                         self.show(OverlayState::Hidden);
                     }
@@ -361,9 +382,16 @@ impl Orchestrator {
         }
     }
 
+    /// Clears recording state; returns a deferred error to show, if any.
+    fn end_recording(&mut self) -> Option<(OverlayState, Duration)> {
+        self.recording = None;
+        self.deps.hotkeys.set_recording(false);
+        self.deferred.take()
+    }
+
     fn fail_start(&mut self, state: OverlayState) {
         self.controller.abort();
-        self.recording = None;
+        self.end_recording();
         self.show_result(state, ERROR_VISIBLE);
     }
 
@@ -381,6 +409,7 @@ impl Orchestrator {
         }
         let started = now_ms();
         self.recording = Some((mode, started));
+        self.deps.hotkeys.set_recording(true);
         let pending = self.in_flight;
         self.show(OverlayState::Recording {
             mode,
@@ -393,9 +422,12 @@ impl Orchestrator {
     }
 
     fn submit(&mut self, mode: Mode) {
-        self.recording = None;
+        let deferred = self.end_recording();
         let captured = self.deps.audio.stop().unwrap_or_default();
         self.spawn_job(mode, AudioInput::Captured(captured), None);
+        if let Some((state, visible)) = deferred {
+            self.show_result(state, visible);
+        }
     }
 
     fn retry(&mut self, history_id: u64) {
@@ -411,9 +443,12 @@ impl Orchestrator {
     fn spawn_job(&mut self, mode: Mode, audio_in: AudioInput, history_id: Option<u64>) {
         let s = self.shared.settings();
         let id = self.ids.next();
+        if self.in_flight == 0 {
+            self.processing_since = now_ms();
+        }
         self.in_flight += 1;
         if self.recording.is_none() {
-            self.show(OverlayState::Processing { pending: self.in_flight });
+            self.show(self.processing_state());
         }
         let provider = self.provider_for(&s);
         let audio_dir = self.shared.audio_dir();
@@ -702,9 +737,15 @@ mod tests {
         }
     }
 
-    struct NoHotkeys;
+    #[derive(Default)]
+    struct NoHotkeys {
+        recording: std::sync::atomic::AtomicBool,
+    }
     impl HotkeyControl for NoHotkeys {
         fn set_bindings(&self, _: crate::settings::Hotkeys) {}
+        fn set_recording(&self, on: bool) {
+            self.recording.store(on, Ordering::SeqCst);
+        }
         fn ensure_running(&self) -> bool {
             true
         }
@@ -719,6 +760,7 @@ mod tests {
         out: Arc<FakeOutput>,
         overlay: Arc<FakeOverlay>,
         shared: Arc<Shared>,
+        hotkeys: Arc<NoHotkeys>,
         _dir: tempfile::TempDir,
     }
 
@@ -736,6 +778,7 @@ mod tests {
         let provider = Arc::new(provider);
         let out = Arc::new(FakeOutput::default());
         let overlay = Arc::new(FakeOverlay::default());
+        let hotkeys = Arc::new(NoHotkeys::default());
         let deps = Deps {
             secrets,
             audio: audio.clone(),
@@ -743,11 +786,11 @@ mod tests {
             output: out.clone(),
             overlay: overlay.clone(),
             permissions: Arc::new(AllGranted),
-            hotkeys: Arc::new(NoHotkeys),
+            hotkeys: hotkeys.clone(),
         };
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let orch = Orchestrator::new(deps, shared.clone(), tx);
-        Rig { orch, rx, audio, provider, out, overlay, shared, _dir: dir }
+        Rig { orch, rx, audio, provider, out, overlay, shared, hotkeys, _dir: dir }
     }
 
     impl Rig {
@@ -888,5 +931,32 @@ mod tests {
         assert_eq!(*r.out.0.lock().unwrap(), vec!["Hello there.".to_string()]);
         assert_eq!(r.provider.direct_calls.load(Ordering::SeqCst), 1);
         assert_eq!(r.provider.stt_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn recording_flag_follows_recording() {
+        let mut r = rig(FakeProvider::new(Ok("x".into()), Ok("x".into())), true);
+        let t0 = Instant::now();
+        r.orch.handle(Input::Hotkey(HotkeyEvent::Down(Mode::Dictation)), t0).await;
+        assert!(r.hotkeys.recording.load(Ordering::SeqCst));
+        r.orch.handle(Input::Hotkey(HotkeyEvent::Escape), t0 + Duration::from_secs(1)).await;
+        assert!(!r.hotkeys.recording.load(Ordering::SeqCst));
+        r.audio.captures.lock().unwrap().push_back(speech(1.0));
+        r.orch.handle(Input::Hotkey(HotkeyEvent::Down(Mode::Dictation)), t0 + Duration::from_secs(2)).await;
+        r.orch.handle(Input::Hotkey(HotkeyEvent::Up(Mode::Dictation)), t0 + Duration::from_secs(3)).await;
+        assert!(!r.hotkeys.recording.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn error_during_recording_is_shown_after_recording_ends() {
+        let mut r = rig(FakeProvider::new(Ok("x".into()), Err(ProviderError::Network)), true);
+        let t0 = Instant::now();
+        r.record(Mode::Dictation, speech(1.0), t0, 1).await;
+        // A new recording starts before the first job fails.
+        r.orch.handle(Input::Hotkey(HotkeyEvent::Down(Mode::Dictation)), t0 + Duration::from_secs(2)).await;
+        r.settle(1).await;
+        assert_eq!(r.overlay.last_error(), None, "no error over an active recording");
+        r.orch.handle(Input::Hotkey(HotkeyEvent::Escape), t0 + Duration::from_secs(4)).await;
+        assert_eq!(r.overlay.last_error().as_deref(), Some("network"));
     }
 }

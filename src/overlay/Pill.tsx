@@ -9,6 +9,9 @@ interface Props {
   now: number;
 }
 
+/** After this long without an answer the network is the likely culprit. */
+const SLOW_AFTER_MS = 4_000;
+
 function formatTimer(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
@@ -40,7 +43,9 @@ export function Pill({ state, levels, now }: Props) {
     return (
       <div className="pill">
         <span className="shimmer" aria-hidden />
-        <span className="label">{overlayText.processing}</span>
+        <span className="label">
+          {now - state.since_ms > SLOW_AFTER_MS ? overlayText.slow : overlayText.processing}
+        </span>
       </div>
     );
   }

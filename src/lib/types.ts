@@ -40,7 +40,7 @@ export interface Settings {
 export type OverlayState =
   | { kind: "hidden" }
   | { kind: "recording"; mode: Mode; style: TranslateStyle; started_at_ms: number; warn: boolean; pending: number }
-  | { kind: "processing"; pending: number }
+  | { kind: "processing"; pending: number; since_ms: number }
   | { kind: "done"; outcome: "pasted" | "typed" | "copied" | "failed"; degraded: boolean }
   | { kind: "error"; message_key: string; action: string | null; minutes: number | null };
 

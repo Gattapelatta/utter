@@ -6,10 +6,11 @@ use serde::Deserialize;
 
 use super::{Completion, ProviderConfig, ProviderError, SpeechToText, TextModel};
 
-const BASE_TIMEOUT: Duration = Duration::from_secs(15);
+/// Gemini answers short clips in ~1.5 s; 10 s keeps a dead network from looking endless.
+const BASE_TIMEOUT: Duration = Duration::from_secs(10);
 const RETRY_DELAY: Duration = Duration::from_secs(1);
 
-/// 15 s, plus 5 s for every minute of audio beyond two minutes.
+/// 10 s, plus 5 s for every minute of audio beyond two minutes.
 pub fn request_timeout(audio_secs: f32) -> Duration {
     let extra_minutes = ((audio_secs - 120.0) / 60.0).ceil().max(0.0) as u64;
     BASE_TIMEOUT + Duration::from_secs(5 * extra_minutes)
@@ -88,6 +89,8 @@ impl OpenAiCompatible {
     pub fn new(cfg: ProviderConfig) -> Self {
         let client = reqwest::Client::builder()
             .pool_idle_timeout(Duration::from_secs(90))
+            // Offline, DNS/TCP would otherwise hang until the full request timeout.
+            .connect_timeout(Duration::from_secs(3))
             .build()
             .unwrap_or_default();
         Self { client, cfg, timeout_override: None, retry_delay: RETRY_DELAY }
@@ -446,10 +449,10 @@ mod tests {
 
     #[test]
     fn timeout_formula() {
-        assert_eq!(request_timeout(30.0), Duration::from_secs(15));
-        assert_eq!(request_timeout(120.0), Duration::from_secs(15));
-        assert_eq!(request_timeout(180.0), Duration::from_secs(20));
-        assert_eq!(request_timeout(600.0), Duration::from_secs(55));
+        assert_eq!(request_timeout(30.0), Duration::from_secs(10));
+        assert_eq!(request_timeout(120.0), Duration::from_secs(10));
+        assert_eq!(request_timeout(180.0), Duration::from_secs(15));
+        assert_eq!(request_timeout(600.0), Duration::from_secs(50));
     }
 
     #[test]

@@ -176,7 +176,10 @@ pub async fn run_direct(
             }
             Ok(JobOutput { raw: text.clone(), text, degraded: false, tokens: c.total_tokens, llm_used: true })
         }
-        Err(ProviderError::Unauthorized) => Err(JobError::Provider(ProviderError::Unauthorized)),
+        // Without a network (or with a bad key) the fallback would fail the same way.
+        Err(e @ (ProviderError::Unauthorized | ProviderError::Network | ProviderError::Timeout)) => {
+            Err(JobError::Provider(e))
+        }
         Err(e) => {
             tracing::warn!("audio model failed ({e}); falling back to plain transcription");
             let raw = stt
@@ -410,5 +413,28 @@ mod tests {
         assert!(audio_system_prompt(Mode::Dictation, &opts(false, false, TranslateStyle::Business), 5.0).is_none());
         let p = audio_system_prompt(Mode::Dictation, &opts(true, true, TranslateStyle::Business), 45.0).unwrap();
         assert!(p.contains("paragraphs") && p.contains("no intelligible speech"));
+    }
+
+    #[tokio::test]
+    async fn run_direct_network_error_does_not_fall_back() {
+        for e in [ProviderError::Network, ProviderError::Timeout] {
+            let audio = FakeAudioLlm::new(Err(e.clone()));
+            let stt = CountingStt::default();
+            let r = run_direct(Mode::Dictation, vec![], 3.0, &opts(true, false, TranslateStyle::Business), &audio, &stt).await;
+            assert_eq!(r, Err(JobError::Provider(e)));
+            assert_eq!(stt.calls.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    #[derive(Default)]
+    struct CountingStt {
+        calls: AtomicUsize,
+    }
+    #[async_trait::async_trait]
+    impl SpeechToText for CountingStt {
+        async fn transcribe(&self, _: Vec<u8>, _: Option<String>, _: f32) -> Result<String, ProviderError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok("x".into())
+        }
     }
 }

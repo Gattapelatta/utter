@@ -36,6 +36,12 @@ impl HotkeyHandle {
         }
     }
 
+    pub fn set_recording(&self, on: bool) {
+        if let Ok(mut r) = self.router.lock() {
+            r.set_recording(on);
+        }
+    }
+
     /// Resolves with the next key the user presses; dropped (error) on Escape.
     pub fn capture_next_key(&self) -> oneshot::Receiver<KeyId> {
         let (tx, rx) = oneshot::channel();

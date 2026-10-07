@@ -10,6 +10,14 @@ pub struct Decoded {
     pub tap_only: bool,
 }
 
+/// Stamped into `EVENT_SOURCE_USER_DATA` of every key event Utter posts itself,
+/// so the listener never mistakes its own ⌘V for the user's keystroke.
+pub const SYNTHETIC_MARK: i64 = 0x0055_5454_4552; // "UTTER"
+
+pub fn is_synthetic(user_data: i64) -> bool {
+    user_data == SYNTHETIC_MARK
+}
+
 // Device-dependent modifier bits (NX_DEVICE*KEYMASK) distinguish left from right.
 const NX_LCTL: u64 = 0x0001;
 const NX_LSHIFT: u64 = 0x0002;
@@ -106,9 +114,13 @@ pub(super) fn spawn_tap(
             let tap = CGEventTap::new(
                 CGEventTapLocation::Session,
                 CGEventTapPlacement::HeadInsertEventTap,
-                CGEventTapOptions::ListenOnly,
+                // Active (not listen-only): keys pressed during a recording can be swallowed.
+                CGEventTapOptions::Default,
                 vec![CGEventType::KeyDown, CGEventType::KeyUp, CGEventType::FlagsChanged],
                 move |_proxy, etype, event| {
+                    if is_synthetic(event.get_integer_value_field(EventField::EVENT_SOURCE_USER_DATA)) {
+                        return Some(event.clone());
+                    }
                     let decoded = match etype {
                         CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput => {
                             let p = port_cb.load(Ordering::SeqCst);
@@ -131,13 +143,17 @@ pub(super) fn spawn_tap(
                         }
                         _ => None,
                     };
-                    if let Some(d) = decoded {
-                        let ev = router.lock().ok().and_then(|mut r| r.route(d.key, d.down, d.tap_only));
-                        if let Some(ev) = ev {
-                            let _ = tx.send(ev);
-                        }
+                    let Some(d) = decoded else { return Some(event.clone()) };
+                    let routed = router.lock().ok().map(|mut r| r.filter(d.key, d.down, d.tap_only));
+                    let Some(routed) = routed else { return Some(event.clone()) };
+                    if let Some(ev) = routed.event {
+                        let _ = tx.send(ev);
                     }
-                    None
+                    if routed.swallow {
+                        None
+                    } else {
+                        Some(event.clone())
+                    }
                 },
             );
             let tap = match tap {
@@ -216,5 +232,11 @@ mod tests {
         assert_eq!(keycode_to_key(122), KeyId::F(1));
         assert_eq!(keycode_to_key(53), KeyId::Escape);
         assert_eq!(keycode_to_key(0), KeyId::Raw(0));
+    }
+
+    #[test]
+    fn synthetic_mark_is_recognised() {
+        assert!(is_synthetic(SYNTHETIC_MARK));
+        assert!(!is_synthetic(0));
     }
 }

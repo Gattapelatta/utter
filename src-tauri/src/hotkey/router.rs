@@ -8,9 +8,21 @@ use crate::controller::HotkeyEvent;
 use crate::settings::Hotkeys;
 use crate::types::{KeyId, Mode};
 
+/// What to do with one key transition.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Routed {
+    pub event: Option<HotkeyEvent>,
+    /// Drop the key so the focused app never sees it.
+    pub swallow: bool,
+}
+
 pub struct Router {
     bindings: Hotkeys,
     held: HashSet<KeyId>,
+    /// A recording is in progress: Escape and chord keys are consumed.
+    recording: bool,
+    /// Keys whose press was swallowed; their release is swallowed too.
+    swallowed: HashSet<KeyId>,
     capture: Option<oneshot::Sender<KeyId>>,
     /// Key taken by capture whose release must be swallowed.
     captured: Option<KeyId>,
@@ -18,7 +30,14 @@ pub struct Router {
 
 impl Router {
     pub fn new(bindings: Hotkeys) -> Self {
-        Self { bindings, held: HashSet::new(), capture: None, captured: None }
+        Self {
+            bindings,
+            held: HashSet::new(),
+            recording: false,
+            swallowed: HashSet::new(),
+            capture: None,
+            captured: None,
+        }
     }
 
     pub fn set_bindings(&mut self, bindings: Hotkeys) {
@@ -41,7 +60,29 @@ impl Router {
         }
     }
 
+    pub fn set_recording(&mut self, on: bool) {
+        self.recording = on;
+    }
+
     pub fn route(&mut self, key: KeyId, down: bool, tap_only: bool) -> Option<HotkeyEvent> {
+        self.filter(key, down, tap_only).event
+    }
+
+    /// Routes a key transition and decides whether the focused app may see it.
+    pub fn filter(&mut self, key: KeyId, down: bool, tap_only: bool) -> Routed {
+        if !down && self.swallowed.remove(&key) {
+            return Routed { event: None, swallow: true };
+        }
+        let event = self.route_event(key.clone(), down, tap_only);
+        let consumable = matches!(event, Some(HotkeyEvent::Escape | HotkeyEvent::OtherKey));
+        let swallow = down && self.recording && consumable;
+        if swallow {
+            self.swallowed.insert(key);
+        }
+        Routed { event, swallow }
+    }
+
+    fn route_event(&mut self, key: KeyId, down: bool, tap_only: bool) -> Option<HotkeyEvent> {
         if down {
             if let Some(tx) = self.capture.take() {
                 if key != KeyId::Escape {
@@ -160,5 +201,47 @@ mod tests {
         assert_eq!(r.route(KeyId::Escape, true, false), None);
         assert!(rx.try_recv().is_err());
         assert_eq!(r.route(KeyId::RightAlt, true, false), Some(HotkeyEvent::Down(D)));
+    }
+
+    #[test]
+    fn swallows_other_key_while_recording_and_its_release() {
+        let mut r = router();
+        r.filter(KeyId::RightAlt, true, false);
+        r.set_recording(true);
+        assert_eq!(r.filter(KeyId::Raw(14), true, false), Routed { event: Some(HotkeyEvent::OtherKey), swallow: true });
+        assert_eq!(r.filter(KeyId::Raw(14), false, false), Routed { event: None, swallow: true });
+        // The next press of the same key after recording ends is delivered normally.
+        r.set_recording(false);
+        r.filter(KeyId::RightAlt, false, false);
+        assert_eq!(r.filter(KeyId::Raw(14), true, false), Routed { event: None, swallow: false });
+    }
+
+    #[test]
+    fn other_key_is_not_swallowed_when_not_recording() {
+        let mut r = router();
+        r.filter(KeyId::RightAlt, true, false);
+        assert_eq!(r.filter(KeyId::Raw(14), true, false), Routed { event: Some(HotkeyEvent::OtherKey), swallow: false });
+    }
+
+    #[test]
+    fn swallows_escape_while_recording() {
+        let mut r = router();
+        r.set_recording(true);
+        assert_eq!(r.filter(KeyId::Escape, true, false), Routed { event: Some(HotkeyEvent::Escape), swallow: true });
+        assert_eq!(r.filter(KeyId::Escape, false, false), Routed { event: None, swallow: true });
+    }
+
+    #[test]
+    fn escape_passes_through_when_idle() {
+        let mut r = router();
+        assert_eq!(r.filter(KeyId::Escape, true, false), Routed { event: Some(HotkeyEvent::Escape), swallow: false });
+    }
+
+    #[test]
+    fn hotkeys_themselves_are_never_swallowed() {
+        let mut r = router();
+        r.set_recording(true);
+        assert!(!r.filter(KeyId::RightAlt, true, false).swallow);
+        assert!(!r.filter(KeyId::RightAlt, false, false).swallow);
     }
 }

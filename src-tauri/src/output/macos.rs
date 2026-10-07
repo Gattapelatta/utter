@@ -2,7 +2,9 @@
 
 use std::time::{Duration, Instant};
 
-use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation, CGKeyCode};
+use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation, CGKeyCode, EventField};
+
+use crate::hotkey::macos::SYNTHETIC_MARK;
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 
 use super::InputPlatform;
@@ -36,6 +38,7 @@ impl MacInput {
                 .map_err(|_| "cannot create key event".to_string())?;
             // Explicit flags: a still-held Option must not turn ⌘V into ⌥⌘V.
             ev.set_flags(flags);
+            ev.set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, SYNTHETIC_MARK);
             ev.post(CGEventTapLocation::HID);
         }
         Ok(())
@@ -74,6 +77,7 @@ impl InputPlatform for MacInput {
                 .map_err(|_| "cannot create key event".to_string())?;
             ev.set_flags(CGEventFlags::CGEventFlagNull);
             ev.set_string(chunk);
+            ev.set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, SYNTHETIC_MARK);
             ev.post(CGEventTapLocation::HID);
         }
         Ok(())

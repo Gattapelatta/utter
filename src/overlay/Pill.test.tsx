@@ -30,7 +30,7 @@ describe("Pill", () => {
 
   it("renders processing, done and error states", () => {
     const cases: [OverlayState, string][] = [
-      [{ kind: "processing", pending: 1 }, "Обработка…"],
+      [{ kind: "processing", pending: 1, since_ms: 0 }, "Обработка…"],
       [{ kind: "done", outcome: "pasted", degraded: false }, "Вставлено"],
       [{ kind: "done", outcome: "copied", degraded: false }, "Скопировано — нажми ⌘V"],
       [{ kind: "done", outcome: "pasted", degraded: true }, "Вставлено без обработки"],
@@ -42,5 +42,13 @@ describe("Pill", () => {
       expect(container.textContent).toContain(text);
       unmount();
     }
+  });
+
+  it("hints at a slow connection after 4 seconds of processing", () => {
+    const s: OverlayState = { kind: "processing", pending: 1, since_ms: 0 };
+    const { container: fast } = render(<Pill state={s} levels={levels} now={3_000} />);
+    expect(fast.textContent).toContain("Обработка…");
+    const { container: slow } = render(<Pill state={s} levels={levels} now={4_500} />);
+    expect(slow.textContent).toContain("Жду ответа сервера…");
   });
 });

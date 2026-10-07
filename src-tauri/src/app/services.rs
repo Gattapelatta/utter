@@ -114,6 +114,14 @@ impl HotkeyControl for HotkeyService {
         }
     }
 
+    fn set_recording(&self, on: bool) {
+        if let Ok(h) = self.handle.lock() {
+            if let Some(h) = h.as_ref() {
+                h.set_recording(on);
+            }
+        }
+    }
+
     fn ensure_running(&self) -> bool {
         let Ok(mut slot) = self.handle.lock() else { return false };
         if slot.is_some() {
