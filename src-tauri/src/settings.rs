@@ -67,7 +67,6 @@ pub struct Settings {
     pub speech_language: Option<String>,
     pub cleanup: bool,
     pub paragraphs: bool,
-    pub sounds: bool,
     pub autostart: bool,
     pub theme: Theme,
     pub ui_language: UiLanguage,
@@ -91,7 +90,6 @@ impl Settings {
             speech_language,
             cleanup: true,
             paragraphs: false,
-            sounds: true,
             autostart: false,
             theme: Theme::Dark,
             ui_language: UiLanguage::Auto,
@@ -193,7 +191,7 @@ mod tests {
         assert_eq!(s.record_mode, RecordMode::Hold);
         assert_eq!(s.insert_method, InsertMethod::Paste);
         assert_eq!(s.speech_language.as_deref(), Some("ru"));
-        assert!(s.cleanup && !s.paragraphs && s.sounds && s.history_enabled);
+        assert!(s.cleanup && !s.paragraphs && s.history_enabled);
         assert!(!s.autostart);
         assert_eq!(s.theme, Theme::Dark);
         assert_eq!(s.ui_language, UiLanguage::Auto);
@@ -258,6 +256,17 @@ mod tests {
         assert!(!s.cleanup);
         assert_eq!(s.record_mode, RecordMode::Hold);
         assert_eq!(s.speech_language.as_deref(), Some("ru"));
+    }
+
+    #[test]
+    fn old_file_with_sounds_field_still_loads() {
+        // Sounds were removed (2026-10-08); settings saved before keep loading.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"{"schema_version":1,"sounds":true,"cleanup":false}"#).unwrap();
+        let s = load(&path, Some("ru"));
+        assert!(!s.cleanup);
+        assert!(!dir.path().join("settings.json.bak").exists());
     }
 
     #[test]

@@ -20,7 +20,6 @@ use crate::providers::{AudioLlm, ProviderError, SpeechToText, TextModel};
 use crate::recorder::AudioSource;
 use crate::secrets::SecretStore;
 use crate::settings::{Hotkeys, InsertMethod, ProviderKind, Settings, TranslateStyle};
-use crate::sounds::Cue;
 use crate::types::Mode;
 use crate::usage::Usage;
 
@@ -89,9 +88,6 @@ pub trait UiSink: Send + Sync {
     fn emit(&self, e: UiEvent);
 }
 
-pub trait Sounds: Send + Sync {
-    fn play(&self, cue: Cue);
-}
 
 pub trait OverlaySink: Send + Sync {
     fn show(&self, s: &OverlayState);
@@ -138,7 +134,6 @@ pub struct Deps {
     pub permissions: Arc<dyn PermissionCheck>,
     pub hotkeys: Arc<dyn HotkeyControl>,
     pub ui: Arc<dyn UiSink>,
-    pub sounds: Arc<dyn Sounds>,
 }
 
 /// State the settings UI reads and writes directly.
@@ -508,9 +503,6 @@ impl Orchestrator {
             tracing::warn!("recorder failed to start: {e}");
             return self.fail_start(OverlayState::error("no_microphone", None));
         }
-        if s.sounds {
-            self.deps.sounds.play(Cue::Start);
-        }
         let started = now_ms();
         self.recording = Some((mode, started));
         self.deps.hotkeys.set_recording(true);
@@ -526,9 +518,6 @@ impl Orchestrator {
     }
 
     fn submit(&mut self, mode: Mode) {
-        if self.shared.settings().sounds {
-            self.deps.sounds.play(Cue::Stop);
-        }
         let deferred = self.end_recording();
         let captured = self.deps.audio.stop().unwrap_or_default();
         self.spawn_job(mode, AudioInput::Captured(captured), None);
@@ -749,8 +738,7 @@ mod tests {
     use crate::recorder::{AudioSource, RecorderError};
     use crate::secrets::{MemoryStore, SecretStore};
     use crate::settings::{InsertMethod, ProviderKind, Settings};
-    use crate::sounds::Cue;
-    use crate::types::Mode;
+        use crate::types::Mode;
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
@@ -886,14 +874,6 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
-    struct FakeSounds(Mutex<Vec<Cue>>);
-    impl Sounds for FakeSounds {
-        fn play(&self, cue: Cue) {
-            self.0.lock().unwrap().push(cue);
-        }
-    }
-
     struct AllGranted(Mutex<PermStatus>);
     impl PermissionCheck for AllGranted {
         fn accessibility(&self) -> bool {
@@ -933,7 +913,6 @@ mod tests {
         hotkeys: Arc<NoHotkeys>,
         perms: Arc<AllGranted>,
         ui: Arc<FakeUi>,
-        sounds: Arc<FakeSounds>,
         _dir: tempfile::TempDir,
     }
 
@@ -954,7 +933,6 @@ mod tests {
         let hotkeys = Arc::new(NoHotkeys::default());
         let perms = Arc::new(AllGranted(Mutex::new(PermStatus::Granted)));
         let ui = Arc::new(FakeUi::default());
-        let sounds = Arc::new(FakeSounds::default());
         let deps = Deps {
             secrets,
             audio: audio.clone(),
@@ -964,11 +942,10 @@ mod tests {
             permissions: perms.clone(),
             hotkeys: hotkeys.clone(),
             ui: ui.clone(),
-            sounds: sounds.clone(),
         };
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let orch = Orchestrator::new(deps, shared.clone(), tx);
-        Rig { orch, rx, audio, provider, out, overlay, shared, hotkeys, perms, ui, sounds, _dir: dir }
+        Rig { orch, rx, audio, provider, out, overlay, shared, hotkeys, perms, ui, _dir: dir }
     }
 
     impl Rig {
@@ -1173,7 +1150,6 @@ mod tests {
             permissions: r.perms.clone(),
             hotkeys: r.hotkeys.clone(),
             ui: r.ui.clone(),
-            sounds: r.sounds.clone(),
         };
         r.orch = Orchestrator::new(deps, r.shared.clone(), tx);
         r.rx = rx;
@@ -1224,25 +1200,6 @@ mod tests {
                 UiEvent::Hotkey { mode: Mode::Translate, down: false },
             ]
         );
-    }
-
-    #[tokio::test]
-    async fn sounds_play_on_start_and_submit_when_enabled() {
-        let mut r = rig(FakeProvider::new(Ok("x".into()), Ok("x".into())), true);
-        r.record(Mode::Dictation, speech(1.0), Instant::now(), 1).await;
-        assert_eq!(*r.sounds.0.lock().unwrap(), vec![Cue::Start, Cue::Stop]);
-    }
-
-    #[tokio::test]
-    async fn no_sounds_when_disabled_or_cancelled() {
-        let mut r = rig(FakeProvider::new(Ok("x".into()), Ok("x".into())), true);
-        let t0 = Instant::now();
-        r.orch.handle(Input::Hotkey(HotkeyEvent::Down(Mode::Dictation)), t0).await;
-        r.orch.handle(Input::Hotkey(HotkeyEvent::Escape), t0 + Duration::from_secs(1)).await;
-        assert_eq!(*r.sounds.0.lock().unwrap(), vec![Cue::Start]);
-        r.shared.settings.lock().unwrap().sounds = false;
-        r.record(Mode::Dictation, speech(1.0), t0 + Duration::from_secs(2), 1).await;
-        assert_eq!(*r.sounds.0.lock().unwrap(), vec![Cue::Start]);
     }
 
     #[tokio::test]

@@ -65,8 +65,6 @@
   "general.cleanup_hint": "Убирает «э-э», «ну», повторы, ставит знаки препинания. Смысл не меняет.",
   "general.paragraphs": "Абзацы в длинных текстах",
   "general.paragraphs_hint": "Для записей длиннее 30 с.",
-  "general.sounds": "Звуки",
-  "general.sounds_hint": "Тихий сигнал в начале и в конце записи.",
   "general.autostart": "Запускать при входе в систему",
   "general.theme": "Тема",
   "general.theme_dark": "Тёмная",

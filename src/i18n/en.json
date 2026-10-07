@@ -65,8 +65,6 @@
   "general.cleanup_hint": "Removes “um”, “uh” and repeats, adds punctuation. Never changes the meaning.",
   "general.paragraphs": "Paragraphs in long texts",
   "general.paragraphs_hint": "For recordings longer than 30 s.",
-  "general.sounds": "Sounds",
-  "general.sounds_hint": "A soft cue when recording starts and stops.",
   "general.autostart": "Open at login",
   "general.theme": "Theme",
   "general.theme_dark": "Dark",

@@ -7,14 +7,13 @@ use tokio::sync::mpsc::UnboundedSender;
 use tauri::{AppHandle, Emitter};
 
 use super::orchestrator::{
-    Deliverer, HotkeyControl, Input, PermissionCheck, Provider, ProviderFactory, Sounds, UiEvent, UiSink,
+    Deliverer, HotkeyControl, Input, PermissionCheck, Provider, ProviderFactory, UiEvent, UiSink,
 };
 use crate::hotkey::{self, HotkeyHandle};
 use crate::output::{self, DeliveryOutcome};
 use crate::permissions::{self, PermStatus};
 use crate::providers::{defaults, GeminiClient, OpenAiCompatible, ProviderError};
 use crate::settings::{Hotkeys, InsertMethod, ProviderKind};
-use crate::sounds::Cue;
 use crate::types::KeyId;
 
 /// Sends orchestrator events to the settings window (when open).
@@ -36,61 +35,6 @@ impl UiSink for TauriUi {
             UiEvent::Trial(o) => self.app.emit_to(WINDOW, "ui://trial", o),
             UiEvent::HistoryChanged => self.app.emit_to(WINDOW, "ui://history", ()),
         };
-    }
-}
-
-/// Plays the start/stop cues through AppKit on the main thread.
-pub struct TauriSounds {
-    pub app: AppHandle,
-}
-
-impl Sounds for TauriSounds {
-    fn play(&self, cue: Cue) {
-        #[cfg(target_os = "macos")]
-        {
-            let _ = self.app.run_on_main_thread(move || mac_sound::play(cue));
-        }
-        #[cfg(not(target_os = "macos"))]
-        let _ = cue;
-    }
-}
-
-#[cfg(target_os = "macos")]
-mod mac_sound {
-    use std::cell::RefCell;
-
-    use objc2::rc::Retained;
-    use objc2::AllocAnyThread;
-    use objc2_app_kit::NSSound;
-    use objc2_foundation::NSData;
-
-    use crate::sounds::{cue_wav, Cue};
-
-    /// Quiet: the cues are already synthesised at −20 dBFS.
-    const VOLUME: f32 = 0.5;
-
-    thread_local! {
-        static CACHE: RefCell<Vec<(Cue, Retained<NSSound>)>> = const { RefCell::new(Vec::new()) };
-    }
-
-    /// Must run on the main thread; sounds are built once and reused.
-    pub fn play(cue: Cue) {
-        CACHE.with(|c| {
-            let mut cache = c.borrow_mut();
-            if !cache.iter().any(|(k, _)| *k == cue) {
-                let data = NSData::from_vec(cue_wav(cue));
-                let Some(sound) = NSSound::initWithData(NSSound::alloc(), &data) else {
-                    tracing::warn!("could not create sound {cue:?}");
-                    return;
-                };
-                sound.setVolume(VOLUME);
-                cache.push((cue, sound));
-            }
-            if let Some((_, sound)) = cache.iter().find(|(k, _)| *k == cue) {
-                sound.stop();
-                sound.play();
-            }
-        });
     }
 }
 

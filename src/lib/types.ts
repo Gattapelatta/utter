@@ -26,7 +26,6 @@ export interface Settings {
   speech_language: string | null;
   cleanup: boolean;
   paragraphs: boolean;
-  sounds: boolean;
   autostart: boolean;
   theme: Theme;
   ui_language: UiLanguage;

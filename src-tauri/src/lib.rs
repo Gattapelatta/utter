@@ -11,7 +11,6 @@ pub mod providers;
 pub mod recorder;
 pub mod secrets;
 pub mod settings;
-pub mod sounds;
 pub mod usage;
 pub mod types;
 
@@ -92,7 +91,6 @@ fn init_core(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         permissions: Arc::new(SystemPermissions),
         hotkeys: hotkeys.clone(),
         ui: Arc::new(app::services::TauriUi { app: app.handle().clone() }),
-        sounds: Arc::new(app::services::TauriSounds { app: app.handle().clone() }),
     };
     let orchestrator = Orchestrator::new(deps, shared.clone(), tx.clone());
     tauri::async_runtime::spawn(orchestrator.run(rx));

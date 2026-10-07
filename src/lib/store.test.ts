@@ -12,7 +12,6 @@ const base: Settings = {
   speech_language: "ru",
   cleanup: true,
   paragraphs: false,
-  sounds: true,
   autostart: false,
   theme: "Dark",
   ui_language: "Auto",
