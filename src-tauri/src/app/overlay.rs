@@ -8,12 +8,21 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewWindow};
 use super::orchestrator::{OverlaySink, OverlayState};
 
 const LABEL: &str = "overlay";
-/// Window bottom above the work area's bottom edge, in points. The pill sits 24 pt
-/// higher inside the window (room for its shadow), i.e. 48 pt above the edge (§4.2).
-const BOTTOM_MARGIN: f64 = 24.0;
-/// The window is ordered out only after the pill's exit animation (160 ms / 120 ms).
-const HIDE_AFTER: Duration = Duration::from_millis(200);
-const CANCEL_HIDE_AFTER: Duration = Duration::from_millis(140);
+/// The window is ordered out only after the island folds back into the notch (450 / 300 ms).
+const HIDE_AFTER: Duration = Duration::from_millis(500);
+const CANCEL_HIDE_AFTER: Duration = Duration::from_millis(350);
+
+/// The camera cut-out of a MacBook display, in points.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+pub struct Notch {
+    pub width: f64,
+    pub height: f64,
+}
+
+/// The island hangs from the top edge of the screen, centred (§4.2).
+pub fn island_origin(screen_x: f64, screen_y: f64, screen_w: f64, window_w: f64) -> (f64, f64) {
+    (screen_x + (screen_w - window_w) / 2.0, screen_y)
+}
 
 /// Each overlay state gets a generation; a delayed hide only runs if no newer state came.
 #[derive(Default)]
@@ -81,14 +90,16 @@ impl OverlaySink for TauriOverlay {
 
 fn apply(app: &AppHandle, s: &OverlayState) {
     let Some(w) = app.get_webview_window(LABEL) else { return };
-    let _ = app.emit_to(LABEL, "overlay://state", s);
     match s {
-        // The window stays up while the pill animates out; see `TauriOverlay::show`.
+        // The window stays up while the island folds away; see `TauriOverlay::show`.
         OverlayState::Hidden | OverlayState::Cancelled => {
+            let _ = app.emit_to(LABEL, "overlay://state", s);
             let _ = w.set_ignore_cursor_events(true);
         }
         _ => {
+            // The notch size must reach the page before the state that makes the island grow.
             place(app, &w);
+            let _ = app.emit_to(LABEL, "overlay://state", s);
             let clickable = matches!(s, OverlayState::Error { action: Some(_), .. });
             let _ = w.set_ignore_cursor_events(!clickable);
             order_front(&w);
@@ -96,7 +107,7 @@ fn apply(app: &AppHandle, s: &OverlayState) {
     }
 }
 
-/// Bottom-centre of the screen under the mouse.
+/// Top-centre of the screen under the mouse; tells the page the notch size there.
 fn place(app: &AppHandle, w: &WebviewWindow) {
     let monitor = app
         .cursor_position()
@@ -104,12 +115,19 @@ fn place(app: &AppHandle, w: &WebviewWindow) {
         .and_then(|p| app.monitor_from_point(p.x, p.y).ok().flatten())
         .or_else(|| app.primary_monitor().ok().flatten());
     let (Some(m), Ok(size)) = (monitor, w.outer_size()) else { return };
-    let area = m.work_area();
-    let x = area.position.x + (area.size.width as i32 - size.width as i32) / 2;
-    let y = area.position.y + area.size.height as i32
-        - size.height as i32
-        - (BOTTOM_MARGIN * m.scale_factor()) as i32;
-    let _ = w.set_position(PhysicalPosition::new(x, y));
+    let (x, y) = island_origin(
+        m.position().x as f64,
+        m.position().y as f64,
+        m.size().width as f64,
+        size.width as f64,
+    );
+    let _ = w.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
+    #[cfg(target_os = "macos")]
+    let notch = mac::notch(m.position().x as f64, m.scale_factor());
+    #[cfg(not(target_os = "macos"))]
+    let notch: Option<Notch> = None;
+    tracing::info!(x, y, ?notch, "overlay placed");
+    let _ = app.emit_to(LABEL, "overlay://screen", serde_json::json!({ "notch": notch }));
 }
 
 #[cfg(target_os = "macos")]
@@ -117,6 +135,11 @@ mod mac {
     use objc2::msg_send;
     use objc2::runtime::AnyObject;
     use tauri::WebviewWindow;
+
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSScreen;
+
+    use super::Notch;
 
     const NS_POPUP_MENU_WINDOW_LEVEL: isize = 101;
     const CAN_JOIN_ALL_SPACES: usize = 1 << 0;
@@ -169,6 +192,21 @@ mod mac {
         }
     }
 
+    /// The cut-out of the display whose left edge is at `x` (physical pixels), if any.
+    /// Must run on the main thread.
+    pub fn notch(x: f64, scale: f64) -> Option<Notch> {
+        let mtm = MainThreadMarker::new()?;
+        let screens = NSScreen::screens(mtm);
+        let screen = screens.iter().find(|s| (s.frame().origin.x * scale - x).abs() < 2.0)?;
+        let top = screen.safeAreaInsets().top;
+        if top <= 0.0 {
+            return None;
+        }
+        let frame = screen.frame();
+        let width = frame.size.width - screen.auxiliaryTopLeftArea().size.width - screen.auxiliaryTopRightArea().size.width;
+        (width > 0.0).then_some(Notch { width, height: top })
+    }
+
     /// Shows the window without activating Utter, so focus stays in the user's app.
     pub fn order_front(w: &WebviewWindow) {
         if let Some(win) = ns(w) {
@@ -213,6 +251,16 @@ pub fn configure(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn island_origin_is_top_centre() {
+        assert_eq!(island_origin(0.0, 0.0, 1512.0, 440.0), (536.0, 0.0));
+    }
+
+    #[test]
+    fn island_origin_on_second_display() {
+        assert_eq!(island_origin(1512.0, -200.0, 1920.0, 440.0), (2252.0, -200.0));
+    }
 
     #[test]
     fn new_state_cancels_pending_hide() {

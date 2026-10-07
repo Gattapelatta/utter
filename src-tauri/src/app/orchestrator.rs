@@ -23,8 +23,10 @@ use crate::settings::{Hotkeys, InsertMethod, ProviderKind, Settings, TranslateSt
 use crate::types::Mode;
 use crate::usage::Usage;
 
-const DONE_VISIBLE: Duration = Duration::from_millis(1200);
-const ERROR_VISIBLE: Duration = Duration::from_millis(2500);
+/// Long enough for the Drop's success animation (§4.2).
+const DONE_VISIBLE: Duration = Duration::from_millis(2200);
+/// Long enough for the clouds to clear (§4.2).
+const ERROR_VISIBLE: Duration = Duration::from_millis(3000);
 /// A wall-clock gap this long between 100 ms ticks means the machine was asleep.
 const WAKE_GAP: Duration = Duration::from_secs(10);
 const HOTKEY_CHECK: Duration = Duration::from_secs(2);

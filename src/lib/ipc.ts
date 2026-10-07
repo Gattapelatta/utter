@@ -39,6 +39,8 @@ export const events = {
     listen<OverlayState>("overlay://state", (e) => cb(e.payload)),
   overlayLevel: (cb: (level: number) => void): Promise<UnlistenFn> =>
     listen<number>("overlay://level", (e) => cb(e.payload)),
+  overlayScreen: (cb: (s: { notch: { width: number; height: number } | null }) => void): Promise<UnlistenFn> =>
+    listen<{ notch: { width: number; height: number } | null }>("overlay://screen", (e) => cb(e.payload)),
   hotkey: (cb: (e: { mode: Mode; down: boolean }) => void): Promise<UnlistenFn> =>
     listen<{ mode: Mode; down: boolean }>("ui://hotkey", (e) => cb(e.payload)),
   trial: (cb: (o: TrialOutcome) => void): Promise<UnlistenFn> => listen<TrialOutcome>("ui://trial", (e) => cb(e.payload)),

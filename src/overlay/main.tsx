@@ -7,17 +7,24 @@ import { useApp } from "../lib/store";
 import type { OverlayState } from "../lib/types";
 import "./overlay.css";
 
+type Notch = { width: number; height: number } | null;
+
+const ISLAND_W = 360;
+const ISLAND_H = 104;
 /** The island grows out of the notch and folds back into it: no overshoot (§5.4). */
 const grow = { type: "spring" as const, bounce: 0, duration: 0.5 };
-const islandVariants = {
-  hidden: { opacity: 0, transform: "scaleX(0.45) scaleY(0.3)" },
-  visible: { opacity: 1, transform: "scaleX(1) scaleY(1)", transition: grow },
-  leave: (cancelled: boolean) => ({
-    opacity: 0,
-    transform: "scaleX(0.45) scaleY(0.3)",
-    transition: { ...grow, duration: cancelled ? 0.3 : 0.45 },
-  }),
-};
+
+/** From the notch's own size (black on black, so it reads as the notch growing), or from above the screen edge. */
+function islandVariants(notch: Notch) {
+  const folded = notch
+    ? { opacity: 1, transform: `scaleX(${notch.width / ISLAND_W}) scaleY(${notch.height / ISLAND_H})` }
+    : { opacity: 1, transform: `translateY(-${ISLAND_H}px)` };
+  return {
+    hidden: folded,
+    visible: { opacity: 1, transform: "none", transition: grow },
+    leave: (cancelled: boolean) => ({ ...folded, transition: { ...grow, duration: cancelled ? 0.3 : 0.45 } }),
+  };
+}
 const fadeOnly = {
   hidden: { opacity: 0 },
   visible: { opacity: 1, transition: { duration: 0.15 } },
@@ -27,6 +34,7 @@ const fadeOnly = {
 function Overlay() {
   const [state, setState] = useState<OverlayState>({ kind: "hidden" });
   const [level, setLevel] = useState(0);
+  const [notch, setNotch] = useState<Notch>(null);
   const [now, setNow] = useState(Date.now());
   const reduced = useReducedMotion() ?? false;
   // The last visible state stays on screen while the pill animates out.
@@ -36,12 +44,14 @@ function Overlay() {
 
   useEffect(() => {
     const stopStore = useApp.getState().init();
+    const un0 = events.overlayScreen((s) => setNotch(s.notch));
     const un1 = events.overlayState((s) => setState(s));
     // Speech RMS rarely exceeds ~0.3; scale so normal speech reaches ~1.
     const un2 = events.overlayLevel((l) => setLevel(Math.min(1, Math.sqrt(l) * 2.2)));
     const timer = setInterval(() => setNow(Date.now()), 250);
     return () => {
       stopStore.then((f) => f());
+      un0.then((f) => f());
       un1.then((f) => f());
       un2.then((f) => f());
       clearInterval(timer);
@@ -69,7 +79,7 @@ function Overlay() {
           <motion.div
             key="island"
             onClick={onClick}
-            variants={reduced ? fadeOnly : islandVariants}
+            variants={reduced ? fadeOnly : islandVariants(notch)}
             initial="hidden"
             animate="visible"
             exit="leave"
