@@ -18,7 +18,7 @@ function formatTimer(ms: number): string {
 }
 
 export function Pill({ state, levels, now }: Props) {
-  if (state.kind === "hidden") return null;
+  if (state.kind === "hidden" || state.kind === "cancelled") return null;
 
   if (state.kind === "recording") {
     const translate = state.mode === "Translate";

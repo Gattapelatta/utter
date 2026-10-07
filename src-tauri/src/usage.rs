@@ -57,6 +57,11 @@ impl Usage {
         d.llm_tokens += tokens;
     }
 
+    /// Tokens from a request already counted elsewhere (one-request audio→text).
+    pub fn record_tokens(&mut self, today: NaiveDate, tokens: u32) {
+        self.current(today).llm_tokens += tokens;
+    }
+
     pub fn today(&self, today: NaiveDate) -> UsageDay {
         self.day.clone().filter(|d| d.date == today).unwrap_or_else(|| UsageDay::empty(today))
     }
@@ -80,6 +85,15 @@ mod tests {
         let t = u.today(d(6));
         assert_eq!((t.stt_requests, t.llm_requests, t.llm_tokens), (2, 1, 300));
         assert!((t.audio_secs - 12.5).abs() < 1e-4);
+    }
+
+    #[test]
+    fn record_tokens_does_not_count_a_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut u = Usage::load(&dir.path().join("u.json"));
+        u.record_tokens(d(6), 40);
+        let t = u.today(d(6));
+        assert_eq!((t.llm_requests, t.llm_tokens), (0, 40));
     }
 
     #[test]

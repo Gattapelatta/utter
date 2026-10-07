@@ -13,6 +13,7 @@ use super::orchestrator::{Input, ProviderFactory, Shared};
 use super::services::HotkeyService;
 use crate::history::HistoryEntry;
 use crate::permissions::{self, PermStatus};
+use crate::providers::defaults::{self, FreeLimits};
 use crate::providers::ProviderError;
 use crate::secrets::{mask, SecretStore};
 use crate::settings::{self, ProviderKind, Settings};
@@ -88,14 +89,36 @@ pub async fn verify_key(state: State<'_, AppState>, provider: ProviderKind) -> R
     })
 }
 
+/// Errors: `hotkeys_unavailable`, `cancelled`, `timeout`, `not_assignable`.
 #[tauri::command]
 pub async fn capture_key(state: State<'_, AppState>) -> Result<KeyId, String> {
     let rx = state.hotkeys.capture_next_key().ok_or("hotkeys_unavailable")?;
     match tokio::time::timeout(Duration::from_secs(15), rx).await {
-        Ok(Ok(key)) => Ok(key),
+        Ok(Ok(key)) if key.is_assignable() => Ok(key),
+        Ok(Ok(_)) => Err("not_assignable".into()),
         Ok(Err(_)) => Err("cancelled".into()),
-        Err(_) => Err("timeout".into()),
+        Err(_) => {
+            // Otherwise the next hotkey press would still be taken by the capture.
+            state.hotkeys.cancel_capture();
+            Err("timeout".into())
+        }
     }
+}
+
+#[tauri::command]
+pub fn cancel_capture(state: State<AppState>) {
+    state.hotkeys.cancel_capture();
+}
+
+/// Onboarding trial: while on, results are shown in the window instead of pasted.
+#[tauri::command]
+pub fn set_trial(state: State<AppState>, on: bool) {
+    state.shared.trial.store(on, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[tauri::command]
+pub fn free_limits(provider: ProviderKind) -> Option<FreeLimits> {
+    defaults::free_limits(provider)
 }
 
 #[tauri::command]

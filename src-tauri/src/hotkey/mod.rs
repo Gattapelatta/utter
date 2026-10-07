@@ -51,6 +51,12 @@ impl HotkeyHandle {
         rx
     }
 
+    pub fn cancel_capture(&self) {
+        if let Ok(mut r) = self.router.lock() {
+            r.cancel_capture();
+        }
+    }
+
     pub fn stop(&self) {
         let rl = self.run_loop.swap(0, Ordering::SeqCst);
         #[cfg(target_os = "macos")]

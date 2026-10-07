@@ -34,8 +34,8 @@ describe("Pill", () => {
       [{ kind: "done", outcome: "pasted", degraded: false }, "Вставлено"],
       [{ kind: "done", outcome: "copied", degraded: false }, "Скопировано — нажми ⌘V"],
       [{ kind: "done", outcome: "pasted", degraded: true }, "Вставлено без обработки"],
-      [{ kind: "error", message_key: "rate_limited", action: null, minutes: 3 }, "сбросится через 3 мин"],
-      [{ kind: "error", message_key: "no_key", action: "open_provider", minutes: null }, "Добавь API-ключ"],
+      [{ kind: "error", message_key: "rate_limited", action: null, minutes: 3, provider: "Gemini" }, "сбросится через 3 мин"],
+      [{ kind: "error", message_key: "no_key", action: "open_provider", minutes: null, provider: null }, "Добавь API-ключ"],
     ];
     for (const [s, text] of cases) {
       const { container, unmount } = render(<Pill state={s} levels={levels} now={0} />);

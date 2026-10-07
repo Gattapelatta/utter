@@ -1,12 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  FreeLimits,
   HistoryEntry,
   KeyId,
+  Mode,
   OverlayState,
   PermissionsStatus,
   ProviderKind,
   Settings,
+  TrialOutcome,
   UsageDay,
 } from "./types";
 
@@ -17,6 +20,9 @@ export const ipc = {
   apiKeyMask: (provider: ProviderKind) => invoke<string | null>("api_key_mask", { provider }),
   verifyKey: (provider: ProviderKind) => invoke<void>("verify_key", { provider }),
   captureKey: () => invoke<KeyId>("capture_key"),
+  cancelCapture: () => invoke<void>("cancel_capture"),
+  setTrial: (on: boolean) => invoke<void>("set_trial", { on }),
+  freeLimits: (provider: ProviderKind) => invoke<FreeLimits | null>("free_limits", { provider }),
   permissionsStatus: () => invoke<PermissionsStatus>("permissions_status"),
   requestMicrophone: () => invoke<boolean>("request_microphone"),
   openAccessibilitySettings: () => invoke<void>("open_accessibility_settings"),
@@ -32,4 +38,8 @@ export const events = {
     listen<OverlayState>("overlay://state", (e) => cb(e.payload)),
   overlayLevel: (cb: (level: number) => void): Promise<UnlistenFn> =>
     listen<number>("overlay://level", (e) => cb(e.payload)),
+  hotkey: (cb: (e: { mode: Mode; down: boolean }) => void): Promise<UnlistenFn> =>
+    listen<{ mode: Mode; down: boolean }>("ui://hotkey", (e) => cb(e.payload)),
+  trial: (cb: (o: TrialOutcome) => void): Promise<UnlistenFn> => listen<TrialOutcome>("ui://trial", (e) => cb(e.payload)),
+  history: (cb: () => void): Promise<UnlistenFn> => listen("ui://history", () => cb()),
 };

@@ -27,9 +27,16 @@ pub fn gemini_language_code(code: &str) -> Option<&'static str> {
         "ja" => "ja-JP",
         "zh" => "cmn-Hans-CN",
         "ko" => "ko-KR",
-        _ => return None,
+        other => return EXTRA_LANGUAGES.iter().copied().find(|c| *c == other),
     })
 }
+
+/// Other Whisper languages offered in Settings; Gemini takes their bare ISO 639-1
+/// code as a BCP-47 tag. Keep in sync with `src/settings/languages.ts`.
+const EXTRA_LANGUAGES: &[&str] = &[
+    "nl", "sv", "fi", "da", "no", "cs", "sk", "ro", "hu", "el", "he", "ar", "hi", "id", "vi", "th",
+    "bg", "hr", "sr", "lt", "lv", "et", "kk", "be", "ka", "hy", "az", "uz", "fa", "ms",
+];
 
 pub struct GeminiClient {
     client: reqwest::Client,
@@ -386,6 +393,13 @@ mod tests {
         assert_eq!(gemini_language_code("en"), Some("en-US"));
         assert_eq!(gemini_language_code("uk"), Some("uk-UA"));
         assert_eq!(gemini_language_code("xx"), None);
+    }
+
+    #[test]
+    fn unmapped_language_passes_bare_code() {
+        assert_eq!(gemini_language_code("nl"), Some("nl"));
+        assert_eq!(gemini_language_code("kk"), Some("kk"));
+        assert_eq!(gemini_language_code(""), None);
     }
 
     #[tokio::test]

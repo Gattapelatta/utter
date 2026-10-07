@@ -11,6 +11,7 @@ export const overlayText = {
     typed: "Напечатано",
     copied: "Скопировано — нажми ⌘V",
     failed: "Не удалось скопировать",
+    shown: "Готово",
   },
   degraded: "Вставлено без обработки",
   errors: {

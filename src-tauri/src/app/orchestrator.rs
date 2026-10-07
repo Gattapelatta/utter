@@ -2,6 +2,7 @@
 //! everything that talks to the OS sits behind a trait so the flow is testable.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -19,6 +20,7 @@ use crate::providers::{AudioLlm, ProviderError, SpeechToText, TextModel};
 use crate::recorder::AudioSource;
 use crate::secrets::SecretStore;
 use crate::settings::{Hotkeys, InsertMethod, ProviderKind, Settings, TranslateStyle};
+use crate::sounds::Cue;
 use crate::types::Mode;
 use crate::usage::Usage;
 
@@ -35,7 +37,9 @@ pub enum OverlayState {
     Recording { mode: Mode, style: TranslateStyle, started_at_ms: i64, warn: bool, pending: u32 },
     Processing { pending: u32, since_ms: i64 },
     Done { outcome: String, degraded: bool },
-    Error { message_key: String, action: Option<String>, minutes: Option<u32> },
+    Error { message_key: String, action: Option<String>, minutes: Option<u32>, provider: Option<String> },
+    /// Recording cancelled: the pill fades out quickly.
+    Cancelled,
 }
 
 impl OverlayState {
@@ -46,12 +50,47 @@ impl OverlayState {
             OverlayState::Processing { .. } => "processing",
             OverlayState::Done { .. } => "done",
             OverlayState::Error { .. } => "error",
+            OverlayState::Cancelled => "cancelled",
         }
     }
 
     fn error(key: &str, action: Option<&str>) -> Self {
-        OverlayState::Error { message_key: key.into(), action: action.map(Into::into), minutes: None }
+        OverlayState::Error { message_key: key.into(), action: action.map(Into::into), minutes: None, provider: None }
     }
+}
+
+/// What the app is doing, for the tray icon.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppStatus {
+    Idle,
+    Recording,
+    Processing,
+}
+
+/// The onboarding trial recording's result, shown in the settings window.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TrialOutcome {
+    Text { mode: Mode, text: String },
+    Error { message_key: String },
+}
+
+/// Events for the settings window and the tray.
+#[derive(Clone, Debug, PartialEq)]
+pub enum UiEvent {
+    Status(AppStatus),
+    Hotkey { mode: Mode, down: bool },
+    Trial(TrialOutcome),
+    HistoryChanged,
+}
+
+pub trait UiSink: Send + Sync {
+    fn emit(&self, e: UiEvent);
+}
+
+pub trait Sounds: Send + Sync {
+    fn play(&self, cue: Cue);
 }
 
 pub trait OverlaySink: Send + Sync {
@@ -98,6 +137,8 @@ pub struct Deps {
     pub overlay: Arc<dyn OverlaySink>,
     pub permissions: Arc<dyn PermissionCheck>,
     pub hotkeys: Arc<dyn HotkeyControl>,
+    pub ui: Arc<dyn UiSink>,
+    pub sounds: Arc<dyn Sounds>,
 }
 
 /// State the settings UI reads and writes directly.
@@ -106,6 +147,8 @@ pub struct Shared {
     pub history: Mutex<History>,
     pub usage: Mutex<Usage>,
     pub data_dir: PathBuf,
+    /// Onboarding trial: results go to the settings window instead of being pasted.
+    pub trial: AtomicBool,
 }
 
 impl Shared {
@@ -115,6 +158,7 @@ impl Shared {
             usage: Mutex::new(Usage::load(&data_dir.join("usage.json"))),
             settings: Mutex::new(settings),
             data_dir,
+            trial: AtomicBool::new(false),
         }
     }
 
@@ -187,23 +231,37 @@ pub struct Orchestrator {
     wall_clock: Box<dyn Fn() -> SystemTime + Send>,
     last_tick_wall: Option<SystemTime>,
     last_hotkey_check: Option<Instant>,
+    status: AppStatus,
 }
 
 fn now_ms() -> i64 {
     chrono::Local::now().timestamp_millis()
 }
 
-fn error_state(e: &ProviderError) -> OverlayState {
-    match e {
+pub fn provider_name(kind: ProviderKind) -> &'static str {
+    match kind {
+        ProviderKind::Gemini => "Gemini",
+        ProviderKind::Groq => "Groq",
+        ProviderKind::OpenAi => "OpenAI",
+    }
+}
+
+fn error_state(e: &ProviderError, kind: ProviderKind) -> OverlayState {
+    let mut state = match e {
         ProviderError::Unauthorized => OverlayState::error("bad_key", Some("open_provider")),
         ProviderError::RateLimited { retry_after } => OverlayState::Error {
             message_key: "rate_limited".into(),
             action: None,
             minutes: retry_after.map(|d| d.as_secs().div_ceil(60).max(1) as u32),
+            provider: None,
         },
         ProviderError::Network | ProviderError::Timeout => OverlayState::error("network", None),
         ProviderError::Server(_) | ProviderError::BadResponse(_) => OverlayState::error("service_down", None),
+    };
+    if let OverlayState::Error { provider, .. } = &mut state {
+        *provider = Some(provider_name(kind).to_string());
     }
+    state
 }
 
 fn outcome_name(o: DeliveryOutcome) -> &'static str {
@@ -240,6 +298,7 @@ impl Orchestrator {
             wall_clock: Box::new(SystemTime::now),
             last_tick_wall: None,
             last_hotkey_check: None,
+            status: AppStatus::Idle,
         }
     }
 
@@ -272,8 +331,32 @@ impl Orchestrator {
     }
 
     pub async fn handle(&mut self, input: Input, now: Instant) {
+        self.handle_input(input, now).await;
+        let status = if self.recording.is_some() {
+            AppStatus::Recording
+        } else if self.in_flight > 0 {
+            AppStatus::Processing
+        } else {
+            AppStatus::Idle
+        };
+        if status != self.status {
+            self.status = status;
+            self.deps.ui.emit(UiEvent::Status(status));
+        }
+    }
+
+    async fn handle_input(&mut self, input: Input, now: Instant) {
         match input {
             Input::Hotkey(ev) => {
+                match ev {
+                    HotkeyEvent::Down(mode) => self.deps.ui.emit(UiEvent::Hotkey { mode, down: true }),
+                    HotkeyEvent::Up(mode) => self.deps.ui.emit(UiEvent::Hotkey { mode, down: false }),
+                    HotkeyEvent::Tap(mode) => {
+                        self.deps.ui.emit(UiEvent::Hotkey { mode, down: true });
+                        self.deps.ui.emit(UiEvent::Hotkey { mode, down: false });
+                    }
+                    HotkeyEvent::Escape | HotkeyEvent::OtherKey => {}
+                }
                 let cmds = self.controller.handle(ev, now);
                 self.exec(cmds).await;
             }
@@ -290,7 +373,12 @@ impl Orchestrator {
             }
             Input::HideOverlay(seq) => {
                 if seq == self.overlay_seq && self.recording.is_none() {
-                    self.deps.overlay.show(&OverlayState::Hidden);
+                    if self.in_flight > 0 {
+                        // Other jobs are still running: go back to the processing pill.
+                        self.show(self.processing_state());
+                    } else {
+                        self.deps.overlay.show(&OverlayState::Hidden);
+                    }
                 }
             }
             Input::SettingsChanged => {
@@ -377,7 +465,7 @@ impl Orchestrator {
                     } else if self.in_flight > 0 {
                         self.show(self.processing_state());
                     } else {
-                        self.show(OverlayState::Hidden);
+                        self.show(OverlayState::Cancelled);
                     }
                 }
                 Command::LimitWarning => {
@@ -420,6 +508,9 @@ impl Orchestrator {
             tracing::warn!("recorder failed to start: {e}");
             return self.fail_start(OverlayState::error("no_microphone", None));
         }
+        if s.sounds {
+            self.deps.sounds.play(Cue::Start);
+        }
         let started = now_ms();
         self.recording = Some((mode, started));
         self.deps.hotkeys.set_recording(true);
@@ -435,6 +526,9 @@ impl Orchestrator {
     }
 
     fn submit(&mut self, mode: Mode) {
+        if self.shared.settings().sounds {
+            self.deps.sounds.play(Cue::Stop);
+        }
         let deferred = self.end_recording();
         let captured = self.deps.audio.stop().unwrap_or_default();
         self.spawn_job(mode, AudioInput::Captured(captured), None);
@@ -534,14 +628,23 @@ impl Orchestrator {
                 u.record_stt(today, r.audio_secs);
             }
             if let Ok(out) = &r.outcome {
-                if out.llm_used && !out.degraded {
+                if out.direct {
+                    u.record_tokens(today, out.tokens);
+                } else if out.llm_used && !out.degraded {
                     u.record_llm(today, out.tokens);
                 }
             }
             let _ = u.save();
         }
 
+        let trial = self.shared.trial.load(Ordering::SeqCst);
         let (status, text, raw, keep_audio, overlay, visible) = match r.outcome {
+            Ok(out) if trial => {
+                self.deps.ui.emit(UiEvent::Trial(TrialOutcome::Text { mode: r.mode, text: out.text.clone() }));
+                let status = if out.degraded { EntryStatus::Degraded } else { EntryStatus::Done };
+                let state = OverlayState::Done { outcome: "shown".into(), degraded: out.degraded };
+                (status, out.text, out.raw, false, state, DONE_VISIBLE)
+            }
             Ok(out) => {
                 let text = out.text.clone();
                 let method = s.insert_method;
@@ -572,7 +675,7 @@ impl Orchestrator {
                 String::new(),
                 String::new(),
                 true,
-                error_state(&e),
+                error_state(&e, s.provider),
                 ERROR_VISIBLE,
             ),
         };
@@ -611,6 +714,12 @@ impl Orchestrator {
             let _ = h.save();
         }
         remove_files(to_delete);
+        self.deps.ui.emit(UiEvent::HistoryChanged);
+        if trial {
+            if let OverlayState::Error { message_key, .. } = &overlay {
+                self.deps.ui.emit(UiEvent::Trial(TrialOutcome::Error { message_key: message_key.clone() }));
+            }
+        }
         self.show_result(overlay, visible);
     }
 
@@ -637,6 +746,7 @@ mod tests {
     use crate::recorder::{AudioSource, RecorderError};
     use crate::secrets::{MemoryStore, SecretStore};
     use crate::settings::{InsertMethod, ProviderKind, Settings};
+    use crate::sounds::Cue;
     use crate::types::Mode;
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -760,6 +870,27 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct FakeUi(Mutex<Vec<UiEvent>>);
+    impl UiSink for FakeUi {
+        fn emit(&self, e: UiEvent) {
+            self.0.lock().unwrap().push(e);
+        }
+    }
+    impl FakeUi {
+        fn statuses(&self) -> Vec<AppStatus> {
+            self.0.lock().unwrap().iter().filter_map(|e| match e { UiEvent::Status(s) => Some(*s), _ => None }).collect()
+        }
+    }
+
+    #[derive(Default)]
+    struct FakeSounds(Mutex<Vec<Cue>>);
+    impl Sounds for FakeSounds {
+        fn play(&self, cue: Cue) {
+            self.0.lock().unwrap().push(cue);
+        }
+    }
+
     struct AllGranted(Mutex<PermStatus>);
     impl PermissionCheck for AllGranted {
         fn accessibility(&self) -> bool {
@@ -798,6 +929,8 @@ mod tests {
         shared: Arc<Shared>,
         hotkeys: Arc<NoHotkeys>,
         perms: Arc<AllGranted>,
+        ui: Arc<FakeUi>,
+        sounds: Arc<FakeSounds>,
         _dir: tempfile::TempDir,
     }
 
@@ -817,6 +950,8 @@ mod tests {
         let overlay = Arc::new(FakeOverlay::default());
         let hotkeys = Arc::new(NoHotkeys::default());
         let perms = Arc::new(AllGranted(Mutex::new(PermStatus::Granted)));
+        let ui = Arc::new(FakeUi::default());
+        let sounds = Arc::new(FakeSounds::default());
         let deps = Deps {
             secrets,
             audio: audio.clone(),
@@ -825,10 +960,12 @@ mod tests {
             overlay: overlay.clone(),
             permissions: perms.clone(),
             hotkeys: hotkeys.clone(),
+            ui: ui.clone(),
+            sounds: sounds.clone(),
         };
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let orch = Orchestrator::new(deps, shared.clone(), tx);
-        Rig { orch, rx, audio, provider, out, overlay, shared, hotkeys, perms, _dir: dir }
+        Rig { orch, rx, audio, provider, out, overlay, shared, hotkeys, perms, ui, sounds, _dir: dir }
     }
 
     impl Rig {
@@ -1032,6 +1169,8 @@ mod tests {
             overlay: r.overlay.clone(),
             permissions: r.perms.clone(),
             hotkeys: r.hotkeys.clone(),
+            ui: r.ui.clone(),
+            sounds: r.sounds.clone(),
         };
         r.orch = Orchestrator::new(deps, r.shared.clone(), tx);
         r.rx = rx;
@@ -1060,5 +1199,104 @@ mod tests {
         r.record(Mode::Dictation, speech(1.0), t0 + Duration::from_secs(3), 1).await;
         r.settle(2).await;
         assert_eq!(*r.out.0.lock().unwrap(), vec!["two".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn status_events_follow_recording_and_processing() {
+        let mut r = rig(FakeProvider::new(Ok("x".into()), Ok("Привет.".into())), true);
+        r.record(Mode::Dictation, speech(1.0), Instant::now(), 1).await;
+        r.settle(1).await;
+        assert_eq!(r.ui.statuses(), vec![AppStatus::Recording, AppStatus::Processing, AppStatus::Idle]);
+    }
+
+    #[tokio::test]
+    async fn hotkey_presses_are_forwarded_to_ui() {
+        let mut r = rig(FakeProvider::new(Ok("x".into()), Ok("x".into())), true);
+        r.record(Mode::Translate, speech(1.0), Instant::now(), 1).await;
+        let keys: Vec<UiEvent> = r.ui.0.lock().unwrap().iter().filter(|e| matches!(e, UiEvent::Hotkey { .. })).cloned().collect();
+        assert_eq!(
+            keys,
+            vec![
+                UiEvent::Hotkey { mode: Mode::Translate, down: true },
+                UiEvent::Hotkey { mode: Mode::Translate, down: false },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn sounds_play_on_start_and_submit_when_enabled() {
+        let mut r = rig(FakeProvider::new(Ok("x".into()), Ok("x".into())), true);
+        r.record(Mode::Dictation, speech(1.0), Instant::now(), 1).await;
+        assert_eq!(*r.sounds.0.lock().unwrap(), vec![Cue::Start, Cue::Stop]);
+    }
+
+    #[tokio::test]
+    async fn no_sounds_when_disabled_or_cancelled() {
+        let mut r = rig(FakeProvider::new(Ok("x".into()), Ok("x".into())), true);
+        let t0 = Instant::now();
+        r.orch.handle(Input::Hotkey(HotkeyEvent::Down(Mode::Dictation)), t0).await;
+        r.orch.handle(Input::Hotkey(HotkeyEvent::Escape), t0 + Duration::from_secs(1)).await;
+        assert_eq!(*r.sounds.0.lock().unwrap(), vec![Cue::Start]);
+        r.shared.settings.lock().unwrap().sounds = false;
+        r.record(Mode::Dictation, speech(1.0), t0 + Duration::from_secs(2), 1).await;
+        assert_eq!(*r.sounds.0.lock().unwrap(), vec![Cue::Start]);
+    }
+
+    #[tokio::test]
+    async fn escape_hides_with_cancelled_state() {
+        let mut r = rig(FakeProvider::new(Ok("x".into()), Ok("x".into())), true);
+        let t0 = Instant::now();
+        r.orch.handle(Input::Hotkey(HotkeyEvent::Down(Mode::Dictation)), t0).await;
+        r.orch.handle(Input::Hotkey(HotkeyEvent::Escape), t0 + Duration::from_secs(1)).await;
+        assert_eq!(r.overlay.0.lock().unwrap().last(), Some(&OverlayState::Cancelled));
+    }
+
+    #[tokio::test]
+    async fn error_hide_returns_to_processing_while_jobs_remain() {
+        // The short recording fails fast; the long one is still processing.
+        let mut r = rig(FakeProvider::new(Ok("late".into()), Err(ProviderError::Network)), true);
+        let t0 = Instant::now();
+        r.record(Mode::Dictation, speech(1.0), t0, 1).await;
+        r.record(Mode::Dictation, speech(2.0), t0 + Duration::from_secs(2), 2).await;
+        r.settle(1).await;
+        assert_eq!(r.overlay.last_error().as_deref(), Some("network"));
+        let seq = r.orch.overlay_seq;
+        r.orch.handle(Input::HideOverlay(seq), Instant::now()).await;
+        assert_eq!(r.overlay.kinds().last().map(String::as_str), Some("processing"));
+    }
+
+    #[tokio::test]
+    async fn trial_mode_shows_result_in_window_without_pasting() {
+        let mut r = rig(FakeProvider::new(Ok("x".into()), Ok("Проба.".into())), true);
+        r.shared.trial.store(true, Ordering::SeqCst);
+        r.record(Mode::Dictation, speech(1.0), Instant::now(), 1).await;
+        r.settle(1).await;
+        assert!(r.out.0.lock().unwrap().is_empty());
+        let events = r.ui.0.lock().unwrap().clone();
+        assert!(events.contains(&UiEvent::Trial(TrialOutcome::Text { mode: Mode::Dictation, text: "Проба.".into() })));
+        assert!(events.contains(&UiEvent::HistoryChanged));
+        assert!(r.overlay.0.lock().unwrap().contains(&OverlayState::Done { outcome: "shown".into(), degraded: false }));
+    }
+
+    #[tokio::test]
+    async fn direct_request_counts_once() {
+        let mut p = FakeProvider::new(Ok("x".into()), Ok("raw".into()));
+        p.direct_reply = Some("Hello.".into());
+        let mut r = rig(p, true);
+        r.shared.settings.lock().unwrap().cleanup = true;
+        r.record(Mode::Translate, speech(1.0), Instant::now(), 1).await;
+        r.settle(1).await;
+        let u = r.shared.usage.lock().unwrap().today(chrono::Local::now().date_naive());
+        assert_eq!((u.stt_requests, u.llm_requests, u.llm_tokens), (1, 0, 5));
+    }
+
+    #[tokio::test]
+    async fn rate_limit_error_names_provider() {
+        let limited = Err(ProviderError::RateLimited { retry_after: None });
+        let mut r = rig(FakeProvider::new(Ok("x".into()), limited), true);
+        r.record(Mode::Dictation, speech(1.0), Instant::now(), 1).await;
+        r.settle(1).await;
+        let last = r.overlay.0.lock().unwrap().last().cloned();
+        assert!(matches!(last, Some(OverlayState::Error { provider: Some(ref p), .. }) if p == "Gemini"), "{last:?}");
     }
 }
