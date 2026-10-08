@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import type { PermissionsStatus, Settings } from "../../lib/types";
 import { useApp } from "../../lib/store";
 import { canAdvance, dropAt, dropY, firstIncompleteStep, GROUP_H, OPTICAL_LIFT, STEPS, TOP_Y } from "./steps";
-import { createFlight, GLIDE, settled, stepFlight } from "./flight";
+import { APPLE, createFlight, GLIDE, settled, springEasing, stepFlight } from "./flight";
 
 const listeners: Record<string, (e: { payload: unknown }) => void> = {};
 let perms: PermissionsStatus = { microphone: "Granted", accessibility: true, hotkeys_running: true };
@@ -124,6 +124,19 @@ describe("onboarding logic", () => {
     expect(highest - 496).toBeLessThan(4); // was 17 px past the target with the onboarding spring
     expect(halfway).toBeGreaterThan(0.2); // was 0.17 s to cover half the way
     expect(t).toBeLessThan(1.6);
+  });
+
+  it("a spring becomes a compositor easing that starts at 0, ends at 1 and keeps the overshoot", () => {
+    const glide = springEasing(GLIDE);
+    const apple = springEasing(APPLE);
+    const values = (e: string) => e.slice("linear(".length, -1).split(",").map(Number);
+    expect(glide.easing.startsWith("linear(")).toBe(true);
+    expect(values(glide.easing)[0]).toBe(0);
+    expect(values(glide.easing).slice(-1)[0]).toBe(1);
+    expect(Math.max(...values(apple.easing))).toBeGreaterThan(1.01); // Apple spring overshoots
+    expect(Math.max(...values(glide.easing))).toBeLessThan(1.01);
+    expect(glide.duration).toBeGreaterThan(600);
+    expect(glide.duration).toBeLessThan(1600);
   });
 
   it("the drop's spring overshoots a little and then settles", () => {

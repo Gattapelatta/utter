@@ -30,3 +30,25 @@ export function stepFlight(f: Flight, dt: number, spring: Spring = APPLE): void 
 
 /** Close enough to rest that the step's text may appear. */
 export const settled = (f: Flight) => Math.abs(f.target - f.x) < 1.2 && Math.abs(f.v) < 25;
+
+/**
+ * The spring as a CSS `linear()` easing over its settle time, for a compositor animation:
+ * WebKit then moves the Drop's layer in step with the display instead of repainting it from
+ * script each frame (that occasionally missed a frame and the Drop jumped).
+ */
+export function springEasing(spring: Spring, samples = 60): { easing: string; duration: number } {
+  const f = createFlight(0);
+  f.target = 1;
+  const dt = 1 / 240;
+  const points: number[] = [0];
+  let t = 0;
+  // Settle to 0.1 % of the way, so the last step into place is invisible.
+  while (t < 3 && !(Math.abs(1 - f.x) < 0.001 && Math.abs(f.v) < 0.01)) {
+    stepFlight(f, dt, spring);
+    t += dt;
+    points.push(f.x);
+  }
+  const step = (points.length - 1) / samples;
+  const values = Array.from({ length: samples + 1 }, (_, i) => (i === samples ? 1 : +points[Math.round(i * step)].toFixed(4)));
+  return { easing: `linear(${values.join(", ")})`, duration: Math.round(t * 1000) };
+}
