@@ -77,11 +77,10 @@ describe("settings app", () => {
     expect(location.hash).toBe("#/history");
   });
 
-  it("reports ready after the first paint so the window shows without a flash", async () => {
+  it("reports ready once settings are rendered, without waiting for a frame", async () => {
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation(() => 0); // hidden windows never run it
     await mount("#/general");
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 100));
-    });
+    raf.mockRestore();
     expect(calls).toContain("settings_ready");
     expect(calls.indexOf("get_settings")).toBeLessThan(calls.indexOf("settings_ready"));
   });

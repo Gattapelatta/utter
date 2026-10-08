@@ -170,9 +170,11 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         // The app lives in the tray: closing the last window must not quit it.
-        .run(|_app, event| {
-            if let tauri::RunEvent::ExitRequested { code: None, api, .. } = event {
-                api.prevent_exit();
-            }
+        .run(|app, event| match event {
+            tauri::RunEvent::ExitRequested { code: None, api, .. } => api.prevent_exit(),
+            // macOS does not start a second copy on a repeated launch; it sends "reopen".
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => app::settings_window::open(app, None),
+            _ => {}
         });
 }

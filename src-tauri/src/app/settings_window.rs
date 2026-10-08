@@ -61,6 +61,7 @@ pub fn on_destroyed(shared: &Shared, hotkeys: &HotkeyService) {
 
 /// Opens the window at `route` (or brings the existing one forward and navigates).
 pub fn open(app: &AppHandle, route: Option<&str>) {
+    tracing::info!(?route, "open settings");
     if let Some(w) = app.get_webview_window(LABEL) {
         if let Some(r) = route {
             let _ = app.emit_to(LABEL, "ui://navigate", r);
@@ -87,6 +88,7 @@ pub fn open(app: &AppHandle, route: Option<&str>) {
     let built = built.title_bar_style(tauri::TitleBarStyle::Overlay).hidden_title(true);
     match built.build() {
         Ok(w) => {
+            tracing::info!(?route, "settings window created");
             let app2 = app.clone();
             w.on_window_event(move |e| {
                 if let tauri::WindowEvent::Destroyed = e {
@@ -109,6 +111,7 @@ pub fn open(app: &AppHandle, route: Option<&str>) {
 pub fn reveal(app: &AppHandle) {
     if let Some(w) = app.get_webview_window(LABEL) {
         if !w.is_visible().unwrap_or(true) {
+            tracing::info!("settings window shown");
             let _ = w.show();
             let _ = w.set_focus();
         }

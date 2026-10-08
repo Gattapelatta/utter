@@ -28,8 +28,6 @@ export function App() {
       .then((f) => {
         if (gone) return f();
         stop = f;
-        // Show the window only once the themed page has painted: no white flash.
-        requestAnimationFrame(() => requestAnimationFrame(() => ipc.settingsReady().catch(() => {})));
       });
     const un = events.navigate((r) => go(parseRoute(r)));
     return () => {
@@ -38,6 +36,12 @@ export function App() {
       un.then((f) => f());
     };
   }, [go]);
+
+  // Show the window once the themed page is in the DOM: no white flash. (Not via
+  // requestAnimationFrame — a hidden WKWebView never runs it, so the window waited 1.5 s.)
+  useEffect(() => {
+    if (loaded) ipc.settingsReady().catch(() => {});
+  }, [loaded]);
 
   if (!loaded) return null;
 
