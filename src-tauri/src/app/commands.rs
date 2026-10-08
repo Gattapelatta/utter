@@ -42,11 +42,20 @@ pub fn get_settings(state: State<AppState>) -> Settings {
     state.shared.settings()
 }
 
+/// Whether the login item must be switched on (`Some(true)`) or off for this change.
+pub fn autostart_change(prev: &Settings, next: &Settings) -> Option<bool> {
+    (prev.autostart != next.autostart).then_some(next.autostart)
+}
+
 /// The one path for every settings change (window, tray, onboarding): saves, applies,
 /// and broadcasts `ui://settings` so every window shows the same values.
 pub fn update_settings(app: &AppHandle, state: &AppState, next: Settings) -> Result<(), String> {
     let path = state.shared.data_dir.join("settings.json");
+    let prev = state.shared.settings();
     settings::save(&path, &next).map_err(|e| e.to_string())?;
+    if let Some(on) = autostart_change(&prev, &next) {
+        set_autostart(app, on);
+    }
     if !next.history_enabled {
         if let Ok(mut h) = state.shared.history.lock() {
             for f in h.clear() {
@@ -64,6 +73,16 @@ pub fn update_settings(app: &AppHandle, state: &AppState, next: Settings) -> Res
     }
     let _ = app.emit("ui://settings", &next);
     Ok(())
+}
+
+/// Registers or removes the login item (a LaunchAgent on macOS).
+pub fn set_autostart(app: &AppHandle, on: bool) {
+    use tauri_plugin_autostart::ManagerExt;
+    let launcher = app.autolaunch();
+    let r = if on { launcher.enable() } else { launcher.disable() };
+    if let Err(e) = r {
+        tracing::warn!("autostart {on}: {e}");
+    }
 }
 
 #[tauri::command]
@@ -236,4 +255,20 @@ pub fn overlay_painted(timing: State<super::overlay::OverlayTiming>) {
 #[tauri::command]
 pub fn overlay_frames(avg: f64, p95: f64, max: f64, count: u32) {
     tracing::info!(avg_ms = avg, p95_ms = p95, max_ms = max, frames = count, "timing: overlay frames while listening");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn autostart_follows_the_switch_only_when_it_changes() {
+        let off = Settings::default();
+        let on = Settings { autostart: true, ..Settings::default() };
+        assert_eq!(autostart_change(&off, &on), Some(true));
+        assert_eq!(autostart_change(&on, &off), Some(false));
+        assert_eq!(autostart_change(&on, &on), None);
+        let themed = Settings { theme: crate::settings::Theme::Light, ..off.clone() };
+        assert_eq!(autostart_change(&off, &themed), None);
+    }
 }

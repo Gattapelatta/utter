@@ -14,7 +14,6 @@
   "pill.failed": "Couldn't copy",
   "pill.shown": "Done",
   "pill.degraded": "Pasted without cleanup",
-
   "errors.no_key": "Add an API key",
   "errors.no_accessibility": "Accessibility access needed",
   "errors.no_microphone": "No microphone found",
@@ -29,7 +28,6 @@
   "errors.timeout": "Timed out — try again",
   "errors.not_assignable": "Use a right-side modifier (⌥ ⌘ ⌃ ⇧), Fn, Caps Lock or an F-key",
   "errors.taken": "This key is already used for {mode}",
-
   "common.next": "Next",
   "common.back": "Back",
   "common.skip": "Skip",
@@ -42,14 +40,12 @@
   "common.change": "Change",
   "common.granted": "Granted",
   "common.open_settings": "Open System Settings",
-
   "nav.general": "General",
   "nav.hotkeys": "Keys",
   "nav.translate": "Translation",
   "nav.provider": "Provider",
   "nav.history": "History",
   "nav.about": "About",
-
   "general.record_mode": "Recording mode",
   "general.record_mode_hint": "Hold — speak while the key is down. Toggle — press once to start, again to stop.",
   "general.hold": "Hold",
@@ -72,7 +68,6 @@
   "general.theme_system": "System",
   "general.ui_language": "Interface language",
   "general.lang_auto": "System",
-
   "hotkeys.title": "Keys",
   "hotkeys.subtitle": "Hold a key and speak. Release it and the text appears at the cursor.",
   "hotkeys.dictation": "Dictation",
@@ -82,7 +77,6 @@
   "hotkeys.capturing": "Press a key…",
   "hotkeys.esc_hint": "Esc to cancel",
   "hotkeys.cancel_hint": "Esc while recording cancels it",
-
   "translate.title": "Translation",
   "translate.subtitle": "Speak any language — English text is inserted.",
   "translate.style": "Default style",
@@ -94,7 +88,6 @@
   "translate.example_source": "Hola, ¿me puedes mandar el informe antes del viernes? ¡Gracias!",
   "translate.example_business": "Hi, could you please send me the report by Friday? Thank you.",
   "translate.example_casual": "Hey, can you send me the report by Friday? Thanks!",
-
   "provider.title": "Provider",
   "provider.subtitle": "Speech is recognised in the chosen service's cloud with your own key. There are no Utter servers.",
   "provider.gemini_caption": "Free, sign in with Google",
@@ -115,7 +108,6 @@
   "provider.llm_requests": "Text processing",
   "provider.tokens": "Tokens",
   "provider.free_tier": "of the free tier",
-
   "history.title": "History",
   "history.subtitle": "The last 50 recordings. Stored only on this Mac.",
   "history.save": "Keep history",
@@ -128,7 +120,6 @@
   "history.nothing_heard": "Didn't hear anything",
   "history.failed": "Error: {message}",
   "history.raw": "Transcript",
-
   "about.title": "About",
   "about.tagline": "Press a key, speak, and the text appears.",
   "about.version": "Version",
@@ -146,7 +137,6 @@
   "about.downloading": "Downloading… {n}%",
   "about.ready": "Restarting…",
   "about.update_failed": "Couldn't check for updates",
-
   "onboarding.welcome_title": "Speak — Utter writes",
   "onboarding.welcome_body": "Hold a key, say a phrase and let go. The text — or its English translation — appears at your cursor.",
   "onboarding.start": "Get started",
@@ -171,5 +161,14 @@
   "onboarding.finish": "Done",
   "onboarding.step": "Step {n} of {total}",
   "permissions.title": "Permissions",
-  "permissions.subtitle": "Without these Utter can't record or insert text."
+  "permissions.subtitle": "Without these Utter can't record or insert text.",
+  "keys.right_alt": "Right ⌥",
+  "keys.right_meta": "Right ⌘",
+  "keys.right_ctrl": "Right ⌃",
+  "keys.right_shift": "Right ⇧",
+  "keys.caps_lock": "Caps Lock",
+  "keys.fn": "Fn",
+  "keys.escape": "Esc",
+  "keys.raw": "Key {code}",
+  "general.other_languages": "Other languages"
 }

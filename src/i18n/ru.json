@@ -14,7 +14,6 @@
   "pill.failed": "Не удалось скопировать",
   "pill.shown": "Готово",
   "pill.degraded": "Вставлено без обработки",
-
   "errors.no_key": "Добавь API-ключ",
   "errors.no_accessibility": "Нужен доступ Accessibility",
   "errors.no_microphone": "Микрофон не найден",
@@ -29,7 +28,6 @@
   "errors.timeout": "Время вышло — попробуй ещё раз",
   "errors.not_assignable": "Подойдёт правый модификатор (⌥ ⌘ ⌃ ⇧), Fn, Caps Lock или F-клавиша",
   "errors.taken": "Эта клавиша уже назначена на {mode}",
-
   "common.next": "Далее",
   "common.back": "Назад",
   "common.skip": "Пропустить",
@@ -42,14 +40,12 @@
   "common.change": "Изменить",
   "common.granted": "Выдано",
   "common.open_settings": "Открыть Системные настройки",
-
   "nav.general": "Основное",
   "nav.hotkeys": "Клавиши",
   "nav.translate": "Перевод",
   "nav.provider": "Провайдер",
   "nav.history": "История",
   "nav.about": "О приложении",
-
   "general.record_mode": "Режим записи",
   "general.record_mode_hint": "Удержание — говоришь, пока клавиша зажата. Нажатие — первое нажатие начинает, второе заканчивает.",
   "general.hold": "Удержание",
@@ -72,7 +68,6 @@
   "general.theme_system": "Как в системе",
   "general.ui_language": "Язык интерфейса",
   "general.lang_auto": "Как в системе",
-
   "hotkeys.title": "Клавиши",
   "hotkeys.subtitle": "Зажми клавишу и говори. Отпусти — текст появится там, где стоит курсор.",
   "hotkeys.dictation": "Диктовка",
@@ -82,7 +77,6 @@
   "hotkeys.capturing": "Нажми клавишу…",
   "hotkeys.esc_hint": "Esc — отмена",
   "hotkeys.cancel_hint": "Esc во время записи — отмена",
-
   "translate.title": "Перевод",
   "translate.subtitle": "Говоришь на любом языке — вставляется английский текст.",
   "translate.style": "Стиль по умолчанию",
@@ -94,7 +88,6 @@
   "translate.example_source": "Привет, можешь скинуть отчёт до пятницы? Спасибо!",
   "translate.example_business": "Hi, could you please send me the report by Friday? Thank you.",
   "translate.example_casual": "Hey, can you send me the report by Friday? Thanks!",
-
   "provider.title": "Провайдер",
   "provider.subtitle": "Речь распознаётся в облаке выбранного сервиса по твоему ключу. Наших серверов нет.",
   "provider.gemini_caption": "Бесплатно, вход через Google-аккаунт",
@@ -115,7 +108,6 @@
   "provider.llm_requests": "Обработка текста",
   "provider.tokens": "Токены",
   "provider.free_tier": "от бесплатного тарифа",
-
   "history.title": "История",
   "history.subtitle": "Последние 50 записей. Хранится только на этом Mac.",
   "history.save": "Сохранять историю",
@@ -128,7 +120,6 @@
   "history.nothing_heard": "Ничего не услышал",
   "history.failed": "Ошибка: {message}",
   "history.raw": "Расшифровка",
-
   "about.title": "О приложении",
   "about.tagline": "Нажми клавишу, скажи — и текст появится.",
   "about.version": "Версия",
@@ -146,7 +137,6 @@
   "about.downloading": "Загрузка… {n}%",
   "about.ready": "Перезапускаю…",
   "about.update_failed": "Не удалось проверить обновления",
-
   "onboarding.welcome_title": "Говори — Utter напишет",
   "onboarding.welcome_body": "Зажми клавишу, скажи фразу и отпусти. Текст — или его перевод на английский — появится там, где стоит курсор.",
   "onboarding.start": "Начать",
@@ -171,5 +161,14 @@
   "onboarding.finish": "Готово",
   "onboarding.step": "Шаг {n} из {total}",
   "permissions.title": "Разрешения",
-  "permissions.subtitle": "Без них Utter не сможет записывать и вставлять текст."
+  "permissions.subtitle": "Без них Utter не сможет записывать и вставлять текст.",
+  "keys.right_alt": "Правый ⌥",
+  "keys.right_meta": "Правый ⌘",
+  "keys.right_ctrl": "Правый ⌃",
+  "keys.right_shift": "Правый ⇧",
+  "keys.caps_lock": "Caps Lock",
+  "keys.fn": "Fn",
+  "keys.escape": "Esc",
+  "keys.raw": "Клавиша {code}",
+  "general.other_languages": "Другие языки"
 }

@@ -3,11 +3,23 @@ import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { events, ipc } from "../lib/ipc";
 import { useApp } from "../lib/store";
 import { parseRoute, type Route } from "./routes";
+import { General } from "./sections/General";
+import { Hotkeys } from "./sections/Hotkeys";
 import { Section } from "./sections/Section";
+import { Translate } from "./sections/Translate";
 import { Sidebar } from "./Sidebar";
 
 function Page({ route }: { route: Route }) {
-  return <Section route={route} />;
+  switch (route) {
+    case "general":
+      return <General />;
+    case "hotkeys":
+      return <Hotkeys />;
+    case "translate":
+      return <Translate />;
+    default:
+      return <Section route={route} />;
+  }
 }
 
 export function App() {

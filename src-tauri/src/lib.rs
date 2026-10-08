@@ -96,6 +96,13 @@ fn init_core(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    // The login item may have been removed outside Utter; the setting is the source of truth.
+    {
+        use tauri_plugin_autostart::ManagerExt;
+        if app.autolaunch().is_enabled().ok() != Some(settings.autostart) {
+            app::commands::set_autostart(app.handle(), settings.autostart);
+        }
+    }
     app.manage(AppState { shared, tx, secrets: secrets.clone(), hotkeys, providers, log_dir });
     // Reading the key may show a Keychain prompt; never wait for it on the main thread
     // (it froze the tray and hotkeys for as long as the prompt was open).
@@ -120,6 +127,7 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     let builder = builder.plugin(tauri_nspanel::init());
     builder
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             app::settings_window::open(app, None);
         }))
