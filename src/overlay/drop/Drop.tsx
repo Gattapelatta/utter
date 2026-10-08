@@ -18,6 +18,11 @@ interface Props {
   follow?: boolean;
   /** Look this way (eye units), overriding the pointer — e.g. where the Drop is flying. */
   look?: { x: number; y: number } | null;
+  /**
+   * Hold the last drawn frame (the model keeps running): while the settings window flies the
+   * Drop, a repaint every frame made WebKit miss frames and the flight stuttered.
+   */
+  frozen?: boolean;
 }
 
 const BODY = "M50 14 C74 14 87 36 87 58 C87 77 71 90 50 90 C29 90 13 77 13 58 C13 36 26 14 50 14Z";
@@ -36,10 +41,10 @@ const CYAN = [74, 216, 236];
  * The «Капля» character (docs/design/drop-prototype.html). The SVG is rendered once;
  * every frame mutates attributes directly so React does not re-render at 60–120 fps.
  */
-export function Drop({ mood, level, translate, reduced, size = 48, follow = false, look = null }: Props) {
+export function Drop({ mood, level, translate, reduced, size = 48, follow = false, look = null, frozen = false }: Props) {
   const svg = useRef<SVGSVGElement>(null);
-  const input = useRef({ mood, level, translate, reduced, look });
-  input.current = { mood, level, translate, reduced, look };
+  const input = useRef({ mood, level, translate, reduced, look, frozen });
+  input.current = { mood, level, translate, reduced, look, frozen };
   const pointer = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
@@ -101,6 +106,10 @@ export function Drop({ mood, level, translate, reduced, size = 48, follow = fals
         gaze = gazeToward(pointer.current.x - (r.left + r.width / 2), pointer.current.y - (r.top + r.height * 0.55));
       }
       const f = stepModel(model, { ...cur, gaze }, now);
+      if (cur.frozen) {
+        raf = requestAnimationFrame(frame);
+        return;
+      }
       body.setAttribute("transform", `rotate(${f.rot.toFixed(3)} 50 90) translate(0 ${f.y.toFixed(3)})`);
       eyes.setAttribute("transform", `translate(${f.ex.toFixed(3)} ${f.ey.toFixed(3)})`);
       eyeL.setAttribute("d", eyePath(EYES[0][0], EYES[0][1], f.lid, f.smile));

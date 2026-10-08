@@ -42,6 +42,8 @@ export function FloatingDrop() {
   const mood = useDropStage((s) => s.mood);
   const el = useRef<HTMLDivElement>(null);
   const [look, setLook] = useState<{ x: number; y: number } | null>(null);
+  // While the compositor flies the Drop it holds still: repainting it every frame made the flight stutter.
+  const [frozen, setFrozen] = useState(false);
 
   useEffect(() => {
     const axes: Record<"x" | "y" | "s", Flight> = { x: createFlight(0), y: createFlight(0), s: createFlight(0) };
@@ -74,11 +76,13 @@ export function FloatingDrop() {
             node.style.transform = transform(target);
             const a = node.animate([{ transform: transform(from) }, { transform: transform(target) }], { duration, easing });
             anim = a;
+            setFrozen(true);
             a.onfinish = () => {
               if (anim !== a) return;
               anim = null;
               flying = false;
               setLook(null);
+              setFrozen(false);
             };
             place(target);
           }
@@ -116,6 +120,7 @@ export function FloatingDrop() {
     return () => {
       cancelAnimationFrame(raf);
       anim?.cancel();
+      setFrozen(false);
     };
   }, [reduced]);
 
@@ -128,7 +133,7 @@ export function FloatingDrop() {
       className="pointer-events-none fixed top-0 left-0 z-20 origin-top-left"
       style={{ opacity: 0, width: BASE, willChange: "transform" }}
     >
-      <Drop mood={mood} level={0} translate={false} reduced={reduced} size={BASE} follow look={look} />
+      <Drop mood={mood} level={0} translate={false} reduced={reduced} size={BASE} follow look={look} frozen={frozen} />
     </div>
   );
 }

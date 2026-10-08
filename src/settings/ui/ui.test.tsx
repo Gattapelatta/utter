@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { Drop } from "../../overlay/drop/Drop";
 import { Bar } from "./Bar";
 import { Keycap } from "./Keycap";
@@ -50,6 +50,17 @@ describe("ui kit", () => {
     rerender(<Bar value={500} max={100} />);
     expect(fill().style.transform).toBe("scaleX(1)");
     expect(fill().hasAttribute("data-accent")).toBe(true);
+  });
+
+  it("a frozen Drop is not repainted, and wakes up again", async () => {
+    const { container, rerender } = render(<Drop mood="happy" level={0} translate={false} reduced={false} frozen />);
+    const body = container.querySelector("[data-body]")!;
+    const before = body.getAttribute("transform");
+    await act(() => new Promise((r) => setTimeout(r, 300)));
+    expect(body.getAttribute("transform")).toBe(before);
+    rerender(<Drop mood="happy" level={0} translate={false} reduced={false} />);
+    await act(() => new Promise((r) => setTimeout(r, 300)));
+    expect(body.getAttribute("transform")).not.toBe(before);
   });
 
   it("pill keeps its size and colours", () => {
