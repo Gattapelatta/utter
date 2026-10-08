@@ -26,7 +26,7 @@ impl UiSink for TauriUi {
         const WINDOW: &str = "settings";
         let _ = match e {
             UiEvent::Status(s) => {
-                tracing::debug!("status: {s:?}");
+                super::tray::set_status(&self.app, s);
                 Ok(())
             }
             UiEvent::Hotkey { mode, down } => {

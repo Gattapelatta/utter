@@ -14,8 +14,6 @@ pub mod settings;
 pub mod usage;
 pub mod types;
 
-use tauri::menu::{Menu, MenuItem};
-use tauri::tray::TrayIconBuilder;
 use tauri::Manager;
 
 /// Debug-only: `utter --debug-deliver <text> --method paste|type --delay <secs>`
@@ -63,6 +61,7 @@ fn init_core(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     let lang = sys_locale::get_locale();
     let settings = settings::load(&data_dir.join("settings.json"), lang.as_deref());
+    app::tray::build(app.handle(), &settings)?;
     let shared = Arc::new(Shared::new(settings.clone(), data_dir));
     shared.remove_orphan_audio();
 
@@ -160,23 +159,6 @@ pub fn run() {
         .setup(|app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-
-            let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit Utter", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&settings, &quit])?;
-
-            let mut tray = TrayIconBuilder::with_id("main")
-                .menu(&menu)
-                .show_menu_on_left_click(true)
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "settings" => app::settings_window::open(app, None),
-                    "quit" => app.exit(0),
-                    _ => {}
-                });
-            if let Some(icon) = app.default_window_icon() {
-                tray = tray.icon(icon.clone());
-            }
-            tray.build(app)?;
 
             init_core(app)?;
             Ok(())

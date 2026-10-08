@@ -71,6 +71,7 @@ pub fn update_settings(app: &AppHandle, state: &AppState, next: Settings) -> Res
     if let Some(w) = app.get_webview_window(settings_window::LABEL) {
         let _ = w.set_theme(settings_window::window_theme(next.theme));
     }
+    super::tray::refresh(app, &next);
     let _ = app.emit("ui://settings", &next);
     Ok(())
 }
