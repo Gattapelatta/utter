@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { ipc } from "../../lib/ipc";
-import { createModel, stepModel, type Mood } from "./dropModel";
+import { createModel, gazeToward, stepModel, type Mood } from "./dropModel";
 import { arcPath, clouds, drops, glints, ring, satellite } from "./effects";
 import { eyePath } from "./eye";
 
@@ -12,6 +12,10 @@ interface Props {
   level: number;
   translate: boolean;
   reduced: boolean;
+  /** Width in px (the pill's 48 by default). */
+  size?: number;
+  /** Look at the mouse pointer while it is over the page (settings logo). */
+  follow?: boolean;
 }
 
 const BODY = "M50 14 C74 14 87 36 87 58 C87 77 71 90 50 90 C29 90 13 77 13 58 C13 36 26 14 50 14Z";
@@ -30,10 +34,28 @@ const CYAN = [74, 216, 236];
  * The «Капля» character (docs/design/drop-prototype.html). The SVG is rendered once;
  * every frame mutates attributes directly so React does not re-render at 60–120 fps.
  */
-export function Drop({ mood, level, translate, reduced }: Props) {
+export function Drop({ mood, level, translate, reduced, size = 48, follow = false }: Props) {
   const svg = useRef<SVGSVGElement>(null);
   const input = useRef({ mood, level, translate, reduced });
   input.current = { mood, level, translate, reduced };
+  const pointer = useRef<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (!follow) return;
+    const move = (e: PointerEvent) => {
+      pointer.current = { x: e.clientX, y: e.clientY };
+    };
+    const leave = () => {
+      pointer.current = null;
+    };
+    const root = document.documentElement;
+    document.addEventListener("pointermove", move);
+    root.addEventListener("mouseleave", leave);
+    return () => {
+      document.removeEventListener("pointermove", move);
+      root.removeEventListener("mouseleave", leave);
+    };
+  }, [follow]);
 
   useEffect(() => {
     const root = svg.current;
@@ -71,7 +93,12 @@ export function Drop({ mood, level, translate, reduced }: Props) {
       wasListening = listening;
       lastFrame = now;
 
-      const f = stepModel(model, cur, now);
+      let gaze = null;
+      if (pointer.current) {
+        const r = root.getBoundingClientRect();
+        gaze = gazeToward(pointer.current.x - (r.left + r.width / 2), pointer.current.y - (r.top + r.height * 0.55));
+      }
+      const f = stepModel(model, { ...cur, gaze }, now);
       body.setAttribute("transform", `rotate(${f.rot.toFixed(3)} 50 90) translate(0 ${f.y.toFixed(3)})`);
       eyes.setAttribute("transform", `translate(${f.ex.toFixed(3)} ${f.ey.toFixed(3)})`);
       eyeL.setAttribute("d", eyePath(EYES[0][0], EYES[0][1], f.lid, f.smile));
@@ -116,7 +143,7 @@ export function Drop({ mood, level, translate, reduced }: Props) {
   }, []);
 
   return (
-    <svg ref={svg} viewBox="13 14 74 76" width="48" height="50" overflow="visible" aria-hidden className="shrink-0">
+    <svg ref={svg} viewBox="13 14 74 76" width={size} height={Math.round((size * 50) / 48)} overflow="visible" aria-hidden className="shrink-0">
       <defs>
         <radialGradient id="drop-glow" cx="50%" cy="50%" r="50%">
           {/* Tighter and softer than the prototype: a wide glow made the island look grey next to the notch. */}
@@ -133,10 +160,17 @@ export function Drop({ mood, level, translate, reduced }: Props) {
       ))}
       <g data-body>
         <circle data-glow cx="50" cy="55" r="48" fill="url(#drop-glow)" />
-        <path d={BODY} fill="#fff" />
+        <path d={BODY} style={{ fill: "var(--drop-body, #fff)" }} />
         <g data-eyes>
           {EYES.map(([x, y]) => (
-            <path key={x} data-eye d={eyePath(x, y, 0, 0)} fill="#000" stroke="#000" strokeWidth="1.6" strokeLinejoin="round" />
+            <path
+              key={x}
+              data-eye
+              d={eyePath(x, y, 0, 0)}
+              style={{ fill: "var(--drop-eye, #000)", stroke: "var(--drop-eye, #000)" }}
+              strokeWidth="1.6"
+              strokeLinejoin="round"
+            />
           ))}
         </g>
       </g>

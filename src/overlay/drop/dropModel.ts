@@ -9,6 +9,8 @@ export interface ModelInput {
   level: number;
   translate: boolean;
   reduced: boolean;
+  /** Where to look, in eye units (see `gazeToward`); null = look around on its own. */
+  gaze?: { x: number; y: number } | null;
 }
 
 /** Everything the SVG needs for one frame. */
@@ -30,6 +32,22 @@ export interface Frame {
   /** Seconds since the success/error effect started, or Infinity. */
   good: number;
   bad: number;
+}
+
+/** Eye travel limits, in the same units as LOOK_IDLE. */
+const GAZE_X = 8;
+const GAZE_UP = 5.5;
+const GAZE_DOWN = 3;
+/** Closer than this (px) the eyes move proportionally less, so they do not roll at a nearby cursor. */
+const GAZE_NEAR = 120;
+
+/** Eye offset that looks from the character's centre towards a point `dx, dy` pixels away. */
+export function gazeToward(dx: number, dy: number): { x: number; y: number } {
+  const dist = Math.hypot(dx, dy);
+  if (dist === 0) return { x: 0, y: 0 };
+  const k = Math.min(1, dist / GAZE_NEAR);
+  const y = (dy / dist) * GAZE_UP * k;
+  return { x: (dx / dist) * GAZE_X * k, y: Math.max(-GAZE_UP, Math.min(GAZE_DOWN, y)) };
 }
 
 const LOOK_IDLE: [number, number][] = [[0, 0], [-8, 0], [8, 0], [-6, -5], [6, -5], [0, -5.5], [-8, 2], [8, 2]];
@@ -129,7 +147,11 @@ export function stepModel(m: Model, input: ModelInput, now: number): Frame {
       if (since > 0.9) P.y.t = 0;
       if (since > 2.0) P.smile.t = 0;
     }
-    if ((mood === "idle" || mood === "thinking") && !still && now > m.nextLook) {
+    if (mood === "idle" && input.gaze && !still) {
+      P.ex.t = input.gaze.x;
+      P.ey.t = input.gaze.y;
+      m.nextLook = now + 500;
+    } else if ((mood === "idle" || mood === "thinking") && !still && now > m.nextLook) {
       const L = mood === "thinking" ? LOOK_THINK : LOOK_IDLE;
       const [x, y] = L[Math.floor(m.random() * L.length)];
       P.ex.t = x;

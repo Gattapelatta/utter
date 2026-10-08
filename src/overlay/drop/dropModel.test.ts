@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createModel, stepModel, type ModelInput } from "./dropModel";
+import { createModel, gazeToward, stepModel, type ModelInput } from "./dropModel";
 
 const listening = (level: number): ModelInput => ({ mood: "listening", level, translate: false, reduced: false });
 
@@ -42,5 +42,25 @@ describe("drop model", () => {
     expect(f.lid).toBeGreaterThan(0.95);
     for (let i = 91; i <= 180; i++) f = stepModel(m, { ...listening(0), mood: "happy" }, (i * 1000) / 60);
     expect(f.smile).toBeGreaterThan(0.9);
+  });
+
+  it("gaze overrides looking around", () => {
+    const m = createModel(0, () => 0); // random() = 0 would always pick the first idle look (0, 0)
+    const idle: ModelInput = { mood: "idle", level: 0, translate: false, reduced: false, gaze: { x: 8, y: -2 } };
+    let f = stepModel(m, idle, 0);
+    for (let i = 1; i <= 240; i++) f = stepModel(m, idle, (i * 1000) / 60);
+    expect(f.ex).toBeCloseTo(8, 1);
+    expect(f.ey).toBeCloseTo(-2, 1);
+  });
+
+  it("gazeToward points at the cursor and stays in the eye range", () => {
+    const right = gazeToward(500, 0);
+    expect(right.x).toBeCloseTo(8, 5);
+    expect(right.y).toBeCloseTo(0, 5);
+    const below = gazeToward(0, 500);
+    expect(below.y).toBeLessThanOrEqual(3);
+    expect(gazeToward(0, -500).y).toBeCloseTo(-5.5, 5);
+    // Right next to the character the eyes stay near the centre instead of rolling to the side.
+    expect(Math.abs(gazeToward(12, 0).x)).toBeLessThan(1);
   });
 });

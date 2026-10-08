@@ -16,14 +16,7 @@ pub mod types;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Manager};
-
-fn show_settings(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window("settings") {
-        let _ = w.show();
-        let _ = w.set_focus();
-    }
-}
+use tauri::Manager;
 
 /// Debug-only: `utter --debug-deliver <text> --method paste|type --delay <secs>`
 /// delivers `text` to the focused app and exits. Used by `scripts/paste-matrix.sh`.
@@ -103,10 +96,14 @@ fn init_core(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    let needs_setup = secrets.get(settings.provider).is_none() || !permissions::accessibility(false);
+    let route = app::settings_window::start_route(
+        settings.onboarding_done,
+        secrets.get(settings.provider).is_some(),
+        permissions::accessibility(false),
+    );
     app.manage(AppState { shared, tx, secrets, hotkeys, providers, log_dir });
-    if needs_setup {
-        show_settings(app.handle());
+    if let Some(r) = route {
+        app::settings_window::open(app.handle(), Some(r));
     }
     Ok(())
 }
@@ -118,7 +115,7 @@ pub fn run() {
     let builder = builder.plugin(tauri_nspanel::init());
     builder
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            show_settings(app);
+            app::settings_window::open(app, None);
         }))
         .invoke_handler(tauri::generate_handler![
             app::commands::get_settings,
@@ -138,6 +135,11 @@ pub fn run() {
             app::commands::usage_today,
             app::commands::copy_diagnostics,
             app::commands::overlay_action,
+            app::commands::settings_ready,
+            app::commands::open_settings,
+            app::commands::open_link,
+            app::commands::copy_text,
+            app::commands::open_microphone_settings,
             app::commands::overlay_painted,
             app::commands::overlay_frames,
         ])
@@ -153,7 +155,7 @@ pub fn run() {
                 .menu(&menu)
                 .show_menu_on_left_click(true)
                 .on_menu_event(|app, event| match event.id.as_ref() {
-                    "settings" => show_settings(app),
+                    "settings" => app::settings_window::open(app, None),
                     "quit" => app.exit(0),
                     _ => {}
                 });
@@ -162,19 +164,15 @@ pub fn run() {
             }
             tray.build(app)?;
 
-            // Closing the settings window only hides it; the app lives in the tray.
-            if let Some(w) = app.get_webview_window("settings") {
-                let w2 = w.clone();
-                w.on_window_event(move |event| {
-                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                        api.prevent_close();
-                        let _ = w2.hide();
-                    }
-                });
-            }
             init_core(app)?;
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        // The app lives in the tray: closing the last window must not quit it.
+        .run(|_app, event| {
+            if let tauri::RunEvent::ExitRequested { code: None, api, .. } = event {
+                api.prevent_exit();
+            }
+        });
 }

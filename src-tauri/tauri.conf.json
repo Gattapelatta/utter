@@ -13,14 +13,6 @@
     "macOSPrivateApi": true,
     "windows": [
       {
-        "label": "settings",
-        "url": "settings.html",
-        "title": "Utter",
-        "width": 900,
-        "height": 620,
-        "visible": false
-      },
-      {
         "label": "overlay",
         "url": "overlay.html",
         "title": "Utter Overlay",

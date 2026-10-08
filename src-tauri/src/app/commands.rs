@@ -5,10 +5,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, State};
 use tokio::sync::mpsc::UnboundedSender;
 
 use super::diagnostics;
+use super::settings_window;
 use super::orchestrator::{Input, ProviderFactory, Shared};
 use super::services::HotkeyService;
 use crate::history::HistoryEntry;
@@ -41,11 +42,12 @@ pub fn get_settings(state: State<AppState>) -> Settings {
     state.shared.settings()
 }
 
-#[tauri::command]
-pub fn save_settings(state: State<AppState>, settings: Settings) -> Result<(), String> {
+/// The one path for every settings change (window, tray, onboarding): saves, applies,
+/// and broadcasts `ui://settings` so every window shows the same values.
+pub fn update_settings(app: &AppHandle, state: &AppState, next: Settings) -> Result<(), String> {
     let path = state.shared.data_dir.join("settings.json");
-    settings::save(&path, &settings).map_err(|e| e.to_string())?;
-    if !settings.history_enabled {
+    settings::save(&path, &next).map_err(|e| e.to_string())?;
+    if !next.history_enabled {
         if let Ok(mut h) = state.shared.history.lock() {
             for f in h.clear() {
                 let _ = std::fs::remove_file(f);
@@ -54,10 +56,55 @@ pub fn save_settings(state: State<AppState>, settings: Settings) -> Result<(), S
         }
     }
     if let Ok(mut s) = state.shared.settings.lock() {
-        *s = settings;
+        *s = next.clone();
     }
     let _ = state.tx.send(Input::SettingsChanged);
+    let _ = app.emit("ui://settings", &next);
     Ok(())
+}
+
+#[tauri::command]
+pub fn save_settings(app: AppHandle, state: State<AppState>, settings: Settings) -> Result<(), String> {
+    update_settings(&app, &state, settings)
+}
+
+/// The settings page has painted its first frame: show the window without a flash.
+#[tauri::command]
+pub fn settings_ready(app: AppHandle) {
+    settings_window::reveal(&app);
+}
+
+#[tauri::command]
+pub fn open_settings(app: AppHandle, route: Option<String>) {
+    settings_window::open(&app, route.as_deref());
+}
+
+/// Opens one of the fixed external links; anything else is refused.
+#[tauri::command]
+pub fn open_link(link: String) -> Result<(), String> {
+    let url = settings_window::link_url(&link).ok_or("unknown_link")?;
+    open_url(url);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn copy_text(text: String) -> Result<(), String> {
+    let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+    cb.set_text(text).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn open_microphone_settings() {
+    open_url("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone");
+}
+
+fn open_url(url: &str) {
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(url).spawn();
+    #[cfg(target_os = "windows")]
+    let _ = std::process::Command::new("explorer").arg(url).spawn();
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let _ = url;
 }
 
 #[tauri::command]
@@ -163,13 +210,15 @@ pub fn copy_diagnostics(state: State<AppState>) -> String {
     diagnostics::report(&state.shared.settings(), &state.log_dir)
 }
 
-/// Clicking an error pill opens the settings window.
+/// Clicking an error pill opens the settings window at the section that fixes it.
 #[tauri::command]
-pub fn overlay_action(app: AppHandle, _action: String) {
-    if let Some(w) = app.get_webview_window("settings") {
-        let _ = w.show();
-        let _ = w.set_focus();
-    }
+pub fn overlay_action(app: AppHandle, action: String) {
+    let route = match action.as_str() {
+        "open_provider" => Some("provider"),
+        "open_permissions" => Some("permissions"),
+        _ => None,
+    };
+    settings_window::open(&app, route);
 }
 
 /// The pill's first painted frame of a recording (budget §8.4: < 50 ms).

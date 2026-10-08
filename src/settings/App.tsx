@@ -1,0 +1,75 @@
+import { useCallback, useEffect, useState } from "react";
+import { AnimatePresence, MotionConfig, motion } from "motion/react";
+import { events, ipc } from "../lib/ipc";
+import { useApp } from "../lib/store";
+import { parseRoute, type Route } from "./routes";
+import { Section } from "./sections/Section";
+import { Sidebar } from "./Sidebar";
+
+function Page({ route }: { route: Route }) {
+  return <Section route={route} />;
+}
+
+export function App() {
+  const [route, setRoute] = useState<Route>(() => parseRoute(location.hash));
+  const loaded = useApp((s) => s.settings !== null);
+
+  const go = useCallback((r: Route) => {
+    setRoute(r);
+    history.replaceState(null, "", `#/${r}`);
+  }, []);
+
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    let gone = false;
+    useApp
+      .getState()
+      .init()
+      .then((f) => {
+        if (gone) return f();
+        stop = f;
+        // Show the window only once the themed page has painted: no white flash.
+        requestAnimationFrame(() => requestAnimationFrame(() => ipc.settingsReady().catch(() => {})));
+      });
+    const un = events.navigate((r) => go(parseRoute(r)));
+    return () => {
+      gone = true;
+      stop?.();
+      un.then((f) => f());
+    };
+  }, [go]);
+
+  if (!loaded) return null;
+
+  const page = (
+    <AnimatePresence mode="wait" initial={false}>
+      <motion.div
+        key={route}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1, transition: { duration: 0.15, ease: [0.23, 1, 0.32, 1] } }}
+        exit={{ opacity: 0, transition: { duration: 0.08 } }}
+      >
+        <Page route={route} />
+      </motion.div>
+    </AnimatePresence>
+  );
+
+  return (
+    <MotionConfig reducedMotion="user">
+      {route === "onboarding" ? (
+        <main className="relative h-full overflow-y-auto">
+          <div data-tauri-drag-region className="absolute inset-x-0 top-0 h-[52px]" />
+          {page}
+        </main>
+      ) : (
+        <div className="flex h-full">
+          <Sidebar route={route} onGo={go} />
+          <main className="relative h-full flex-1 overflow-y-auto">
+            <div data-tauri-drag-region className="absolute inset-x-0 top-0 h-[52px]" />
+            {page}
+          </main>
+        </div>
+      )}
+    </MotionConfig>
+  );
+}

@@ -31,6 +31,11 @@ export const ipc = {
   usageToday: () => invoke<UsageDay | null>("usage_today"),
   copyDiagnostics: () => invoke<string>("copy_diagnostics"),
   overlayAction: (action: string) => invoke<void>("overlay_action", { action }),
+  settingsReady: () => invoke<void>("settings_ready"),
+  openSettings: (route: string | null) => invoke<void>("open_settings", { route }),
+  openLink: (link: "gemini_key" | "groq_key" | "openai_key" | "github" | "releases") => invoke<void>("open_link", { link }),
+  copyText: (text: string) => invoke<void>("copy_text", { text }),
+  openMicrophoneSettings: () => invoke<void>("open_microphone_settings"),
   overlayPainted: () => invoke<void>("overlay_painted"),
   overlayFrames: (avg: number, p95: number, max: number, count: number) =>
     invoke<void>("overlay_frames", { avg, p95, max, count }),
@@ -48,4 +53,5 @@ export const events = {
   trial: (cb: (o: TrialOutcome) => void): Promise<UnlistenFn> => listen<TrialOutcome>("ui://trial", (e) => cb(e.payload)),
   history: (cb: () => void): Promise<UnlistenFn> => listen("ui://history", () => cb()),
   settings: (cb: (s: Settings) => void): Promise<UnlistenFn> => listen<Settings>("ui://settings", (e) => cb(e.payload)),
+  navigate: (cb: (route: string) => void): Promise<UnlistenFn> => listen<string>("ui://navigate", (e) => cb(e.payload)),
 };

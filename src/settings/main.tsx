@@ -1,9 +1,14 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { DevSettings } from "./DevSettings";
+import { App } from "./App";
+import "./settings.css";
+
+if (import.meta.env.DEV && !("__TAURI_INTERNALS__" in window)) {
+  (await import("./devMock")).installDevMock();
+}
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <DevSettings />
+    <App />
   </React.StrictMode>,
 );
