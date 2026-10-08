@@ -586,15 +586,16 @@ impl Orchestrator {
         let deferred = self.end_recording();
         let captured = self.deps.audio.stop().unwrap_or_default();
         let pieces = std::mem::take(&mut self.pieces);
+        let paragraphs = self.shared.settings().paragraphs;
         let fits = self.piece_layout == Some((captured.rate, captured.channels)) && captured.samples.len() >= self.piece_offset;
-        let split = if !pieces.is_empty() && fits {
-            let rest = Captured { samples: captured.samples[self.piece_offset..].to_vec(), ..captured.clone() };
-            Some(Split { pieces, rest })
-        } else {
+        let split = if paragraphs || (!pieces.is_empty() && !fits) {
             for p in pieces {
                 p.abort();
             }
             None
+        } else {
+            let rest = Captured { samples: captured.samples[self.piece_offset.min(captured.samples.len())..].to_vec(), ..captured.clone() };
+            Some(Split { pieces, rest })
         };
         self.drop_pieces();
         self.spawn_job(mode, AudioInput::Captured(captured), None, split);
@@ -652,12 +653,22 @@ impl Orchestrator {
             };
             let mut requests = 1;
             let mut outcome = None;
-            if let Some(split) = split {
+            let split = split.map(|sp| (sp.pieces, split_tail(sp.rest)));
+            // A short recording sent nowhere yet gains nothing from the piecewise path.
+            let split = split.filter(|(pieces, tail)| !pieces.is_empty() || tail.len() > 1);
+            if let Some((pieces, tail)) = split {
                 let mut outs = Vec::new();
-                for p in split.pieces {
+                for p in pieces {
                     outs.push(p.await.unwrap_or(Err(JobError::Provider(ProviderError::BadResponse("piece crashed".into())))));
                 }
-                outs.push(process_capture(mode, split.rest, opts.clone(), provider.clone()).await);
+                // The halves of a long tail run at the same time.
+                let tail: Vec<_> = tail
+                    .into_iter()
+                    .map(|c| tokio::spawn(process_capture(mode, c, opts.clone(), provider.clone())))
+                    .collect();
+                for t in tail {
+                    outs.push(t.await.unwrap_or(Err(JobError::Provider(ProviderError::BadResponse("piece crashed".into())))));
+                }
                 requests = outs.len() as u32;
                 if outs.iter().any(|o| matches!(o, Err(JobError::Provider(_)))) {
                     tracing::warn!("a piece failed; sending the whole recording in one request");
@@ -853,6 +864,21 @@ async fn process_capture(
     match prepared {
         Some(p) => process(mode, p.wav, p.audio_secs, &opts, provider).await,
         None => Err(JobError::NothingHeard),
+    }
+}
+
+/// The audio left at release: halved at its quietest middle moment when long.
+fn split_tail(rest: Captured) -> Vec<Captured> {
+    let ch = rest.channels.max(1) as usize;
+    let mono = dsp::downmix(&rest.samples, rest.channels);
+    match segment::split_point(&mono, rest.rate) {
+        Some(cut) => {
+            let n = (cut * ch).min(rest.samples.len());
+            let second = Captured { samples: rest.samples[n..].to_vec(), ..rest.clone() };
+            let first = Captured { samples: rest.samples[..n].to_vec(), ..rest };
+            vec![first, second]
+        }
+        None => vec![rest],
     }
 }
 
@@ -1500,5 +1526,29 @@ mod tests {
         yield_to_jobs().await;
         assert!(r.out.0.lock().unwrap().is_empty());
         assert_eq!(r.orch.in_flight, 0);
+    }
+
+    #[tokio::test]
+    async fn long_tail_is_split_into_parallel_halves() {
+        let mut r = piece_rig(vec![Ok("A.".into()), Ok("B.".into())]);
+        let mut c = speech(5.0);
+        c.samples.extend(vec![0.0; 16_000 * 4 / 10]);
+        c.samples.extend(speech(5.0).samples);
+        r.record(Mode::Translate, c, Instant::now(), 11).await;
+        r.settle(1).await;
+        assert_eq!(r.provider.direct_calls.load(Ordering::SeqCst), 2);
+        let out = r.out.0.lock().unwrap().clone();
+        let mut words: Vec<&str> = out[0].split(' ').collect();
+        words.sort();
+        assert_eq!(words, vec!["A.", "B."]);
+    }
+
+    #[tokio::test]
+    async fn short_recording_stays_one_request() {
+        let mut r = piece_rig(vec![]);
+        r.record(Mode::Translate, speech(4.0), Instant::now(), 4).await;
+        r.settle(1).await;
+        assert_eq!(r.provider.direct_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(*r.out.0.lock().unwrap(), vec!["Whole.".to_string()]);
     }
 }

@@ -3,14 +3,16 @@
 
 use super::dsp::{rms, FRAME_MS, VOICE_RMS};
 
-/// Pieces shorter than this are not sent on their own.
-pub const MIN_PIECE_SECS: f32 = 10.0;
+/// Pieces shorter than this are not sent on their own (~1.5 s answers up to ~8 s of audio).
+pub const MIN_PIECE_SECS: f32 = 7.0;
 /// Without any pause, a piece is cut at its quietest moment once it is this long.
-pub const MAX_PIECE_SECS: f32 = 25.0;
+pub const MAX_PIECE_SECS: f32 = 15.0;
 /// Only a pause at least this long counts as a place to cut.
-const PAUSE_MS: u32 = 400;
+const PAUSE_MS: u32 = 300;
 /// The forced cut looks for the quietest frame within this many seconds before the maximum.
-const FORCED_WINDOW_SECS: f32 = 5.0;
+const FORCED_WINDOW_SECS: f32 = 4.0;
+/// A tail left at release longer than this is halved and both halves run in parallel.
+pub const SPLIT_TAIL_SECS: f32 = 9.0;
 
 /// Mono sample index to cut `mono` at, or `None` to keep listening.
 pub fn find_cut(mono: &[f32], rate: u32) -> Option<usize> {
@@ -42,6 +44,18 @@ pub fn find_cut(mono: &[f32], rate: u32) -> Option<usize> {
     Some(quietest * frame)
 }
 
+/// Where to halve a long tail: the quietest frame in its middle third.
+pub fn split_point(mono: &[f32], rate: u32) -> Option<usize> {
+    let frame = (rate * FRAME_MS / 1000).max(1) as usize;
+    if (mono.len() as f32) < SPLIT_TAIL_SECS * rate as f32 {
+        return None;
+    }
+    let levels: Vec<f32> = mono.chunks(frame).map(rms).collect();
+    let (from, to) = (levels.len() / 3, levels.len() * 2 / 3);
+    let quietest = (from..to).min_by(|&a, &b| levels[a].total_cmp(&levels[b]))?;
+    Some(quietest * frame)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -64,39 +78,52 @@ mod tests {
 
     #[test]
     fn no_cut_before_the_minimum_length() {
-        let a = join(&[tone(5.0), silence(1.0), tone(3.0)]);
+        let a = join(&[tone(4.0), silence(1.0), tone(1.5)]);
         assert_eq!(find_cut(&a, RATE), None);
     }
 
     #[test]
-    fn cuts_in_the_middle_of_the_first_pause_after_ten_seconds() {
-        let a = join(&[tone(4.0), silence(0.6), tone(7.0), silence(0.6), tone(2.0)]);
+    fn cuts_in_the_middle_of_the_first_pause_after_seven_seconds() {
+        let a = join(&[tone(3.0), silence(0.6), tone(5.0), silence(0.6), tone(2.0)]);
         let cut = find_cut(&a, RATE).expect("a cut");
         let secs = cut as f32 / RATE as f32;
-        assert!((11.8..=12.4).contains(&secs), "cut at {secs} s");
+        assert!((8.6..=9.2).contains(&secs), "cut at {secs} s");
     }
 
     #[test]
     fn short_pauses_are_not_cut() {
-        let a = join(&[tone(11.0), silence(0.2), tone(5.0)]);
+        let a = join(&[tone(8.0), silence(0.2), tone(5.0)]);
         assert_eq!(find_cut(&a, RATE), None);
     }
 
     #[test]
     fn long_speech_without_pauses_is_cut_at_the_quietest_moment() {
-        let mut a = tone(26.0);
-        // A quieter (but not silent) dip at 22 s.
-        let dip = (22.0 * RATE as f32) as usize;
+        let mut a = tone(16.0);
+        // A quieter (but not silent) dip at 12 s.
+        let dip = (12.0 * RATE as f32) as usize;
         for s in &mut a[dip..dip + RATE as usize / 10] {
             *s *= 0.05;
         }
         let cut = find_cut(&a, RATE).expect("forced cut");
         let secs = cut as f32 / RATE as f32;
-        assert!((21.9..=22.15).contains(&secs), "cut at {secs} s");
+        assert!((11.9..=12.15).contains(&secs), "cut at {secs} s");
     }
 
     #[test]
     fn no_forced_cut_before_the_maximum() {
-        assert_eq!(find_cut(&tone(24.0), RATE), None);
+        assert_eq!(find_cut(&tone(14.0), RATE), None);
+    }
+
+    #[test]
+    fn halves_a_long_tail_at_its_middle_pause() {
+        let a = join(&[tone(5.0), silence(0.4), tone(5.0)]);
+        let cut = split_point(&a, RATE).expect("split");
+        let secs = cut as f32 / RATE as f32;
+        assert!((5.0..=5.4).contains(&secs), "split at {secs} s");
+    }
+
+    #[test]
+    fn short_tails_are_not_split() {
+        assert_eq!(split_point(&join(&[tone(4.0), silence(0.4), tone(4.0)]), RATE), None);
     }
 }
