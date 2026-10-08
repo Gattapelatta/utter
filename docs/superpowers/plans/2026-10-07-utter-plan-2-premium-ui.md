@@ -597,3 +597,19 @@ it("reduced motion keeps the character still")
 - `recorder.rs`: `AudioSource::peek(from) -> Option<Captured>` (по умолчанию `None`; у микрофона — `Cmd::Peek`, `None` после смены устройства).
 - `orchestrator.rs`: `check_pieces` в тике раз в 500 мс (кроме режима абзацев), `Split { pieces, rest }` при отправке, `combine` склеивает по порядку, запасной путь «одним запросом» при `Err(Provider)` куска, `JobResult.requests` → `Usage::count_stt_request`; отмена/провал старта сбрасывают куски. Тесты: `long_recording_is_processed_in_pieces_while_speaking`, `failed_piece_falls_back_to_one_request`, `paragraphs_keep_one_request`, `cancelled_recording_drops_its_pieces`.
 - Живая проверка: диктовка 30–60 с; в логе — строки `piece sent while speaking` и `total_ms` после отпускания.
+
+### Дополнение к Task 6: раскладка окна и Капля-логотип (утверждено 2026-10-08)
+
+Спецификация §4.3 (раскладка «вариант B», Капля-логотип «M», вкладки по центру окна). Выполняется в составе Task 6.
+
+**Files:** Modify `src/overlay/drop/{dropModel.ts,Drop.tsx}`, `src/overlay/drop/dropModel.test.ts`; Create `src/settings/Logo.tsx`, `src/settings/useGaze.ts`, `src/settings/Logo.test.tsx`.
+
+**Interfaces:**
+- `ModelInput` получает `gaze: { x: number; y: number } | null` — направление взгляда в единицах глаз (x ∈ [−8, 8], y ∈ [−5.5, 3]); при `gaze` цели пружин `ex/ey` = `gaze`, случайное «осматривание» не идёт; при `null` — как раньше. Пилюля передаёт `null`.
+- `export function gazeToward(dx: number, dy: number): { x: number; y: number }` (в `dropModel.ts`) — от центра Капли к курсору в пикселях: направление × (8; 5.5), к самой Капле (< 120 px) — пропорционально ближе к центру; y ограничен [−5.5, 3].
+- `Drop` получает необязательные `gaze` и `size` (по умолчанию 48 × 50 — пилюля не меняется); цвета тела и глаз — `var(--drop-body, #fff)` / `var(--drop-eye, #000)`; в светлой теме окна настроек `--drop-body: #0A0A0A; --drop-eye: #fff`. Цикл кадров на паузе, пока `document.hidden`.
+- `useGaze(ref)` — слушает `pointermove`/`pointerleave` на `document`, возвращает ref с текущим `gaze` (без ре-рендера на каждое движение).
+- `Logo` — Капля 60 × 62 + «Utter» 22 px / 500.
+- `Sidebar`: светофор-зона 52 px (перетаскивание), под ней `Logo`; список вкладок — `position: absolute; top: 50%; translateY(-50%)` относительно всей высоты меню.
+
+- [ ] **Тесты:** `gaze overrides looking around` (модель с `gaze {x:8,y:0}` → `ex` → 8, без случайных смен), `gazeToward points at the cursor and stays in the eye range`, `pill keeps its size and colours` (Drop без `size` → width 48), `logo shows the drop and the name`.
