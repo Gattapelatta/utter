@@ -20,7 +20,9 @@ export function islandVariants(notch: Notch) {
   };
   return {
     hidden: folded,
-    visible: { opacity: 1, transform: transform(0, 1, 1), transition: grow, transitionEnd: { transform: "none" } },
+    // No `transitionEnd: none`: the fold would then start from "none", which Motion turns into
+    // scale 0 — the island vanished at once and regrew unseen under the notch.
+    visible: { opacity: 1, transform: transform(0, 1, 1), transition: grow },
     // Folding back is an even ease-in-out tween, so it ends exactly when the window is hidden.
     leave: (cancelled: boolean) => ({
       ...folded,

@@ -38,6 +38,6 @@ open src-tauri/target/release/bundle/macos/Utter.app
 - Never hold a `std::sync::Mutex` guard while calling something that locks the same mutex (a deadlock of this kind was fixed in the orchestrator).
 - Provider endpoints and model names live only in `src-tauri/src/providers/defaults.rs`.
 - Stopping the event tap must also disable it and invalidate its mach port (`hotkey::macos`): a stale enabled tap stalled the whole keyboard after many sleep/wake restarts.
-- Motion cannot interpolate between transform strings with different function lists (e.g. `scaleX() scaleY()` → `none` animates to scale 0): keep one template (`overlay/drop/islandMotion.ts`).
+- Motion cannot interpolate between transform strings with different function lists (e.g. `scaleX() scaleY()` → `none` animates to scale 0): keep one template (`overlay/drop/islandMotion.ts`). This includes `transitionEnd: { transform: "none" }` — the next animation then starts from scale 0 (the island "vanished" on fold-back).
 - The top ~32 pt of the screen under the MacBook camera notch are not pixels: nothing in the island may be drawn there (the Drop sits lower, arcs are limited to ±30°, clouds are in the island's left wing).
 - The Drop's per-frame logic is a pure model (`overlay/drop/dropModel.ts`) driving SVG attributes via refs — no React re-render per frame.

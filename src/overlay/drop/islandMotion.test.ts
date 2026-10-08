@@ -15,7 +15,7 @@ describe("island motion", () => {
       expect(fns(visible.transform)).toEqual(fns(hidden.transform));
       expect(fns(leave.transform)).toEqual(fns(hidden.transform));
       expect(visible.transform).toBe("translateY(0px) scaleX(1) scaleY(1)");
-      expect(visible.transitionEnd?.transform).toBe("none");
+      expect(visible.transitionEnd).toBeUndefined();
     });
   }
 
