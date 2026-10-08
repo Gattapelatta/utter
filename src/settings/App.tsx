@@ -64,10 +64,7 @@ export function App() {
   // Show the window once the themed page is in the DOM: no white flash. (Not via
   // requestAnimationFrame — a hidden WKWebView never runs it, so the window waited 1.5 s.)
   useEffect(() => {
-    if (loaded) {
-      ipc.uiLog("info", `ready route=${route} vis=${document.visibilityState}`).catch(() => {});
-      ipc.settingsReady().catch(() => {});
-    }
+    if (loaded) ipc.settingsReady().catch(() => {});
   }, [loaded]);
 
   if (!loaded) return null;
@@ -76,6 +73,7 @@ export function App() {
     <AnimatePresence mode="wait" initial={false}>
       <motion.div
         key={route}
+        className="h-full"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1, transition: { duration: 0.15, ease: [0.23, 1, 0.32, 1] } }}
         exit={{ opacity: 0, transition: { duration: 0.08 } }}

@@ -68,6 +68,17 @@ describe("settings app", () => {
     expect(document.querySelector("[data-nav]")).not.toBeNull();
   });
 
+  it("full-window pages get the window's height", async () => {
+    // Onboarding is all absolutely positioned: with a zero-height wrapper it was clipped to nothing.
+    await mount("#/onboarding");
+    const main = document.querySelector("main")!;
+    const page = main.firstElementChild!;
+    expect(page.className).toContain("h-full");
+    cleanup();
+    await mount("#/general");
+    expect(document.querySelector("main")!.firstElementChild!.className).toContain("h-full");
+  });
+
   it("navigation event switches section", async () => {
     await mount("#/general");
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Основное");
