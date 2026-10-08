@@ -618,3 +618,11 @@ it("reduced motion keeps the character still")
 
 - Task 8: счётчики «Сегодня» (`usageBars`, Geist Mono, полоски) — **не в «Провайдере», а в конце «Основного»** (компонент `src/settings/sections/Usage.tsx`, тест `usageBars keeps only limited counters` и обновление раз в 5 с / по `ui://history` — там же). Варианты провайдера — строки с радиокнопкой (без карточек), у Gemini метка «Рекомендуем».
 - Task 12: в «О приложении» нет подписи `about.tagline` под названием (ключ удалить из словарей).
+
+### Изменения Task 11 (онбординг утверждён 2026-10-09, спецификация §4.4 переписана)
+
+- Шаг 5 `key` — обе клавиши (Диктовка и Перевод) на одном экране (`steps/Keys.tsx` вместо `DictationKey.tsx`).
+- Шаг 4 — без «Проверить»: ключ из буфера обмена при возврате фокуса. Rust: `pub fn looks_like_key(provider: ProviderKind, text: &str) -> bool` (Gemini: `AIza` + 35 × `[A-Za-z0-9_-]`; Groq: `gsk_` + ≥ 20; OpenAI: `sk-` + ≥ 20) и команда `clipboard_key(provider) -> Option<String>` (текст буфера отдаётся, только если похож на ключ). Тесты: `gemini_key_pattern`, `other_text_is_not_a_key`.
+- `Onboarding` — свой макет (вариант A): Капля в абсолютном слое, её Y — пружина (response 0,55, damping 0,72); `dropAt(step)` = `center` для 1–3 и 6, `top` для 4–5; текст шага скрыт до остановки Капли. Радость — `Drop` с `mood="happy"` на ~2 с (настроение-импульс).
+- Тексты шагов — новые ключи `onboarding.*` (короткие, по §4.4); демо — 4 пары фраз `onboarding.demo_{1..4}_{ru,en}`.
+- Тесты плана остаются, плюс: `drop waits at the centre on steps 1-3 and 6`, `step text appears only after the drop settles`, `key from the clipboard is saved and verified on focus`.
