@@ -5,6 +5,7 @@ import { useApp } from "../lib/store";
 import { parseRoute, type Route } from "./routes";
 import { General } from "./sections/General";
 import { Hotkeys } from "./sections/Hotkeys";
+import { Provider } from "./sections/Provider";
 import { Section } from "./sections/Section";
 import { Translate } from "./sections/Translate";
 import { Sidebar } from "./Sidebar";
@@ -17,6 +18,8 @@ function Page({ route }: { route: Route }) {
       return <Hotkeys />;
     case "translate":
       return <Translate />;
+    case "provider":
+      return <Provider />;
     default:
       return <Section route={route} />;
   }
@@ -73,17 +76,18 @@ export function App() {
   return (
     <MotionConfig reducedMotion="user">
       {route === "onboarding" ? (
-        <main className="relative h-full overflow-y-auto">
-          <div data-tauri-drag-region className="absolute inset-x-0 top-0 h-[52px]" />
-          {page}
-        </main>
+        <div className="relative h-full">
+          <div data-tauri-drag-region className="absolute inset-x-0 top-0 z-10 h-[52px]" />
+          <main className="h-full overflow-y-auto">{page}</main>
+        </div>
       ) : (
         <div className="flex h-full">
           <Sidebar route={route} onGo={go} />
-          <main className="relative h-full flex-1 overflow-y-auto">
-            <div data-tauri-drag-region className="absolute inset-x-0 top-0 h-[52px]" />
-            {page}
-          </main>
+          <div className="relative h-full min-w-0 flex-1">
+            {/* Outside the scrolling area, so the window can be dragged by its top edge at any scroll position. */}
+            <div data-tauri-drag-region className="absolute inset-x-0 top-0 z-10 h-[52px]" />
+            <main className="h-full overflow-y-auto">{page}</main>
+          </div>
         </div>
       )}
     </MotionConfig>

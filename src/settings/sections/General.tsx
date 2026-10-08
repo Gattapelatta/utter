@@ -7,6 +7,7 @@ import { Segmented } from "../ui/Segmented";
 import { Select } from "../ui/Select";
 import { Switch } from "../ui/Switch";
 import { Section } from "./Section";
+import { Usage } from "./Usage";
 
 const AUTO = "auto";
 
@@ -83,6 +84,7 @@ export function General() {
           ]}
         />
       </Row>
+      <Usage />
     </Section>
   );
 }
