@@ -29,6 +29,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 const { Onboarding } = await import("./Onboarding");
+const { useDropStage } = await import("../drop/dropStage");
 const { DemoPhrase } = await import("./DemoPhrase");
 
 const base: Settings = {
@@ -219,7 +220,8 @@ describe("onboarding flow", () => {
     mask = "AIza••••";
     const onDone = await mount();
     await act(async () => fireEvent.click(screen.getByText("Пропустить")));
-    await wait(20);
+    await wait(700); // the text and the footer leave first
+
     const saved = calls("save_settings").slice(-1)[0] as { settings: Settings };
     expect(saved.settings.onboarding_done).toBe(true);
     expect(saved.settings.autostart).toBe(true);
@@ -234,7 +236,7 @@ describe("onboarding flow", () => {
     await landed();
     await act(async () => listeners["ui://trial"]({ payload: { kind: "text", mode: "Dictation", text: "Привет, это проверка" } }));
     expect(screen.getByText("Привет, это проверка")).toBeTruthy();
-    expect(document.querySelector("[data-mood]")!.getAttribute("data-mood")).toBe("happy");
+    expect(useDropStage.getState().mood).toBe("happy");
   });
 });
 

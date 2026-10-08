@@ -13,10 +13,11 @@ export const DROP_H = Math.round((DROP_W * 50) / 48);
 export const GAP = 24;
 export const TOP_Y = 60;
 /**
- * The visible height of the welcome group (Drop, title, line, demo phrase), measured on
- * screen: 221 pt with a one-line phrase, 247 pt with two — centred on their average.
+ * The visible height of the welcome group (Drop, title, line, demo phrase, theme switch),
+ * measured on screen: 221 pt with a one-line phrase, 247 pt with two, plus 52 pt for the
+ * switch — centred on the average.
  */
-export const GROUP_H = 234;
+export const GROUP_H = 286;
 /** The eye reads the exact middle as low; lift the group a touch. */
 export const OPTICAL_LIFT = 4;
 

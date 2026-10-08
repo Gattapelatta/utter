@@ -30,6 +30,7 @@ export const ipc = {
   historyList: () => invoke<HistoryEntry[]>("history_list"),
   historyRetry: (id: number) => invoke<void>("history_retry", { id }),
   usageToday: () => invoke<UsageDay | null>("usage_today"),
+  appInfo: () => invoke<{ version: string; os: string }>("app_info"),
   copyDiagnostics: () => invoke<string>("copy_diagnostics"),
   overlayAction: (action: string) => invoke<void>("overlay_action", { action }),
   uiLog: (level: "info" | "error", message: string) => invoke<void>("ui_log", { level, message }),

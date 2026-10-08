@@ -121,7 +121,6 @@
   "history.failed": "Ошибка: {message}",
   "history.raw": "Расшифровка",
   "about.title": "О приложении",
-  "about.tagline": "Нажми клавишу, скажи — и текст появится.",
   "about.version": "Версия",
   "about.os": "Система",
   "about.github": "GitHub",
@@ -188,5 +187,9 @@
   "onboarding.keys_title": "Твои клавиши",
   "onboarding.keys_body": "Удобно оставить как есть.",
   "onboarding.keys_translate": "Перевод на английский",
-  "permissions.done": "Готово"
+  "permissions.done": "Готово",
+  "about.drop_title": "Это Капля",
+  "about.drop_body": "Она живёт у чёлки твоего Mac. Зажми клавишу — Капля проснётся и будет слушать, покачиваясь в такт голосу. Отпустишь — подумает секунду и вставит текст туда, где стоит курсор. Получилось — улыбнётся, что-то не так — загрустит под тучкой.",
+  "about.drop_poke": "Порадовать Каплю",
+  "about.copy": "Скопировать"
 }

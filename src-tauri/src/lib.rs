@@ -103,6 +103,8 @@ fn init_core(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     app.manage(AppState { shared, tx, secrets: secrets.clone(), hotkeys, providers, log_dir });
+    #[cfg(feature = "debug-eval")]
+    app::debug_eval::start(app.handle().clone(), app.path().app_data_dir()?);
     // Reading the key may show a Keychain prompt; never wait for it on the main thread
     // (it froze the tray and hotkeys for as long as the prompt was open).
     let handle = app.handle().clone();
@@ -148,6 +150,7 @@ pub fn run() {
             app::commands::history_retry,
             app::commands::usage_today,
             app::commands::copy_diagnostics,
+            app::commands::app_info,
             app::commands::overlay_action,
             app::commands::settings_ready,
             app::commands::open_settings,

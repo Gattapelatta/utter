@@ -121,7 +121,6 @@
   "history.failed": "Error: {message}",
   "history.raw": "Transcript",
   "about.title": "About",
-  "about.tagline": "Press a key, speak, and the text appears.",
   "about.version": "Version",
   "about.os": "System",
   "about.github": "GitHub",
@@ -188,5 +187,9 @@
   "onboarding.keys_title": "Your keys",
   "onboarding.keys_body": "The defaults work well.",
   "onboarding.keys_translate": "Translate to English",
-  "permissions.done": "Done"
+  "permissions.done": "Done",
+  "about.drop_title": "This is Drop",
+  "about.drop_body": "It lives by your Mac's notch. Hold the key and Drop wakes up and listens, swaying to your voice. Let go — it thinks for a second and puts the text where your cursor is. When it works, Drop smiles; when something goes wrong, it sulks under a little cloud.",
+  "about.drop_poke": "Cheer Drop up",
+  "about.copy": "Copy"
 }

@@ -236,6 +236,34 @@ pub fn usage_today(state: State<AppState>) -> Option<UsageDay> {
     state.shared.usage.lock().ok().map(|u| u.today(today))
 }
 
+#[derive(Serialize)]
+pub struct AppInfo {
+    pub version: String,
+    pub os: String,
+}
+
+/// What a person calls their processor ("Apple Silicon"), from Rust's architecture name.
+pub fn arch_label(arch: &str) -> &str {
+    match arch {
+        "aarch64" => "Apple Silicon",
+        "x86_64" => "Intel",
+        other => other,
+    }
+}
+
+#[tauri::command]
+pub fn app_info() -> AppInfo {
+    #[cfg(target_os = "macos")]
+    let os = {
+        let v = objc2_foundation::NSProcessInfo::processInfo().operatingSystemVersion();
+        let patch = if v.patchVersion > 0 { format!(".{}", v.patchVersion) } else { String::new() };
+        format!("macOS {}.{}{patch} · {}", v.majorVersion, v.minorVersion, arch_label(std::env::consts::ARCH))
+    };
+    #[cfg(not(target_os = "macos"))]
+    let os = format!("{} · {}", std::env::consts::OS, arch_label(std::env::consts::ARCH));
+    AppInfo { version: env!("CARGO_PKG_VERSION").to_string(), os }
+}
+
 #[tauri::command]
 pub fn copy_diagnostics(state: State<AppState>) -> String {
     diagnostics::report(&state.shared.settings(), &state.log_dir)
@@ -281,6 +309,13 @@ pub fn overlay_frames(avg: f64, p95: f64, max: f64, count: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn processor_names_are_human() {
+        assert_eq!(arch_label("aarch64"), "Apple Silicon");
+        assert_eq!(arch_label("x86_64"), "Intel");
+        assert_eq!(arch_label("riscv64"), "riscv64");
+    }
 
     #[test]
     fn autostart_follows_the_switch_only_when_it_changes() {

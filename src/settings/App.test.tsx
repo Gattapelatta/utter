@@ -100,12 +100,14 @@ describe("settings app", () => {
     await mount("#/general");
     const logo = document.querySelector("[data-logo]")!;
     expect(logo.textContent).toBe("Utter");
-    expect(logo.querySelector("svg")!.getAttribute("width")).toBe("60");
+    // The logo marks the place; the window's one Drop is drawn there.
+    expect((logo.querySelector("[data-drop-slot=logo]") as HTMLElement).style.width).toBe("60px");
+    expect(document.querySelector("[data-floating-drop] svg")).not.toBeNull();
   });
 
   it("logo eyes follow the pointer", async () => {
     await mount("#/general");
-    const eyes = document.querySelector("[data-logo] [data-eyes]")!;
+    const eyes = document.querySelector("[data-floating-drop] [data-eyes]")!;
     await act(async () => {
       document.dispatchEvent(new MouseEvent("pointermove", { clientX: 900, clientY: 0 }));
       await new Promise((r) => setTimeout(r, 900));

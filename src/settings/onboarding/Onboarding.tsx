@@ -4,13 +4,14 @@ import { useT } from "../../i18n";
 import { ipc } from "../../lib/ipc";
 import { useApp } from "../../lib/store";
 import type { PermissionsStatus } from "../../lib/types";
-import { Drop, type Mood } from "../../overlay/drop/Drop";
 import { HotkeyRows } from "../HotkeyRows";
 import { keyLabel } from "../keys";
 import { Button } from "../ui/Button";
 import { DemoPhrase } from "./DemoPhrase";
-import { createFlight, settled, stepFlight } from "./flight";
-import { canAdvance, DROP_H, DROP_W, dropAt, dropY, firstIncompleteStep, GAP, STEPS, TOP_Y, type StepId } from "./steps";
+import { useDropStage } from "../drop/dropStage";
+import { Segmented } from "../ui/Segmented";
+import type { Theme } from "../../lib/types";
+import { canAdvance, DROP_H, DROP_W, dropAt, dropY, firstIncompleteStep, GAP, STEPS, type StepId } from "./steps";
 import { Accessibility } from "./steps/Accessibility";
 import { Microphone } from "./steps/Microphone";
 import { ProviderKey } from "./steps/ProviderKey";
@@ -18,7 +19,8 @@ import { Trial } from "./steps/Trial";
 
 const FOOT = 84;
 const POLL_MS = 1_000;
-const HAPPY_MS = 2_200;
+/** The Drop needs a moment to notice its new place before "settled" means "landed there". */
+const LAND_GRACE_MS = 100;
 const ADVANCE_AFTER_KEY_MS = 1_900;
 
 const TITLES: Record<StepId, [string, string]> = {
@@ -64,15 +66,12 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const [step, setStep] = useState<StepId | null>(null);
   const [phase, setPhase] = useState<Phase>("in");
   const [keyOk, setKeyOk] = useState(false);
-  const [mood, setMood] = useState<Mood>("idle");
+  const [finishing, setFinishing] = useState(false);
 
-  const flight = useRef(createFlight(TOP_Y));
-  const dropEl = useRef<HTMLDivElement>(null);
   const stepRef = useRef(step);
   const phaseRef = useRef(phase);
   const target = useRef<StepId | null>(null);
   const prevPerms = useRef<PermissionsStatus | null>(null);
-  const happyTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   stepRef.current = step;
   phaseRef.current = phase;
 
@@ -81,11 +80,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     [height],
   );
 
-  const celebrate = useCallback(() => {
-    setMood("happy");
-    clearTimeout(happyTimer.current);
-    happyTimer.current = setTimeout(() => setMood("idle"), HAPPY_MS);
-  }, []);
+  const celebrate = useCallback(() => useDropStage.getState().celebrate(), []);
 
   const refresh = useCallback(() => {
     ipc
@@ -119,35 +114,22 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     window.addEventListener("resize", resize);
     return () => {
       clearInterval(id);
-      clearTimeout(happyTimer.current);
       window.removeEventListener("resize", resize);
     };
   }, [refresh]);
 
-  // The Drop's position: snapped when nothing is moving, a spring while a step changes.
+  // Text waits while the Drop flies to its new place, and appears once it has landed.
   useEffect(() => {
-    if (step && phaseRef.current !== "wait") {
-      flight.current = createFlight(yFor(step));
-    }
-  }, [step, yFor]);
-
-  useEffect(() => {
+    if (phase !== "wait") return;
+    const since = performance.now();
     let raf = 0;
-    let last = performance.now();
-    const frame = (now: number) => {
-      const f = flight.current;
-      stepFlight(f, (now - last) / 1000);
-      last = now;
-      const s = Math.min(0.08, Math.abs(f.v) / 3500);
-      if (dropEl.current) {
-        dropEl.current.style.transform = `translateX(-50%) translateY(${f.x.toFixed(2)}px) scale(${(1 - s / 2).toFixed(4)}, ${(1 + s).toFixed(4)})`;
-      }
-      if (phaseRef.current === "wait" && settled(f)) setPhase("in");
-      raf = requestAnimationFrame(frame);
+    const check = (now: number) => {
+      if (now - since > LAND_GRACE_MS && useDropStage.getState().settled) setPhase("in");
+      else raf = requestAnimationFrame(check);
     };
-    raf = requestAnimationFrame(frame);
+    raf = requestAnimationFrame(check);
     return () => cancelAnimationFrame(raf);
-  }, []);
+  }, [phase]);
 
   const go = useCallback(
     (next: StepId) => {
@@ -162,24 +144,31 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     [reduced],
   );
 
-  /** The old text has left: switch the step, and fly the Drop if its place changes. */
-  const advance = () => {
+  /** The old text has left: switch the step (the Drop flies if its place changes), or finish. */
+  const advance = async () => {
+    if (finishing) {
+      await update({ onboarding_done: true, autostart: true });
+      onDone();
+      return;
+    }
     const next = target.current;
     const cur = stepRef.current;
     if (!next || !cur) return;
     target.current = null;
-    if (dropAt(next) !== dropAt(cur)) {
-      flight.current.target = yFor(next);
-      setPhase("wait");
-    } else {
-      setPhase("in");
-    }
+    setPhase(dropAt(next) !== dropAt(cur) ? "wait" : "in");
     setStep(next);
   };
 
+  /** The text and the footer leave; then the app takes over and the Drop flies to the logo. */
   const finish = async () => {
-    await update({ onboarding_done: true, autostart: true });
-    onDone();
+    if (phaseRef.current !== "in") return;
+    if (reduced) {
+      await update({ onboarding_done: true, autostart: true });
+      onDone();
+      return;
+    }
+    setFinishing(true);
+    setPhase("out");
   };
 
   const onKeyVerified = useCallback(
@@ -197,13 +186,26 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   if (!step || !settings) return null;
   const index = STEPS.indexOf(step);
   const [titleKey, bodyKey] = TITLES[step];
-  const f = flight.current;
-  const look = phase === "wait" ? { x: 0, y: f.target < f.x ? -5.5 : 3 } : null;
 
   const content = (() => {
     switch (step) {
       case "welcome":
-        return <DemoPhrase reduced={reduced} />;
+        return (
+          <>
+            <DemoPhrase reduced={reduced} />
+            <div className="mt-5">
+              <Segmented<Theme>
+                label={t("general.theme")}
+                value={settings.theme === "Light" ? "Light" : "Dark"}
+                onChange={(v) => update({ theme: v })}
+                options={[
+                  { value: "Dark", label: t("general.theme_dark") },
+                  { value: "Light", label: t("general.theme_light") },
+                ]}
+              />
+            </div>
+          </>
+        );
       case "microphone":
         return <Microphone perms={perms} refresh={refresh} />;
       case "accessibility":
@@ -232,9 +234,13 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       animate={{ opacity: 1 }}
       transition={{ duration: reduced ? 0.15 : 1, ease: [0.22, 1, 0.36, 1] }}
     >
-      <div ref={dropEl} data-mood={mood} className="absolute top-0 left-1/2 z-[1] origin-bottom" style={{ width: DROP_W }}>
-        <Drop mood={mood} level={0} translate={false} reduced={reduced} size={DROP_W} follow look={look} />
-      </div>
+      {/* The Drop's place on this step; a new element per place, so the Drop flies between them. */}
+      <div
+        key={dropAt(step)}
+        data-drop-slot="onboarding"
+        className="absolute left-1/2"
+        style={{ top: yFor(step), width: DROP_W, height: DROP_H, marginLeft: -DROP_W / 2 }}
+      />
 
       <div
         data-stage
@@ -264,7 +270,11 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         </motion.div>
       </div>
 
-      <footer className="absolute inset-x-8 bottom-6 z-[2] flex items-center justify-between">
+      <motion.footer
+        className="absolute inset-x-8 bottom-6 z-[2] flex items-center justify-between"
+        animate={finishing ? { opacity: 0, transform: "translateY(8px)" } : { opacity: 1, transform: "translateY(0px)" }}
+        transition={{ duration: 0.2, ease: [0.4, 0, 1, 1] }}
+      >
         <div className="w-[200px]">
           {index > 0 && (
             <Button variant="ghost" onClick={() => go(STEPS[index - 1])}>
@@ -291,7 +301,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
             {nextLabel}
           </Button>
         </div>
-      </footer>
+      </motion.footer>
     </motion.div>
   );
 }

@@ -11,7 +11,9 @@ Free, open-source voice-to-text for macOS (Windows later): hold a hotkey, speak,
 - Workflow is superpowers: brainstorming → spec → writing-plans → executing-plans (the user chose Native execution) → final fresh review → finishing-a-development-branch. TDD for every change.
 - Commit and `git push` after every task (remote: `Gattapelatta/utter`, private until release). Work on a `feat/*` branch; merge to `main` only with the user's OK.
 - In design iterations change only what the user asked for; never alter an approved shape/size as a side effect. Show visual options with the `visualize` widget before building.
-- You cannot see the user's screen: `screencapture` returns only the wallpaper (no Screen Recording permission) and `osascript` keystrokes are blocked. Verify UI behaviour with logs/instrumentation in the real app, and ask the user for short live checks.
+- Screen Recording is granted (2026-10-09): `screencapture -x -o -l <window number>` captures the Utter settings window (window numbers via `CGWindowListCopyWindowInfo`; only windows on the current Space). `osascript` keystrokes are still blocked.
+- Dev builds (`scripts/dev-bundle.sh`) have the `debug-eval` feature: write JS to `~/Library/Application Support/app.utter.desktop/debug-eval.js` and it runs once in the settings page (click buttons, read state, report via `window.__TAURI_INTERNALS__.invoke("ui_log", {level, message})` → app log). Never enable this feature for releases.
+- jsdom has no layout and the hidden browser pane neither paints nor runs rAF: layout/visual bugs (e.g. a zero-height wrapper that clipped onboarding to a black window) only show in the real window — check it with screencapture.
 
 ## Commands
 

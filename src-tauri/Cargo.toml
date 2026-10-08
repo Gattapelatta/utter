@@ -18,6 +18,11 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[features]
+# Development builds only (scripts/dev-bundle.sh): run a script from the app's data
+# folder in the settings page, so the UI can be driven and checked without clicks.
+debug-eval = []
+
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-single-instance = "2"

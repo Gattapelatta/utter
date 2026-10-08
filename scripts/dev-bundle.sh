@@ -6,10 +6,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 if [ "${1:-}" = "--debug" ]; then
-  pnpm tauri build --debug --bundles app
+  pnpm tauri build --debug --bundles app --features debug-eval
   APP=src-tauri/target/debug/bundle/macos/Utter.app
 else
-  pnpm tauri build --bundles app
+  pnpm tauri build --bundles app --features debug-eval
   APP=src-tauri/target/release/bundle/macos/Utter.app
 fi
 codesign --force --deep --sign "Utter Dev" --identifier app.utter.desktop "$APP"

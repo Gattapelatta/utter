@@ -30,6 +30,7 @@ export function Sidebar({ route, onGo }: { route: Route; onGo: (r: Route) => voi
             <li key={r}>
               <button
                 type="button"
+                data-intro-item
                 aria-current={on ? "page" : undefined}
                 onClick={() => onGo(r)}
                 className={`nav-item flex h-9 w-full items-center gap-2.5 rounded-lg px-3 text-left text-[14px] ${on ? "text-text" : "text-text-secondary"}`}
