@@ -613,3 +613,8 @@ it("reduced motion keeps the character still")
 - `Sidebar`: светофор-зона 52 px (перетаскивание), под ней `Logo`; список вкладок — `position: absolute; top: 50%; translateY(-50%)` относительно всей высоты меню.
 
 - [ ] **Тесты:** `gaze overrides looking around` (модель с `gaze {x:8,y:0}` → `ex` → 8, без случайных смен), `gazeToward points at the cursor and stays in the eye range`, `pill keeps its size and colours` (Drop без `size` → width 48), `logo shows the drop and the name`.
+
+### Изменения разделов 8/10/12 (утверждено 2026-10-08)
+
+- Task 8: счётчики «Сегодня» (`usageBars`, Geist Mono, полоски) — **не в «Провайдере», а в конце «Основного»** (компонент `src/settings/sections/Usage.tsx`, тест `usageBars keeps only limited counters` и обновление раз в 5 с / по `ui://history` — там же). Варианты провайдера — строки с радиокнопкой (без карточек), у Gemini метка «Рекомендуем».
+- Task 12: в «О приложении» нет подписи `about.tagline` под названием (ключ удалить из словарей).
