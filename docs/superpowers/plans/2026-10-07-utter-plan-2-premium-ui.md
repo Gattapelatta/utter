@@ -588,3 +588,12 @@ it("reduced motion keeps the character still")
 - [ ] **Step 2:** FAIL. **Step 3:** реализовать. **Step 4:** PASS, clippy 0.
 - [ ] **Step 5: Живая проверка с пользователем:** остров вырастает из чёлки на MacBook, на внешнем мониторе — из-под верхнего края; Капля не срезана камерой (если срезана — уменьшить Каплю, форму острова не трогать); фокус остаётся в приложении; нагрузка CPU во время записи по `ps` — записать.
 - [ ] **Step 7: Commit + push** — `feat(overlay): notch island window`.
+
+### Task 5S: Обработка длинных записей по ходу речи (добавлена 2026-10-08, выполнена)
+
+Решение пользователя после замеров (записи 13–14 с вставлялись то за 1,5, то за 4–5 с). Спецификация §3.4a.
+
+- `audio/segment.rs`: `pub fn find_cut(mono: &[f32], rate: u32) -> Option<usize>` (MIN 10 с, пауза 400 мс, принудительный разрез на 25 с в самом тихом кадре последних 5 с); тесты: нет разреза до 10 с, разрез посреди паузы, короткие паузы не режутся, принудительный разрез, нет разреза до 25 с без пауз.
+- `recorder.rs`: `AudioSource::peek(from) -> Option<Captured>` (по умолчанию `None`; у микрофона — `Cmd::Peek`, `None` после смены устройства).
+- `orchestrator.rs`: `check_pieces` в тике раз в 500 мс (кроме режима абзацев), `Split { pieces, rest }` при отправке, `combine` склеивает по порядку, запасной путь «одним запросом» при `Err(Provider)` куска, `JobResult.requests` → `Usage::count_stt_request`; отмена/провал старта сбрасывают куски. Тесты: `long_recording_is_processed_in_pieces_while_speaking`, `failed_piece_falls_back_to_one_request`, `paragraphs_keep_one_request`, `cancelled_recording_drops_its_pieces`.
+- Живая проверка: диктовка 30–60 с; в логе — строки `piece sent while speaking` и `total_ms` после отпускания.

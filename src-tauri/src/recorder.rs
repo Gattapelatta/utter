@@ -26,6 +26,12 @@ pub trait AudioSource: Send + Sync {
     fn start(&self) -> Result<(), RecorderError>;
     fn stop(&self) -> Result<Captured, RecorderError>;
     fn cancel(&self);
+    /// What has been recorded so far from interleaved sample `from` on, while recording
+    /// continues. `None` when unavailable (e.g. the input device changed mid-recording).
+    fn peek(&self, from: usize) -> Option<Captured> {
+        let _ = from;
+        None
+    }
 }
 
 pub enum SampleChunk<'a> {
@@ -58,6 +64,7 @@ pub fn merge_segments(segments: Vec<Captured>) -> Option<Captured> {
 enum Cmd {
     Start(mpsc::Sender<Result<(), RecorderError>>),
     Stop(mpsc::Sender<Result<Captured, RecorderError>>),
+    Peek(usize, mpsc::Sender<Option<Captured>>),
     Cancel,
 }
 
@@ -90,6 +97,12 @@ impl AudioSource for Recorder {
 
     fn cancel(&self) {
         let _ = self.cmd.send(Cmd::Cancel);
+    }
+
+    fn peek(&self, from: usize) -> Option<Captured> {
+        let (tx, rx) = mpsc::channel();
+        self.cmd.send(Cmd::Peek(from, tx)).ok()?;
+        rx.recv().ok().flatten()
     }
 }
 
@@ -188,6 +201,16 @@ fn run(rx: mpsc::Receiver<Cmd>, levels: tokio::sync::watch::Sender<f32>) {
                 let _ = levels.send(0.0);
                 let merged = merge_segments(std::mem::take(&mut segments));
                 let _ = reply.send(merged.ok_or(RecorderError::NoDevice));
+            }
+            Ok(Cmd::Peek(from, reply)) => {
+                // Offsets only make sense within one device's stream.
+                let snapshot = match (&live, segments.is_empty()) {
+                    (Some(l), true) => l.buf.lock().ok().and_then(|b| {
+                        b.get(from..).map(|s| Captured { samples: s.to_vec(), rate: l.rate, channels: l.channels })
+                    }),
+                    _ => None,
+                };
+                let _ = reply.send(snapshot);
             }
             Ok(Cmd::Cancel) => {
                 live = None;

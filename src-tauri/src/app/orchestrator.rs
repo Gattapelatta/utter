@@ -9,7 +9,7 @@ use std::time::{Duration, Instant, SystemTime};
 use serde::Serialize;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::audio::{self, Captured};
+use crate::audio::{self, dsp, segment, Captured};
 use crate::controller::{Command, Controller, HotkeyEvent, State};
 use crate::history::{EntryStatus, History, HistoryEntry};
 use crate::jobs::{JobIds, OrderedDelivery};
@@ -30,6 +30,8 @@ const ERROR_VISIBLE: Duration = Duration::from_millis(3000);
 /// A wall-clock gap this long between 100 ms ticks means the machine was asleep.
 const WAKE_GAP: Duration = Duration::from_secs(10);
 const HOTKEY_CHECK: Duration = Duration::from_secs(2);
+/// How often a running recording is checked for a pause to cut a piece at.
+const PIECE_CHECK: Duration = Duration::from_millis(500);
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -192,7 +194,17 @@ pub struct JobResult {
     audio_path: Option<PathBuf>,
     audio_secs: f32,
     created_at_ms: i64,
+    /// Speech requests made (more than one when the recording was sent in pieces).
+    requests: u32,
     outcome: Result<JobOutput, JobError>,
+}
+
+type Piece = tokio::task::JoinHandle<Result<JobOutput, JobError>>;
+
+/// A recording whose first pieces were already sent while the user was speaking.
+struct Split {
+    pieces: Vec<Piece>,
+    rest: Captured,
 }
 
 pub enum Input {
@@ -229,6 +241,12 @@ pub struct Orchestrator {
     last_tick_wall: Option<SystemTime>,
     last_hotkey_check: Option<Instant>,
     status: AppStatus,
+    /// Pieces of the current recording already sent while the user speaks.
+    pieces: Vec<Piece>,
+    /// Interleaved samples of the current recording already sent as pieces.
+    piece_offset: usize,
+    piece_layout: Option<(u32, u16)>,
+    last_piece_check: Option<Instant>,
 }
 
 fn now_ms() -> i64 {
@@ -296,6 +314,10 @@ impl Orchestrator {
             last_tick_wall: None,
             last_hotkey_check: None,
             status: AppStatus::Idle,
+            pieces: Vec::new(),
+            piece_offset: 0,
+            piece_layout: None,
+            last_piece_check: None,
         }
     }
 
@@ -405,6 +427,44 @@ impl Orchestrator {
         }
         let cmds = self.controller.tick(now);
         self.exec(cmds).await;
+        self.check_pieces(now);
+    }
+
+    /// Sends the finished part of a long recording at a pause, while the user keeps speaking.
+    fn check_pieces(&mut self, now: Instant) {
+        let Some((mode, _)) = self.recording else { return };
+        if self.last_piece_check.is_some_and(|t| now.saturating_duration_since(t) < PIECE_CHECK) {
+            return;
+        }
+        self.last_piece_check = Some(now);
+        let s = self.shared.settings();
+        // Paragraphs are split by meaning over the whole text, so keep one request.
+        if s.paragraphs {
+            return;
+        }
+        let Some(c) = self.deps.audio.peek(self.piece_offset) else { return };
+        if c.channels == 0 || self.piece_layout.is_some_and(|l| l != (c.rate, c.channels)) {
+            return;
+        }
+        let mono = dsp::downmix(&c.samples, c.channels);
+        let Some(cut) = segment::find_cut(&mono, c.rate) else { return };
+        let n = (cut * c.channels as usize).min(c.samples.len());
+        let piece = Captured { samples: c.samples[..n].to_vec(), rate: c.rate, channels: c.channels };
+        self.piece_offset += n;
+        self.piece_layout = Some((c.rate, c.channels));
+        tracing::info!(secs = cut as f32 / c.rate as f32, "piece sent while speaking");
+        let provider = self.provider_for(&s);
+        let opts = pipeline_options(&s);
+        self.pieces.push(tokio::spawn(async move { process_capture(mode, piece, opts, provider).await }));
+    }
+
+    fn drop_pieces(&mut self) {
+        for p in self.pieces.drain(..) {
+            p.abort();
+        }
+        self.piece_offset = 0;
+        self.piece_layout = None;
+        self.last_piece_check = None;
     }
 
     fn processing_state(&self) -> OverlayState {
@@ -457,6 +517,7 @@ impl Orchestrator {
                 Command::Cancel(reason) => {
                     tracing::info!("recording cancelled: {reason:?}");
                     self.deps.audio.cancel();
+                    self.drop_pieces();
                     if let Some((state, visible)) = self.end_recording() {
                         self.show_result(state, visible);
                     } else if self.in_flight > 0 {
@@ -484,6 +545,7 @@ impl Orchestrator {
     }
 
     fn fail_start(&mut self, state: OverlayState) {
+        self.drop_pieces();
         self.controller.abort();
         self.end_recording();
         self.show_result(state, ERROR_VISIBLE);
@@ -505,6 +567,7 @@ impl Orchestrator {
             tracing::warn!("recorder failed to start: {e}");
             return self.fail_start(OverlayState::error("no_microphone", None));
         }
+        self.drop_pieces();
         let started = now_ms();
         self.recording = Some((mode, started));
         self.deps.hotkeys.set_recording(true);
@@ -522,7 +585,19 @@ impl Orchestrator {
     fn submit(&mut self, mode: Mode) {
         let deferred = self.end_recording();
         let captured = self.deps.audio.stop().unwrap_or_default();
-        self.spawn_job(mode, AudioInput::Captured(captured), None);
+        let pieces = std::mem::take(&mut self.pieces);
+        let fits = self.piece_layout == Some((captured.rate, captured.channels)) && captured.samples.len() >= self.piece_offset;
+        let split = if !pieces.is_empty() && fits {
+            let rest = Captured { samples: captured.samples[self.piece_offset..].to_vec(), ..captured.clone() };
+            Some(Split { pieces, rest })
+        } else {
+            for p in pieces {
+                p.abort();
+            }
+            None
+        };
+        self.drop_pieces();
+        self.spawn_job(mode, AudioInput::Captured(captured), None, split);
         if let Some((state, visible)) = deferred {
             self.show_result(state, visible);
         }
@@ -535,10 +610,10 @@ impl Orchestrator {
         let Ok(bytes) = std::fs::read(&path) else { return };
         // 16 kHz mono 16-bit: 32 000 bytes per second after the 44-byte header.
         let secs = bytes.len().saturating_sub(44) as f32 / 32_000.0;
-        self.spawn_job(entry.mode, AudioInput::Wav { bytes, secs }, Some(history_id));
+        self.spawn_job(entry.mode, AudioInput::Wav { bytes, secs }, Some(history_id), None);
     }
 
-    fn spawn_job(&mut self, mode: Mode, audio_in: AudioInput, history_id: Option<u64>) {
+    fn spawn_job(&mut self, mode: Mode, audio_in: AudioInput, history_id: Option<u64>, split: Option<Split>) {
         let s = self.shared.settings();
         let id = self.ids.next();
         if self.in_flight == 0 {
@@ -551,12 +626,7 @@ impl Orchestrator {
         let provider = self.provider_for(&s);
         let audio_dir = self.shared.audio_dir();
         let tx = self.tx.clone();
-        let opts = PipelineOptions {
-            language: s.speech_language.clone(),
-            cleanup: s.cleanup,
-            paragraphs: s.paragraphs,
-            style: s.translate_style,
-        };
+        let opts = pipeline_options(&s);
         let created_at_ms = now_ms();
         let submitted = Instant::now();
         let supervisor_tx = tx.clone();
@@ -580,17 +650,30 @@ impl Orchestrator {
                     }
                 }
             };
-            let outcome = match (wav, provider) {
-                (None, _) => Err(JobError::NothingHeard),
-                (Some(_), None) => Err(JobError::Provider(ProviderError::Unauthorized)),
-                (Some(wav), Some(p)) => match p.direct() {
-                    Some(direct) if pipeline::audio_system_prompt(mode, &opts, secs).is_some() => {
-                        pipeline::run_direct(mode, wav, secs, &opts, direct, p.as_ref()).await
-                    }
-                    _ => pipeline::run(mode, wav, secs, &opts, p.as_ref(), p.as_ref()).await,
+            let mut requests = 1;
+            let mut outcome = None;
+            if let Some(split) = split {
+                let mut outs = Vec::new();
+                for p in split.pieces {
+                    outs.push(p.await.unwrap_or(Err(JobError::Provider(ProviderError::BadResponse("piece crashed".into())))));
+                }
+                outs.push(process_capture(mode, split.rest, opts.clone(), provider.clone()).await);
+                requests = outs.len() as u32;
+                if outs.iter().any(|o| matches!(o, Err(JobError::Provider(_)))) {
+                    tracing::warn!("a piece failed; sending the whole recording in one request");
+                    requests += 1;
+                } else {
+                    outcome = Some(combine(outs));
+                }
+            }
+            let outcome = match outcome {
+                Some(o) => o,
+                None => match wav {
+                    None => Err(JobError::NothingHeard),
+                    Some(wav) => process(mode, wav, secs, &opts, provider).await,
                 },
             };
-            JobResult { mode, submitted, history_id, audio_path, audio_secs: secs, created_at_ms, outcome }
+            JobResult { mode, submitted, history_id, audio_path, audio_secs: secs, created_at_ms, requests, outcome }
         });
         // A bug in one job must fail that job only, never stall the ordered queue.
         tokio::spawn(async move {
@@ -603,6 +686,7 @@ impl Orchestrator {
                     audio_path: None,
                     audio_secs: 0.0,
                     created_at_ms,
+                    requests: 1,
                     outcome: Err(JobError::Provider(ProviderError::BadResponse("internal error".into()))),
                 }
             });
@@ -617,6 +701,9 @@ impl Orchestrator {
         if let Ok(mut u) = self.shared.usage.lock() {
             if stt_called && !matches!(r.outcome, Err(JobError::Provider(_))) {
                 u.record_stt(today, r.audio_secs);
+                for _ in 1..r.requests {
+                    u.count_stt_request(today);
+                }
             }
             if let Ok(out) = &r.outcome {
                 if out.direct {
@@ -729,6 +816,63 @@ impl Orchestrator {
     }
 }
 
+fn pipeline_options(s: &Settings) -> PipelineOptions {
+    PipelineOptions {
+        language: s.speech_language.clone(),
+        cleanup: s.cleanup,
+        paragraphs: s.paragraphs,
+        style: s.translate_style,
+    }
+}
+
+/// One speech request (plus the LLM step when the provider needs a second one).
+async fn process(
+    mode: Mode,
+    wav: Vec<u8>,
+    secs: f32,
+    opts: &PipelineOptions,
+    provider: Option<Arc<dyn Provider>>,
+) -> Result<JobOutput, JobError> {
+    let Some(p) = provider else { return Err(JobError::Provider(ProviderError::Unauthorized)) };
+    match p.direct() {
+        Some(direct) if pipeline::audio_system_prompt(mode, opts, secs).is_some() => {
+            pipeline::run_direct(mode, wav, secs, opts, direct, p.as_ref()).await
+        }
+        _ => pipeline::run(mode, wav, secs, opts, p.as_ref(), p.as_ref()).await,
+    }
+}
+
+/// Prepares raw audio off the async threads, then processes it.
+async fn process_capture(
+    mode: Mode,
+    c: Captured,
+    opts: PipelineOptions,
+    provider: Option<Arc<dyn Provider>>,
+) -> Result<JobOutput, JobError> {
+    let prepared = tokio::task::spawn_blocking(move || audio::prepare(c)).await.ok().flatten();
+    match prepared {
+        Some(p) => process(mode, p.wav, p.audio_secs, &opts, provider).await,
+        None => Err(JobError::NothingHeard),
+    }
+}
+
+/// Joins the pieces of one recording in order; silent pieces are skipped.
+fn combine(outs: Vec<Result<JobOutput, JobError>>) -> Result<JobOutput, JobError> {
+    let parts: Vec<JobOutput> = outs.into_iter().filter_map(Result::ok).filter(|o| !o.text.trim().is_empty()).collect();
+    if parts.is_empty() {
+        return Err(JobError::NothingHeard);
+    }
+    let join = |f: fn(&JobOutput) -> &str| parts.iter().map(|o| f(o).trim()).collect::<Vec<_>>().join(" ");
+    Ok(JobOutput {
+        text: join(|o| &o.text),
+        raw: join(|o| &o.raw),
+        degraded: parts.iter().any(|o| o.degraded),
+        tokens: parts.iter().map(|o| o.tokens).sum(),
+        llm_used: parts.iter().any(|o| o.llm_used),
+        direct: parts.iter().all(|o| o.direct),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -760,6 +904,8 @@ mod tests {
         captures: Mutex<VecDeque<Captured>>,
         fail_start: Mutex<Option<RecorderError>>,
         starts: AtomicUsize,
+        /// What the microphone has recorded so far, for processing while speaking.
+        live: Mutex<Option<Captured>>,
     }
     impl AudioSource for FakeAudio {
         fn start(&self) -> Result<(), RecorderError> {
@@ -773,6 +919,10 @@ mod tests {
             self.captures.lock().unwrap().pop_front().ok_or(RecorderError::NotRecording)
         }
         fn cancel(&self) {}
+        fn peek(&self, from: usize) -> Option<Captured> {
+            let live = self.live.lock().unwrap().clone()?;
+            Some(Captured { samples: live.samples.get(from..)?.to_vec(), ..live })
+        }
     }
 
     /// Long audio (> 1.5 s) is answered slowly with `slow`, short audio quickly with `fast`.
@@ -785,16 +935,29 @@ mod tests {
         /// Long (slow) audio makes transcription panic.
         panic_on_slow: bool,
         direct_calls: AtomicUsize,
+        /// Replies for successive one-request calls; `direct_reply` once these run out.
+        direct_replies: Mutex<VecDeque<Result<String, ProviderError>>>,
     }
     impl FakeProvider {
         fn new(slow: Result<String, ProviderError>, fast: Result<String, ProviderError>) -> Self {
-            Self { slow, fast, stt_calls: AtomicUsize::new(0), direct_reply: None, panic_on_slow: false, direct_calls: AtomicUsize::new(0) }
+            Self {
+                slow,
+                fast,
+                stt_calls: AtomicUsize::new(0),
+                direct_reply: None,
+                panic_on_slow: false,
+                direct_calls: AtomicUsize::new(0),
+                direct_replies: Mutex::new(VecDeque::new()),
+            }
         }
     }
     #[async_trait::async_trait]
     impl AudioLlm for FakeProvider {
         async fn complete_audio(&self, _: &str, _: Vec<u8>, _: Option<String>, _: f32) -> Result<Completion, ProviderError> {
             self.direct_calls.fetch_add(1, Ordering::SeqCst);
+            if let Some(r) = self.direct_replies.lock().unwrap().pop_front() {
+                return r.map(|text| Completion { text, total_tokens: 5 });
+            }
             Ok(Completion { text: self.direct_reply.clone().unwrap_or_default(), total_tokens: 5 })
         }
     }
@@ -1260,5 +1423,82 @@ mod tests {
         r.settle(1).await;
         let last = r.overlay.0.lock().unwrap().last().cloned();
         assert!(matches!(last, Some(OverlayState::Error { provider: Some(ref p), .. }) if p == "Gemini"), "{last:?}");
+    }
+
+    /// 12 s of speech, a 0.6 s pause, then 4 s more: one cut while speaking.
+    fn long_speech() -> Captured {
+        let mut c = speech(12.0);
+        c.samples.extend(vec![0.0; 16_000 * 6 / 10]);
+        c.samples.extend(speech(4.0).samples);
+        c
+    }
+
+    fn piece_rig(replies: Vec<Result<String, ProviderError>>) -> Rig {
+        let mut p = FakeProvider::new(Ok("x".into()), Ok("x".into()));
+        p.direct_reply = Some("Whole.".into());
+        *p.direct_replies.lock().unwrap() = replies.into();
+        rig(p, true)
+    }
+
+    async fn yield_to_jobs() {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    #[tokio::test]
+    async fn long_recording_is_processed_in_pieces_while_speaking() {
+        let mut r = piece_rig(vec![Ok("Hello.".into()), Ok("World.".into())]);
+        let t0 = Instant::now();
+        *r.audio.live.lock().unwrap() = Some(long_speech());
+        r.orch.handle(Input::Hotkey(HotkeyEvent::Down(Mode::Translate)), t0).await;
+        r.orch.handle(Input::Tick, t0 + Duration::from_secs(13)).await;
+        yield_to_jobs().await;
+        assert_eq!(r.provider.direct_calls.load(Ordering::SeqCst), 1, "first piece sent while still speaking");
+        r.audio.captures.lock().unwrap().push_back(long_speech());
+        r.orch.handle(Input::Hotkey(HotkeyEvent::Up(Mode::Translate)), t0 + Duration::from_secs(17)).await;
+        r.settle(1).await;
+        assert_eq!(*r.out.0.lock().unwrap(), vec!["Hello. World.".to_string()]);
+        assert_eq!(r.provider.direct_calls.load(Ordering::SeqCst), 2);
+        let u = r.shared.usage.lock().unwrap().today(chrono::Local::now().date_naive());
+        assert_eq!(u.stt_requests, 2, "each piece is a request");
+    }
+
+    #[tokio::test]
+    async fn failed_piece_falls_back_to_one_request() {
+        // A piece that never got an answer (a 5xx gets a plain transcript inside the pipeline instead).
+        let mut r = piece_rig(vec![Err(ProviderError::Timeout), Ok("Tail.".into())]);
+        let t0 = Instant::now();
+        *r.audio.live.lock().unwrap() = Some(long_speech());
+        r.orch.handle(Input::Hotkey(HotkeyEvent::Down(Mode::Translate)), t0).await;
+        r.orch.handle(Input::Tick, t0 + Duration::from_secs(13)).await;
+        yield_to_jobs().await;
+        r.audio.captures.lock().unwrap().push_back(long_speech());
+        r.orch.handle(Input::Hotkey(HotkeyEvent::Up(Mode::Translate)), t0 + Duration::from_secs(17)).await;
+        r.settle(1).await;
+        assert_eq!(*r.out.0.lock().unwrap(), vec!["Whole.".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn paragraphs_keep_one_request() {
+        let mut r = piece_rig(vec![]);
+        r.shared.settings.lock().unwrap().paragraphs = true;
+        let t0 = Instant::now();
+        *r.audio.live.lock().unwrap() = Some(long_speech());
+        r.orch.handle(Input::Hotkey(HotkeyEvent::Down(Mode::Translate)), t0).await;
+        r.orch.handle(Input::Tick, t0 + Duration::from_secs(13)).await;
+        yield_to_jobs().await;
+        assert_eq!(r.provider.direct_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn cancelled_recording_drops_its_pieces() {
+        let mut r = piece_rig(vec![Ok("Hello.".into())]);
+        let t0 = Instant::now();
+        *r.audio.live.lock().unwrap() = Some(long_speech());
+        r.orch.handle(Input::Hotkey(HotkeyEvent::Down(Mode::Translate)), t0).await;
+        r.orch.handle(Input::Tick, t0 + Duration::from_secs(13)).await;
+        r.orch.handle(Input::Hotkey(HotkeyEvent::Escape), t0 + Duration::from_secs(14)).await;
+        yield_to_jobs().await;
+        assert!(r.out.0.lock().unwrap().is_empty());
+        assert_eq!(r.orch.in_flight, 0);
     }
 }

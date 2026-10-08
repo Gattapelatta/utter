@@ -1,4 +1,5 @@
 pub mod dsp;
+pub mod segment;
 
 /// Raw capture straight from the input device (interleaved).
 #[derive(Clone, Debug, Default)]

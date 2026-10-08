@@ -57,6 +57,11 @@ impl Usage {
         d.llm_tokens += tokens;
     }
 
+    /// One more speech request for audio already counted (a recording sent in pieces).
+    pub fn count_stt_request(&mut self, today: NaiveDate) {
+        self.current(today).stt_requests += 1;
+    }
+
     /// Tokens from a request already counted elsewhere (one-request audio→text).
     pub fn record_tokens(&mut self, today: NaiveDate, tokens: u32) {
         self.current(today).llm_tokens += tokens;
