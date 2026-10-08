@@ -626,3 +626,11 @@ it("reduced motion keeps the character still")
 - `Onboarding` — свой макет (вариант A): Капля в абсолютном слое, её Y — пружина (response 0,55, damping 0,72); `dropAt(step)` = `center` для 1–3 и 6, `top` для 4–5; текст шага скрыт до остановки Капли. Радость — `Drop` с `mood="happy"` на ~2 с (настроение-импульс).
 - Тексты шагов — новые ключи `onboarding.*` (короткие, по §4.4); демо — 4 пары фраз `onboarding.demo_{1..4}_{ru,en}`.
 - Тесты плана остаются, плюс: `drop waits at the centre on steps 1-3 and 6`, `step text appears only after the drop settles`, `key from the clipboard is saved and verified on focus`.
+
+### Дополнение 2026-10-09: тема на первом шаге, переход в приложение, «О приложении» с Каплей
+
+- `src/settings/drop/FloatingDrop.tsx` + `dropStage.ts` (zustand: `mood`, `look`, `settled`, `celebrate()`): одна Капля поверх страниц, каждый кадр летит к `[data-drop-slot]` с наивысшим приоритетом (about > onboarding > logo) — пружина по x, y и масштабу (response 0,55, damping 0,72). `Logo` и шаги онбординга рисуют только слот.
+- Онбординг: «текст после приземления» = фаза `wait` держится, пока `settled` не станет истинным позже чем через 100 мс после начала ожидания.
+- Финал: `finish()` → уход текста и панели → маршрут `general` без кроссфейда страницы, режим `intro`: меню и раздел скрыты до приземления Капли, затем каскад.
+- Шаг 1: `Segmented` темы под демо (`update({ theme })`).
+- «О приложении» (часть Task 12 переносится сюда): слот большой Капли (нажатие → `celebrate`), `about.drop_title` / `about.drop_body`, версия и система (`app_info`), диагностика, ссылки. Обновления — в Task 12.
