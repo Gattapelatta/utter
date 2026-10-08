@@ -34,6 +34,10 @@ export function installDevMock() {
     invoke: async (cmd: string, args?: { settings?: unknown }) => {
       if (cmd === "get_settings") return settings;
       if (cmd === "history_list") return history;
+      if (cmd === "permissions_status") {
+        const q = new URLSearchParams(location.search);
+        return { microphone: q.get("mic") ?? "NotDetermined", accessibility: q.has("ax"), hotkeys_running: q.has("ax") };
+      }
       if (cmd === "usage_today") return { date: "", stt_requests: 37, audio_secs: 744, llm_requests: 0, llm_tokens: 0 };
       if (cmd === "save_settings" && args?.settings) Object.assign(settings, args.settings);
       if (cmd === "plugin:event|listen") return ++id;

@@ -18,6 +18,7 @@ export const ipc = {
   saveSettings: (settings: Settings) => invoke<void>("save_settings", { settings }),
   setApiKey: (provider: ProviderKind, key: string) => invoke<void>("set_api_key", { provider, key }),
   apiKeyMask: (provider: ProviderKind) => invoke<string | null>("api_key_mask", { provider }),
+  clipboardKey: (provider: ProviderKind) => invoke<string | null>("clipboard_key", { provider }),
   verifyKey: (provider: ProviderKind) => invoke<void>("verify_key", { provider }),
   captureKey: () => invoke<KeyId>("capture_key"),
   cancelCapture: () => invoke<void>("cancel_capture"),

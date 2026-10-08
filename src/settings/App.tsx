@@ -2,17 +2,23 @@ import { useCallback, useEffect, useState } from "react";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { events, ipc } from "../lib/ipc";
 import { useApp } from "../lib/store";
+import { Onboarding } from "./onboarding/Onboarding";
 import { parseRoute, type Route } from "./routes";
 import { General } from "./sections/General";
 import { History } from "./sections/History";
 import { Hotkeys } from "./sections/Hotkeys";
+import { Permissions } from "./sections/Permissions";
 import { Provider } from "./sections/Provider";
 import { Section } from "./sections/Section";
 import { Translate } from "./sections/Translate";
 import { Sidebar } from "./Sidebar";
 
-function Page({ route }: { route: Route }) {
+function Page({ route, go }: { route: Route; go: (r: Route) => void }) {
   switch (route) {
+    case "onboarding":
+      return <Onboarding onDone={() => go("general")} />;
+    case "permissions":
+      return <Permissions onDone={() => go("general")} />;
     case "general":
       return <General />;
     case "hotkeys":
@@ -71,7 +77,7 @@ export function App() {
         animate={{ opacity: 1, transition: { duration: 0.15, ease: [0.23, 1, 0.32, 1] } }}
         exit={{ opacity: 0, transition: { duration: 0.08 } }}
       >
-        <Page route={route} />
+        <Page route={route} go={go} />
       </motion.div>
     </AnimatePresence>
   );

@@ -135,6 +135,7 @@ pub fn run() {
             app::commands::save_settings,
             app::commands::set_api_key,
             app::commands::api_key_mask,
+            app::commands::clipboard_key,
             app::commands::verify_key,
             app::commands::capture_key,
             app::commands::cancel_capture,

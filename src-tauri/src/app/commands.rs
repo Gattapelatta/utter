@@ -141,6 +141,14 @@ pub fn set_api_key(state: State<AppState>, provider: ProviderKind, key: String) 
     r.map_err(|e| e.to_string())
 }
 
+/// The clipboard's text, but only if it looks like a key of `provider` (onboarding picks the
+/// key up by itself when the user comes back from the provider's page).
+#[tauri::command]
+pub fn clipboard_key(provider: ProviderKind) -> Option<String> {
+    let text = arboard::Clipboard::new().ok()?.get_text().ok()?;
+    crate::secrets::looks_like_key(provider, &text).then(|| text.trim().to_string())
+}
+
 #[tauri::command]
 pub fn api_key_mask(state: State<AppState>, provider: ProviderKind) -> Option<String> {
     state.secrets.get(provider).map(|k| mask(&k))

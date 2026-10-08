@@ -16,6 +16,8 @@ interface Props {
   size?: number;
   /** Look at the mouse pointer while it is over the page (settings logo). */
   follow?: boolean;
+  /** Look this way (eye units), overriding the pointer — e.g. where the Drop is flying. */
+  look?: { x: number; y: number } | null;
 }
 
 const BODY = "M50 14 C74 14 87 36 87 58 C87 77 71 90 50 90 C29 90 13 77 13 58 C13 36 26 14 50 14Z";
@@ -34,10 +36,10 @@ const CYAN = [74, 216, 236];
  * The «Капля» character (docs/design/drop-prototype.html). The SVG is rendered once;
  * every frame mutates attributes directly so React does not re-render at 60–120 fps.
  */
-export function Drop({ mood, level, translate, reduced, size = 48, follow = false }: Props) {
+export function Drop({ mood, level, translate, reduced, size = 48, follow = false, look = null }: Props) {
   const svg = useRef<SVGSVGElement>(null);
-  const input = useRef({ mood, level, translate, reduced });
-  input.current = { mood, level, translate, reduced };
+  const input = useRef({ mood, level, translate, reduced, look });
+  input.current = { mood, level, translate, reduced, look };
   const pointer = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
@@ -93,8 +95,8 @@ export function Drop({ mood, level, translate, reduced, size = 48, follow = fals
       wasListening = listening;
       lastFrame = now;
 
-      let gaze = null;
-      if (pointer.current) {
+      let gaze = cur.look;
+      if (!gaze && pointer.current) {
         const r = root.getBoundingClientRect();
         gaze = gazeToward(pointer.current.x - (r.left + r.width / 2), pointer.current.y - (r.top + r.height * 0.55));
       }

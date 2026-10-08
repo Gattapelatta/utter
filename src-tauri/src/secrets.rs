@@ -106,6 +106,21 @@ pub fn mask(key: &str) -> String {
     format!("{head}••••{tail}")
 }
 
+/// Whether `text` looks like an API key of `provider` (used to pick a key up from the
+/// clipboard during onboarding; anything else is never shown or stored).
+pub fn looks_like_key(provider: crate::settings::ProviderKind, text: &str) -> bool {
+    use crate::settings::ProviderKind;
+    let t = text.trim();
+    let body_ok = |rest: &str, len: std::ops::RangeInclusive<usize>| {
+        len.contains(&rest.len()) && rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    };
+    match provider {
+        ProviderKind::Gemini => t.strip_prefix("AIza").is_some_and(|r| body_ok(r, 35..=35)),
+        ProviderKind::Groq => t.strip_prefix("gsk_").is_some_and(|r| body_ok(r, 20..=200)),
+        ProviderKind::OpenAi => t.strip_prefix("sk-").is_some_and(|r| body_ok(r, 20..=300)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,5 +170,29 @@ mod tests {
         }
         store.delete(ProviderKind::Groq).unwrap();
         assert_eq!(store.get(ProviderKind::Groq), None);
+    }
+
+    #[test]
+    fn gemini_key_pattern() {
+        use crate::settings::ProviderKind;
+        let key = format!("AIza{}", &"Sy1_-abcdefghijABCDEFGHIJ0123456789"[..35]);
+        assert_eq!(key.len(), 39);
+        assert!(looks_like_key(ProviderKind::Gemini, &key));
+        assert!(looks_like_key(ProviderKind::Gemini, &format!("  {key}\n")), "surrounding whitespace is fine");
+        assert!(!looks_like_key(ProviderKind::Gemini, &key[..38]));
+        assert!(looks_like_key(ProviderKind::Groq, "gsk_abcdefghijklmnopqrstuvwxyz0123"));
+        assert!(looks_like_key(ProviderKind::OpenAi, "sk-proj-abcdefghijklmnopqrstuvwxyz"));
+    }
+
+    #[test]
+    fn other_text_is_not_a_key() {
+        use crate::settings::ProviderKind;
+        for t in ["", "hello", "AIza with spaces inside the copied text here", "Привет, можешь скинуть отчёт?", "gsk_short"] {
+            for p in [ProviderKind::Gemini, ProviderKind::Groq, ProviderKind::OpenAi] {
+                assert!(!looks_like_key(p, t), "{p:?} {t}");
+            }
+        }
+        let gemini = format!("AIza{}", "a".repeat(35));
+        assert!(!looks_like_key(ProviderKind::Groq, &gemini), "a Gemini key is not a Groq key");
     }
 }

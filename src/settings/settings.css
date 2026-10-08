@@ -61,6 +61,20 @@ body {
     color: var(--text);
   }
 }
+.dot {
+  transition: width 300ms cubic-bezier(0.22, 1, 0.36, 1), background-color 300ms ease;
+}
+.demo {
+  transition: opacity 250ms ease;
+}
+.spin {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 .keycap {
   box-shadow: 0 2px 0 var(--border-strong);
   transition: transform 80ms ease-out, box-shadow 80ms ease-out;
@@ -93,6 +107,20 @@ body {
 @media (hover: hover) and (pointer: fine) {
   .link:hover {
     color: var(--text);
+  }
+}
+.dot {
+  transition: width 300ms cubic-bezier(0.22, 1, 0.36, 1), background-color 300ms ease;
+}
+.demo {
+  transition: opacity 250ms ease;
+}
+.spin {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 .keycap {
