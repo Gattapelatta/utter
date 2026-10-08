@@ -58,5 +58,9 @@ describe("ui kit", () => {
     expect(svg.getAttribute("width")).toBe("48");
     expect(svg.getAttribute("height")).toBe("50");
     expect(container.querySelector("[data-body] path")!.getAttribute("style")).toContain("var(--drop-body, #fff)");
+    // The satellite and sparkles follow the body colour: white ones vanished on the light theme.
+    for (const sel of ["[data-sat-front]", "[data-sat-back]", "[data-glint]"]) {
+      expect(container.querySelector(sel)!.getAttribute("style")).toContain("var(--drop-body, #fff)");
+    }
   });
 });

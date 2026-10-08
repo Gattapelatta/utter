@@ -158,7 +158,7 @@ export function Drop({ mood, level, translate, reduced, size = 48, follow = fals
         <path key={i} data-ring d={arcPath(38)} fill="none" strokeWidth="2.2" strokeLinecap="round" opacity="0" />
       ))}
       {Array.from({ length: TAIL }, (_, i) => (
-        <circle key={i} data-sat-back fill="#fff" opacity="0" />
+        <circle key={i} data-sat-back style={{ fill: "var(--drop-body, #fff)" }} opacity="0" />
       ))}
       <g data-body>
         <circle data-glow cx="50" cy="55" r="48" fill="url(#drop-glow)" />
@@ -177,10 +177,10 @@ export function Drop({ mood, level, translate, reduced, size = 48, follow = fals
         </g>
       </g>
       {Array.from({ length: TAIL }, (_, i) => (
-        <circle key={i} data-sat-front fill="#fff" opacity="0" />
+        <circle key={i} data-sat-front style={{ fill: "var(--drop-body, #fff)" }} opacity="0" />
       ))}
       {[0, 1, 2].map((i) => (
-        <path key={i} data-glint d={STAR} fill="#fff" opacity="0" />
+        <path key={i} data-glint d={STAR} style={{ fill: "var(--drop-body, #fff)" }} opacity="0" />
       ))}
       {[0, 1, 2].map((i) => (
         <g key={i} data-cloud opacity="0">

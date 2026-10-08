@@ -49,6 +49,9 @@ const item: Variants = {
   out: { opacity: 0, transform: "translateY(-8px) scale(1)", filter: "blur(4px)", transition: { duration: 0.2, ease: [0.4, 0, 1, 1] } },
 };
 
+/** «Правый ⌥» reads «правый ⌥» inside a sentence; key names like «Caps Lock» or «F5» stay. */
+const inSentence = (label: string) => label.replace(/^Правый /, "правый ");
+
 function prefersReducedMotion(): boolean {
   return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
@@ -193,7 +196,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         return (
           <>
             <DemoPhrase reduced={reduced} />
-            <div className="mt-5">
+            <div className="mt-5 flex justify-center">
               <Segmented<Theme>
                 label={t("general.theme")}
                 value={settings.theme === "Light" ? "Light" : "Dark"}
@@ -262,7 +265,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
             </motion.h1>
           </div>
           <motion.p variants={item} className="mt-2 mb-6 text-[15px] text-text-secondary">
-            {t(bodyKey, { key: keyLabel(settings.hotkeys.dictation, t) })}
+            {t(bodyKey, { key: inSentence(keyLabel(settings.hotkeys.dictation, t)) })}
           </motion.p>
           <motion.div variants={item} className="w-full">
             {content}

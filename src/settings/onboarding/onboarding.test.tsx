@@ -238,6 +238,22 @@ describe("onboarding flow", () => {
     expect(screen.getByText("Привет, это проверка")).toBeTruthy();
     expect(useDropStage.getState().mood).toBe("happy");
   });
+
+  it("names the key in lower case inside the sentence", async () => {
+    mask = "AIza••••";
+    await mount();
+    await act(async () => fireEvent.click(next()));
+    await wait(300);
+    await landed();
+    expect(screen.getByText("Зажми правый ⌥ и скажи что-нибудь.")).toBeTruthy();
+  });
+
+  it("the theme switch on the welcome step keeps its own width", async () => {
+    perms = { ...G, microphone: "NotDetermined" };
+    await mount();
+    const group = screen.getByRole("radiogroup");
+    expect(group.parentElement!.className).toContain("justify-center");
+  });
 });
 
 describe("demo phrase", () => {
