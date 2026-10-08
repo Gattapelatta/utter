@@ -4,6 +4,7 @@ import { events, ipc } from "../lib/ipc";
 import { useApp } from "../lib/store";
 import { parseRoute, type Route } from "./routes";
 import { General } from "./sections/General";
+import { History } from "./sections/History";
 import { Hotkeys } from "./sections/Hotkeys";
 import { Provider } from "./sections/Provider";
 import { Section } from "./sections/Section";
@@ -20,6 +21,8 @@ function Page({ route }: { route: Route }) {
       return <Translate />;
     case "provider":
       return <Provider />;
+    case "history":
+      return <History />;
     default:
       return <Section route={route} />;
   }
