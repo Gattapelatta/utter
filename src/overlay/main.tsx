@@ -2,29 +2,12 @@ import React, { useEffect, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Island } from "./drop/Island";
+import { islandVariants, type Notch } from "./drop/islandMotion";
 import { events, ipc } from "../lib/ipc";
 import { useApp } from "../lib/store";
 import type { OverlayState } from "../lib/types";
 import "./overlay.css";
 
-type Notch = { width: number; height: number } | null;
-
-const ISLAND_W = 360;
-const ISLAND_H = 104;
-/** The island grows out of the notch and folds back into it: no overshoot (§5.4). */
-const grow = { type: "spring" as const, bounce: 0, duration: 0.5 };
-
-/** From the notch's own size (black on black, so it reads as the notch growing), or from above the screen edge. */
-function islandVariants(notch: Notch) {
-  const folded = notch
-    ? { opacity: 1, transform: `scaleX(${notch.width / ISLAND_W}) scaleY(${notch.height / ISLAND_H})` }
-    : { opacity: 1, transform: `translateY(-${ISLAND_H}px)` };
-  return {
-    hidden: folded,
-    visible: { opacity: 1, transform: "none", transition: grow },
-    leave: (cancelled: boolean) => ({ ...folded, transition: { ...grow, duration: cancelled ? 0.3 : 0.45 } }),
-  };
-}
 const fadeOnly = {
   hidden: { opacity: 0 },
   visible: { opacity: 1, transition: { duration: 0.15 } },
@@ -89,13 +72,21 @@ function Overlay() {
           </motion.div>
         )}
       </AnimatePresence>
-      {import.meta.env.DEV && <DevStates onState={setState} onLevel={setLevel} />}
+      {import.meta.env.DEV && <DevStates onState={setState} onLevel={setLevel} onNotch={setNotch} />}
     </>
   );
 }
 
 /** Development-only buttons to walk through every pill state in a browser. */
-function DevStates({ onState, onLevel }: { onState: (s: OverlayState) => void; onLevel: (l: number) => void }) {
+function DevStates({
+  onState,
+  onLevel,
+  onNotch,
+}: {
+  onState: (s: OverlayState) => void;
+  onLevel: (l: number) => void;
+  onNotch: (n: Notch) => void;
+}) {
   const [on, setOn] = useState(false);
   useEffect(() => {
     if (!on) return;
@@ -121,6 +112,8 @@ function DevStates({ onState, onLevel }: { onState: (s: OverlayState) => void; o
         <button key={name} onClick={() => onState(s)}>{name}</button>
       ))}
       <button onClick={() => setOn((v) => !v)}>levels</button>
+      <button onClick={() => onNotch({ width: 179, height: 32 })}>notch</button>
+      <button onClick={() => onNotch(null)}>no notch</button>
     </div>
   );
 }
