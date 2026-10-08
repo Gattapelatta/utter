@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { spring, stepSpring } from "./springs";
 import { eyePath } from "./eye";
-import { clouds, glints, ring, satellite } from "./effects";
+import { arcPath, clouds, glints, ring, satellite } from "./effects";
 
 /** All y coordinates mentioned in an SVG path, in order. */
 function ys(d: string): number[] {
@@ -72,5 +72,20 @@ describe("effects", () => {
     expect(ring(0.99, 0.5, 1).r).toBeGreaterThanOrEqual(80);
     expect(ring(0.3, 0.5, 1).opacity).toBeGreaterThan(0.3);
     expect(ring(0.3, 0.5, 0).opacity).toBe(0);
+  });
+
+  it("listening arcs never reach under the camera notch", () => {
+    // Above y ≈ 8 units (character space) is the camera notch.
+    for (const r of [38, 60, 82]) {
+      // Start ("M x y") and end ("… 0 0 1 x y") points; the arcs bulge outwards, never up.
+      const ys = [...arcPath(r).matchAll(/(?:M|0 0 1 )(-?\d+(?:\.\d+)?) (-?\d+(?:\.\d+)?)/g)].map((m) => Number(m[2]));
+      expect(ys.length).toBe(4);
+      expect(Math.min(...ys), `r=${r}`).toBeGreaterThanOrEqual(10);
+    }
+  });
+
+  it("arcs sit on both sides of the character", () => {
+    const xs = [...arcPath(60).matchAll(/M(-?\d+(?:\.\d+)?)/g)].map((m) => Number(m[1]));
+    expect(xs.some((x) => x > 50) && xs.some((x) => x < 50)).toBe(true);
   });
 });

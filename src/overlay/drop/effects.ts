@@ -74,3 +74,19 @@ export function ring(p: number, env: number, visible: number): { r: number; opac
   const opacity = visible * Math.pow(1 - p, 1.4) * Math.min(1, p * 6) * (0.35 + env * 0.5);
   return { r: 38 + easeInOut(p) * 44, opacity };
 }
+
+/** Half-angle of each side arc: at the largest ring (82 units) the arc stays below the notch. */
+const ARC_DEG = 30;
+
+/** Two arcs of a circle around the body (cx 50, cy 54), one on each side, never above it. */
+export function arcPath(r: number): string {
+  const a = (ARC_DEG * Math.PI) / 180;
+  const dx = r * Math.cos(a);
+  const dy = r * Math.sin(a);
+  const f = (n: number) => n.toFixed(2);
+  const R = `${f(r)} ${f(r)}`;
+  return (
+    `M${f(50 + dx)} ${f(54 - dy)} A${R} 0 0 1 ${f(50 + dx)} ${f(54 + dy)} ` +
+    `M${f(50 - dx)} ${f(54 + dy)} A${R} 0 0 1 ${f(50 - dx)} ${f(54 - dy)}`
+  );
+}

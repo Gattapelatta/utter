@@ -21,6 +21,10 @@ export function islandVariants(notch: Notch) {
   return {
     hidden: folded,
     visible: { opacity: 1, transform: transform(0, 1, 1), transition: grow, transitionEnd: { transform: "none" } },
-    leave: (cancelled: boolean) => ({ ...folded, transition: { ...grow, duration: cancelled ? 0.3 : 0.45 } }),
+    // Folding back is an even ease-in-out tween, so it ends exactly when the window is hidden.
+    leave: (cancelled: boolean) => ({
+      ...folded,
+      transition: { type: "tween" as const, duration: cancelled ? 0.35 : 0.6, ease: [0.4, 0, 0.2, 1] as [number, number, number, number] },
+    }),
   };
 }

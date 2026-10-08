@@ -22,4 +22,11 @@ describe("island motion", () => {
   it("starts from the notch's own size", () => {
     expect((islandVariants({ width: 180, height: 32 }).hidden as V).transform).toBe("translateY(0px) scaleX(0.5) scaleY(0.307692)");
   });
+
+  it("folds back into the notch slowly and evenly, not with a spring", () => {
+    const leave = (islandVariants({ width: 179, height: 32 }).leave as (c: boolean) => { transition: { type?: string; duration: number; ease: number[] } })(false);
+    expect(leave.transition.type).toBe("tween");
+    expect(leave.transition.duration).toBe(0.6);
+    expect(leave.transition.ease).toEqual([0.4, 0, 0.2, 1]);
+  });
 });

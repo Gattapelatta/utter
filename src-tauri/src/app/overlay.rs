@@ -8,9 +8,10 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewWindow};
 use super::orchestrator::{OverlaySink, OverlayState};
 
 const LABEL: &str = "overlay";
-/// The window is ordered out only after the island folds back into the notch (450 / 300 ms).
-const HIDE_AFTER: Duration = Duration::from_millis(500);
-const CANCEL_HIDE_AFTER: Duration = Duration::from_millis(350);
+/// The window is ordered out only after the island has folded back into the notch
+/// (600 / 350 ms tween in `islandMotion.ts`, plus a margin for a late frame).
+const HIDE_AFTER: Duration = Duration::from_millis(800);
+const CANCEL_HIDE_AFTER: Duration = Duration::from_millis(500);
 
 /// The camera cut-out of a MacBook display, in points.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]

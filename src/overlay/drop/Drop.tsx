@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { ipc } from "../../lib/ipc";
 import { createModel, stepModel, type Mood } from "./dropModel";
-import { clouds, drops, glints, ring, satellite } from "./effects";
+import { arcPath, clouds, drops, glints, ring, satellite } from "./effects";
 import { eyePath } from "./eye";
 
 export type { Mood };
@@ -44,7 +44,7 @@ export function Drop({ mood, level, translate, reduced }: Props) {
     const [eyeL, eyeR] = q<SVGPathElement>("[data-eye]");
     const [glow] = q<SVGCircleElement>("[data-glow]");
     const stops = q<SVGStopElement>("stop");
-    const rings = q<SVGCircleElement>("[data-ring]");
+    const rings = q<SVGPathElement>("[data-ring]");
     const satBack = q<SVGCircleElement>("[data-sat-back]");
     const satFront = q<SVGCircleElement>("[data-sat-front]");
     const glintEls = q<SVGPathElement>("[data-glint]");
@@ -82,7 +82,7 @@ export function Drop({ mood, level, translate, reduced }: Props) {
       for (const s of stops) s.setAttribute("stop-color", rgb);
       rings.forEach((r, i) => {
         const g = ring((f.flow * 0.8 + i / RINGS) % 1, f.env, f.rings);
-        r.setAttribute("r", g.r.toFixed(2));
+        r.setAttribute("d", arcPath(g.r));
         r.setAttribute("opacity", g.opacity.toFixed(3));
         r.setAttribute("stroke", rgb);
       });
@@ -126,7 +126,7 @@ export function Drop({ mood, level, translate, reduced }: Props) {
         </radialGradient>
       </defs>
       {Array.from({ length: RINGS }, (_, i) => (
-        <circle key={i} data-ring cx="50" cy="54" r="38" fill="none" strokeWidth="2.2" opacity="0" />
+        <path key={i} data-ring d={arcPath(38)} fill="none" strokeWidth="2.2" strokeLinecap="round" opacity="0" />
       ))}
       {Array.from({ length: TAIL }, (_, i) => (
         <circle key={i} data-sat-back fill="#fff" opacity="0" />
