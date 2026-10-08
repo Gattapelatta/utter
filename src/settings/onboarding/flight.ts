@@ -1,7 +1,14 @@
-/** The Drop's move between the centre and the top: an Apple-style spring with a slight overshoot. */
-export const RESPONSE = 0.55;
-export const DAMPING = 0.72;
-const W = (2 * Math.PI) / RESPONSE;
+export interface Spring {
+  /** Seconds to (nearly) reach the target. */
+  response: number;
+  /** 1 = no overshoot; lower = more bounce. */
+  damping: number;
+}
+
+/** Onboarding's short hops between the centre and the top: Apple-style, a slight overshoot. */
+export const APPLE: Spring = { response: 0.55, damping: 0.72 };
+/** Long glides across the window (logo ↔ About): slower, and barely past the target. */
+export const GLIDE: Spring = { response: 0.9, damping: 0.9 };
 
 export interface Flight {
   x: number;
@@ -11,11 +18,12 @@ export interface Flight {
 
 export const createFlight = (x: number): Flight => ({ x, v: 0, target: x });
 
-export function stepFlight(f: Flight, dt: number): void {
+export function stepFlight(f: Flight, dt: number, spring: Spring = APPLE): void {
+  const w = (2 * Math.PI) / spring.response;
   // Real time up to 0.1 s per frame (a slow frame must not slow the flight down), in small sub-steps.
   const h = Math.min(dt, 0.1) / 16;
   for (let i = 0; i < 16; i++) {
-    f.v += (W * W * (f.target - f.x) - 2 * DAMPING * W * f.v) * h;
+    f.v += (w * w * (f.target - f.x) - 2 * spring.damping * w * f.v) * h;
     f.x += f.v * h;
   }
 }

@@ -189,7 +189,7 @@
   "onboarding.keys_translate": "Translate to English",
   "permissions.done": "Done",
   "about.drop_title": "This is Drop",
-  "about.drop_body": "It lives by your Mac's notch. Hold the key and Drop wakes up and listens, swaying to your voice. Let go — it thinks for a second and puts the text where your cursor is. When it works, Drop smiles; when something goes wrong, it sulks under a little cloud.",
+  "about.drop_body": "Shows what Utter is doing: listening while the key is held, processing your speech, and telling you when the text is in.",
   "about.drop_poke": "Cheer Drop up",
   "about.copy": "Copy"
 }

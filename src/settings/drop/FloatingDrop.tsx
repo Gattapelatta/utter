@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Drop } from "../../overlay/drop/Drop";
-import { createFlight, settled, stepFlight, type Flight } from "../onboarding/flight";
+import { APPLE, createFlight, GLIDE, settled, stepFlight, type Flight } from "../onboarding/flight";
 import { useDropStage } from "./dropStage";
 
 /** Drawn at its largest size (the About page) and scaled down, so it stays sharp. */
@@ -22,9 +22,9 @@ function findSlot(): HTMLElement | null {
 
 /**
  * The settings window's one Drop (§4.3–4.4). Pages only mark a place for it
- * (`data-drop-slot`); when the place changes to another element the Drop flies there on
- * the onboarding spring (position and size), and when its own place moves (scroll,
- * resize) it follows at once.
+ * (`data-drop-slot`); when the place changes to another element the Drop flies there
+ * (position and size: onboarding's springy hop, or a calm glide across the window), and
+ * when its own place moves (scroll, resize) it follows at once.
  */
 export function FloatingDrop() {
   const reduced = useMemo(prefersReducedMotion, []);
@@ -55,9 +55,11 @@ export function FloatingDrop() {
           for (const k of ["x", "y", "s"] as const) axes[k] = createFlight(target[k]);
           flying = false;
         } else {
+          // Onboarding's short hops bounce a little; long glides across the window stay calm.
+          const spring = slot.dataset.dropSlot === "onboarding" ? APPLE : GLIDE;
           for (const k of ["x", "y", "s"] as const) {
             axes[k].target = target[k];
-            stepFlight(axes[k], dt);
+            stepFlight(axes[k], dt, spring);
           }
           // Scale settles on a smaller number; compare it in pixels.
           const sPx = { ...axes.s, x: axes.s.x * BASE, v: axes.s.v * BASE, target: axes.s.target * BASE };

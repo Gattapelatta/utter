@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import type { PermissionsStatus, Settings } from "../../lib/types";
 import { useApp } from "../../lib/store";
 import { canAdvance, dropAt, dropY, firstIncompleteStep, GROUP_H, OPTICAL_LIFT, STEPS, TOP_Y } from "./steps";
-import { createFlight, settled, stepFlight } from "./flight";
+import { createFlight, GLIDE, settled, stepFlight } from "./flight";
 
 const listeners: Record<string, (e: { payload: unknown }) => void> = {};
 let perms: PermissionsStatus = { microphone: "Granted", accessibility: true, hotkeys_running: true };
@@ -107,6 +107,23 @@ describe("onboarding logic", () => {
     expect(canAdvance("provider", G, false)).toBe(false);
     expect(canAdvance("provider", G, true)).toBe(true);
     expect(canAdvance("welcome", { ...G, microphone: "Denied" }, false)).toBe(true);
+  });
+
+  it("the long glide (logo ↔ About) is slower and barely overshoots", () => {
+    const f = createFlight(21);
+    f.target = 496;
+    let highest = 21;
+    let t = 0;
+    let halfway = 0;
+    while (!settled(f) && t < 3) {
+      stepFlight(f, 1 / 60, GLIDE);
+      highest = Math.max(highest, f.x);
+      if (!halfway && f.x > 258) halfway = t;
+      t += 1 / 60;
+    }
+    expect(highest - 496).toBeLessThan(4); // was 17 px past the target with the onboarding spring
+    expect(halfway).toBeGreaterThan(0.2); // was 0.17 s to cover half the way
+    expect(t).toBeLessThan(1.6);
   });
 
   it("the drop's spring overshoots a little and then settles", () => {
