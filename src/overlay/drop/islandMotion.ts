@@ -28,3 +28,14 @@ export function islandVariants(notch: Notch) {
     }),
   };
 }
+
+/**
+ * The character and timer: they appear once the island has grown, and on the way out fade
+ * over most of the fold. On a dark desktop the black island's motion is barely visible, so
+ * this fade is what the eye reads as "closing" — a short fade looked like a sudden vanish.
+ */
+export const contentVariants = {
+  hidden: { opacity: 0 },
+  visible: { opacity: 1, transition: { delay: 0.18, duration: 0.22 } },
+  leave: { opacity: 0, transition: { duration: 0.5, ease: [0.4, 0, 0.6, 1] as [number, number, number, number] } },
+};

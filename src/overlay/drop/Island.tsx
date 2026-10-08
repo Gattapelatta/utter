@@ -3,6 +3,7 @@ import { motion } from "motion/react";
 import { useT } from "../../i18n";
 import type { OverlayState } from "../../lib/types";
 import { Drop, type Mood } from "./Drop";
+import { contentVariants } from "./islandMotion";
 
 /** After this long without an answer the network is the likely culprit. */
 const SLOW_AFTER_MS = 4_000;
@@ -64,14 +65,7 @@ export function Island({ state, level, now }: { state: OverlayState; level: numb
   return (
     <div data-island className="island" data-clickable={state.kind === "error" && state.action ? "" : undefined}>
       {/* The content appears once the island has grown and leaves before it folds. */}
-      <motion.div
-        className="island-row"
-        variants={{
-          hidden: { opacity: 0 },
-          visible: { opacity: 1, transition: { delay: 0.18, duration: 0.22 } },
-          leave: { opacity: 0, transition: { duration: 0.12 } },
-        }}
-      >
+      <motion.div className="island-row" variants={contentVariants}>
         <Drop mood={moodFor(state)} level={level} translate={translate.current} reduced={reduced} />
         {/* Always present and fixed-width: the character keeps its place between states. */}
         <span data-slot className="island-slot">
