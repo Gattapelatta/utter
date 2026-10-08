@@ -179,3 +179,9 @@ pub fn overlay_painted(timing: State<super::overlay::OverlayTiming>) {
         tracing::info!(painted_ms = t.elapsed().as_millis() as u64, "timing: show→pill painted");
     }
 }
+
+/// Frame intervals of the character animation during one recording (smoothness, §8.4).
+#[tauri::command]
+pub fn overlay_frames(avg: f64, p95: f64, max: f64, count: u32) {
+    tracing::info!(avg_ms = avg, p95_ms = p95, max_ms = max, frames = count, "timing: overlay frames while listening");
+}

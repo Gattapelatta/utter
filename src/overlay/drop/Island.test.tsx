@@ -34,6 +34,22 @@ describe("Island", () => {
     expect(container.textContent).toContain("⌘V");
   });
 
+  it("keeps the right-hand slot in every state so the character never moves", () => {
+    const states: OverlayState[] = [
+      rec(),
+      { kind: "processing", pending: 1, since_ms: 0 },
+      { kind: "done", outcome: "pasted", degraded: false },
+      { kind: "error", message_key: "rate_limited", action: null, minutes: 12, provider: "Gemini" },
+    ];
+    for (const s of states) {
+      const { container, unmount } = render(<Island state={s} level={0} now={0} />);
+      const slot = container.querySelector("[data-slot]");
+      expect(slot, s.kind).not.toBeNull();
+      expect(slot!.className).toContain("island-slot");
+      unmount();
+    }
+  });
+
   it("shows queued jobs next to the timer", () => {
     const { container } = render(<Island state={rec("Dictation", 2)} level={0} now={0} />);
     expect(container.querySelector("[data-pending]")?.textContent).toBe("2");

@@ -139,6 +139,7 @@ pub fn run() {
             app::commands::copy_diagnostics,
             app::commands::overlay_action,
             app::commands::overlay_painted,
+            app::commands::overlay_frames,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]

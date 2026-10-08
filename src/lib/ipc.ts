@@ -32,6 +32,8 @@ export const ipc = {
   copyDiagnostics: () => invoke<string>("copy_diagnostics"),
   overlayAction: (action: string) => invoke<void>("overlay_action", { action }),
   overlayPainted: () => invoke<void>("overlay_painted"),
+  overlayFrames: (avg: number, p95: number, max: number, count: number) =>
+    invoke<void>("overlay_frames", { avg, p95, max, count }),
 };
 
 export const events = {

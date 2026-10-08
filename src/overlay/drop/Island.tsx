@@ -42,7 +42,7 @@ export function Island({ state, level, now }: { state: OverlayState; level: numb
   let right: React.ReactNode = null;
   if (state.kind === "recording") {
     right = (
-      <span className="island-timer relative" data-warn={state.warn ? "" : undefined}>
+      <span className="island-timer" data-warn={state.warn ? "" : undefined}>
         <span data-timer>{formatTimer(now - state.started_at_ms)}</span>
         {state.pending > 0 && (
           <span data-pending className="absolute -top-2 -right-3.5 text-[11px] text-[#8a9097]">
@@ -73,7 +73,10 @@ export function Island({ state, level, now }: { state: OverlayState; level: numb
         }}
       >
         <Drop mood={moodFor(state)} level={level} translate={translate.current} reduced={reduced} />
-        {right}
+        {/* Always present and fixed-width: the character keeps its place between states. */}
+        <span data-slot className="island-slot">
+          {right}
+        </span>
       </motion.div>
     </div>
   );
