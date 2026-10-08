@@ -110,6 +110,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   // Resume where the user left off; then poll permissions once a second.
   useEffect(() => {
     const provider = useApp.getState().settings?.provider ?? "Gemini";
+    ipc.uiLog("info", `onboarding mounted vis=${document.visibilityState} focus=${document.hasFocus()}`).catch(() => {});
     Promise.all([ipc.permissionsStatus().catch(() => null), ipc.apiKeyMask(provider).catch(() => null)]).then(([status, mask]) => {
       // Unknown status: start from the beginning rather than show nothing.
       const p = status ?? { microphone: "NotDetermined" as const, accessibility: false, hotkeys_running: false };
@@ -212,7 +213,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       ipc
         .uiLog(
           "info",
-          `probe step=${step} phase=${phaseRef.current} rootOpacity=${op(root)} h1Opacity=${op(h1)} h1=${r ? `${Math.round(r.x)},${Math.round(r.y)} ${Math.round(r.width)}x${Math.round(r.height)}` : "none"} drop=${dropEl.current?.style.transform} vh=${window.innerHeight} hidden=${document.hidden}`,
+          `probe anims=${JSON.stringify(document.getAnimations().slice(0, 8).map((a) => `${a.playState}@${Math.round(Number(a.currentTime ?? -1))}`))} vis=${document.visibilityState} step=${step} phase=${phaseRef.current} rootOpacity=${op(root)} h1Opacity=${op(h1)} h1=${r ? `${Math.round(r.x)},${Math.round(r.y)} ${Math.round(r.width)}x${Math.round(r.height)}` : "none"} drop=${dropEl.current?.style.transform} vh=${window.innerHeight} hidden=${document.hidden}`,
         )
         .catch(() => {});
     }, 2500);

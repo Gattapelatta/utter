@@ -64,7 +64,10 @@ export function App() {
   // Show the window once the themed page is in the DOM: no white flash. (Not via
   // requestAnimationFrame — a hidden WKWebView never runs it, so the window waited 1.5 s.)
   useEffect(() => {
-    if (loaded) ipc.settingsReady().catch(() => {});
+    if (loaded) {
+      ipc.uiLog("info", `ready route=${route} vis=${document.visibilityState}`).catch(() => {});
+      ipc.settingsReady().catch(() => {});
+    }
   }, [loaded]);
 
   if (!loaded) return null;

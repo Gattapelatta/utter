@@ -97,6 +97,12 @@ pub fn open(app: &AppHandle, route: Option<&str>) {
         .and_then(|w| w.theme().ok())
         .is_none_or(|t| t == tauri::Theme::Dark);
     let (r, g, b) = background(theme, system_dark);
+    // Become a regular app *before* the window exists. While the window is open Utter owns
+    // the menu bar (Edit menu, so ⌘V works in fields) and full screen hides it; and a window
+    // created by an accessory app lands on top of another app's full-screen space, where it
+    // stayed black — a regular app's window opens on the desktop, and macOS switches there.
+    #[cfg(target_os = "macos")]
+    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
     let url = format!("settings.html#/{}", route.unwrap_or("general"));
     let built = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App(url.into()))
         .title("Utter")
@@ -110,10 +116,6 @@ pub fn open(app: &AppHandle, route: Option<&str>) {
     match built.build() {
         Ok(w) => {
             tracing::info!(?route, "settings window created");
-            // While the window is open Utter is a regular app: it owns the menu bar (Edit menu,
-            // so ⌘V works in fields) and full screen hides the menu bar like any other app.
-            #[cfg(target_os = "macos")]
-            let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
             let app2 = app.clone();
             w.on_window_event(move |e| {
                 if let tauri::WindowEvent::Destroyed = e {
@@ -130,7 +132,11 @@ pub fn open(app: &AppHandle, route: Option<&str>) {
                 reveal(&app2);
             });
         }
-        Err(e) => tracing::warn!("settings window: {e}"),
+        Err(e) => {
+            tracing::warn!("settings window: {e}");
+            #[cfg(target_os = "macos")]
+            let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+        }
     }
 }
 
