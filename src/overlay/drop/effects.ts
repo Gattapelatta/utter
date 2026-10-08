@@ -40,13 +40,15 @@ export function glints(t: number) {
   });
 }
 
+/** [x, y, scale, delay, drift direction] in character units. Left of the character, at
+ *  head height: above the head is the camera notch, where nothing can be shown. */
 const CLOUDS: [number, number, number, number, number][] = [
-  [34, 6, 0.62, 0, -1],
-  [54, -3, 0.9, 0.22, 1],
-  [73, 5, 0.55, 0.44, -1],
+  [-118, 40, 1.0, 0, 1],
+  [-82, 34, 1.35, 0.22, -1],
+  [-50, 44, 0.9, 0.44, 1],
 ];
 
-/** Three small grey clouds over the head that drift and dissolve. */
+/** Three small grey clouds beside the head that drift and dissolve. */
 export function clouds(t: number) {
   return CLOUDS.map(([x, y, scale, delay, dir], i) => {
     const p = clamp01((t - delay) / 2.6);
@@ -62,4 +64,13 @@ export function drops(t: number) {
     const q = (t * 0.85 + i * 0.5) % 1;
     return { dy: q * 5, opacity: bell(q) * clamp01(t * 2) * clamp01((3.2 - t) * 2) };
   });
+}
+
+/**
+ * One listening ring at cycle phase `p` (0..1) for voice envelope `env`; `visible` fades
+ * the whole effect in and out. Radius in character units.
+ */
+export function ring(p: number, env: number, visible: number): { r: number; opacity: number } {
+  const opacity = visible * Math.pow(1 - p, 1.4) * Math.min(1, p * 6) * (0.35 + env * 0.5);
+  return { r: 38 + easeInOut(p) * 44, opacity };
 }

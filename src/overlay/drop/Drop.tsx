@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { ipc } from "../../lib/ipc";
 import { createModel, stepModel, type Mood } from "./dropModel";
-import { clouds, drops, easeInOut, glints, satellite } from "./effects";
+import { clouds, drops, glints, ring, satellite } from "./effects";
 import { eyePath } from "./eye";
 
 export type { Mood };
@@ -81,10 +81,9 @@ export function Drop({ mood, level, translate, reduced }: Props) {
       glow.setAttribute("opacity", f.glow.toFixed(3));
       for (const s of stops) s.setAttribute("stop-color", rgb);
       rings.forEach((r, i) => {
-        const p = (f.flow * 0.8 + i / RINGS) % 1;
-        const o = f.rings * Math.pow(1 - p, 1.6) * Math.min(1, p * 6) * (0.12 + f.env * 0.45);
-        r.setAttribute("r", (38 + easeInOut(p) * 28).toFixed(2));
-        r.setAttribute("opacity", o.toFixed(3));
+        const g = ring((f.flow * 0.8 + i / RINGS) % 1, f.env, f.rings);
+        r.setAttribute("r", g.r.toFixed(2));
+        r.setAttribute("opacity", g.opacity.toFixed(3));
         r.setAttribute("stroke", rgb);
       });
 
@@ -127,7 +126,7 @@ export function Drop({ mood, level, translate, reduced }: Props) {
         </radialGradient>
       </defs>
       {Array.from({ length: RINGS }, (_, i) => (
-        <circle key={i} data-ring cx="50" cy="54" r="38" fill="none" strokeWidth="1.4" opacity="0" />
+        <circle key={i} data-ring cx="50" cy="54" r="38" fill="none" strokeWidth="2.2" opacity="0" />
       ))}
       {Array.from({ length: TAIL }, (_, i) => (
         <circle key={i} data-sat-back fill="#fff" opacity="0" />

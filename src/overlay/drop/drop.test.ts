@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { spring, stepSpring } from "./springs";
 import { eyePath } from "./eye";
-import { clouds, glints, satellite } from "./effects";
+import { clouds, glints, ring, satellite } from "./effects";
 
 /** All y coordinates mentioned in an SVG path, in order. */
 function ys(d: string): number[] {
@@ -55,5 +55,22 @@ describe("effects", () => {
     const early = clouds(0.3);
     expect(early[0].opacity).toBeGreaterThan(early[2].opacity);
     expect(clouds(3.1).every((c) => c.opacity < 0.01)).toBe(true);
+  });
+
+  it("clouds float left of the character, clear of the camera notch", () => {
+    for (const t of [0.5, 1, 1.5, 2]) {
+      for (const c of clouds(t)) {
+        // In character units the notch starts at x ≈ −17 (island left edge ≈ −156); above y = 14 is under the camera.
+        expect(c.x + 16 * c.scale, `t=${t}`).toBeLessThan(-20);
+        expect(c.x - 16 * c.scale, `t=${t}`).toBeGreaterThan(-145);
+        expect(c.y - 10 * c.scale, `t=${t}`).toBeGreaterThan(16);
+      }
+    }
+  });
+
+  it("listening rings are big and bright enough to see", () => {
+    expect(ring(0.99, 0.5, 1).r).toBeGreaterThanOrEqual(80);
+    expect(ring(0.3, 0.5, 1).opacity).toBeGreaterThan(0.3);
+    expect(ring(0.3, 0.5, 0).opacity).toBe(0);
   });
 });
