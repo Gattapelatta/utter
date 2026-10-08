@@ -29,10 +29,12 @@ body,
   cursor: pointer;
 }
 
-/* Character and the right-hand block sit together in the centre, 44 px apart. */
+/* Character and the right-hand block sit together, 44 px apart. Centred at 61 px, below
+   the island's middle: the top 32 px under the camera notch are not a screen (variant C,
+   approved 2026-10-08). */
 .island-row {
   position: absolute;
-  inset: 0;
+  inset: 18px 0 0 0;
   display: flex;
   align-items: center;
   justify-content: center;

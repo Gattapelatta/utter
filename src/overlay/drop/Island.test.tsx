@@ -50,6 +50,12 @@ describe("Island", () => {
     }
   });
 
+  it("draws the character at 48 × 50 so the camera notch does not cut it (variant C)", () => {
+    const { container } = render(<Island state={rec()} level={0} now={0} />);
+    const svg = container.querySelector("svg")!;
+    expect([svg.getAttribute("width"), svg.getAttribute("height")]).toEqual(["48", "50"]);
+  });
+
   it("shows queued jobs next to the timer", () => {
     const { container } = render(<Island state={rec("Dictation", 2)} level={0} now={0} />);
     expect(container.querySelector("[data-pending]")?.textContent).toBe("2");

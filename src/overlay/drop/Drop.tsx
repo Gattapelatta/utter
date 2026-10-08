@@ -117,7 +117,7 @@ export function Drop({ mood, level, translate, reduced }: Props) {
   }, []);
 
   return (
-    <svg ref={svg} viewBox="13 14 74 76" width="58" height="60" overflow="visible" aria-hidden className="shrink-0">
+    <svg ref={svg} viewBox="13 14 74 76" width="48" height="50" overflow="visible" aria-hidden className="shrink-0">
       <defs>
         <radialGradient id="drop-glow" cx="50%" cy="50%" r="50%">
           {/* Tighter and softer than the prototype: a wide glow made the island look grey next to the notch. */}
