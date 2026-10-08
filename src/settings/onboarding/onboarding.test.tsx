@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { PermissionsStatus, Settings } from "../../lib/types";
 import { useApp } from "../../lib/store";
-import { canAdvance, dropAt, firstIncompleteStep, STEPS } from "./steps";
+import { canAdvance, dropAt, dropY, firstIncompleteStep, GROUP_H, OPTICAL_LIFT, STEPS, TOP_Y } from "./steps";
 import { createFlight, settled, stepFlight } from "./flight";
 
 const listeners: Record<string, (e: { payload: unknown }) => void> = {};
@@ -88,6 +88,15 @@ describe("onboarding logic", () => {
 
   it("drop waits at the centre on steps 1-3 and 6", () => {
     expect(STEPS.map(dropAt)).toEqual(["center", "center", "center", "top", "top", "center"]);
+  });
+
+  it("the centred group sits in the middle of the whole window", () => {
+    for (const h of [520, 620, 900]) {
+      const top = dropY("center", h);
+      const bottom = h - top - GROUP_H;
+      expect(Math.abs(bottom - top - 2 * OPTICAL_LIFT)).toBeLessThanOrEqual(1);
+    }
+    expect(dropY("top", 620)).toBe(TOP_Y);
   });
 
   it("canAdvance needs each step's requirement", () => {

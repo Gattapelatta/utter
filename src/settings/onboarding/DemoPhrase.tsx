@@ -40,7 +40,7 @@ export function DemoPhrase({ reduced }: { reduced: boolean }) {
   const showDst = reduced || phase === "dst" || phase === "fade-dst";
   const fading = !reduced && (phase === "fade-src" || phase === "fade-dst");
   return (
-    <p className="demo mx-auto mt-0 mb-0 min-h-[54px] max-w-[460px] text-[18px] leading-[1.45] text-text" style={{ opacity: fading ? 0 : 1 }}>
+    <p className="demo mx-auto mt-0 mb-0 min-h-[54px] text-balance max-w-[460px] text-[18px] leading-[1.45] text-text" style={{ opacity: fading ? 0 : 1 }}>
       <span className="mr-2 rounded border border-border px-1.5 py-px align-[2px] font-mono text-[11px] text-text-secondary">
         {showDst ? t("onboarding.demo_dst_tag") : t("onboarding.demo_src_tag")}
       </span>

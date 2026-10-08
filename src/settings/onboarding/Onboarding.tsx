@@ -10,19 +10,13 @@ import { keyLabel } from "../keys";
 import { Button } from "../ui/Button";
 import { DemoPhrase } from "./DemoPhrase";
 import { createFlight, settled, stepFlight } from "./flight";
-import { canAdvance, dropAt, firstIncompleteStep, STEPS, type StepId } from "./steps";
+import { canAdvance, DROP_H, DROP_W, dropAt, dropY, firstIncompleteStep, GAP, STEPS, TOP_Y, type StepId } from "./steps";
 import { Accessibility } from "./steps/Accessibility";
 import { Microphone } from "./steps/Microphone";
 import { ProviderKey } from "./steps/ProviderKey";
 import { Trial } from "./steps/Trial";
 
-const DROP_W = 88;
-const DROP_H = Math.round((DROP_W * 50) / 48);
-const TOP_Y = 60;
-const GAP = 24;
 const FOOT = 84;
-/** Drop + gap + the welcome step's text, used to centre the whole group (§4.4). */
-const GROUP_H = DROP_H + GAP + 152;
 const POLL_MS = 1_000;
 const HAPPY_MS = 2_200;
 const ADVANCE_AFTER_KEY_MS = 1_900;
@@ -83,7 +77,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   phaseRef.current = phase;
 
   const yFor = useCallback(
-    (s: StepId) => (dropAt(s) === "top" ? TOP_Y : Math.max(TOP_Y, Math.round((height - FOOT - GROUP_H) / 2))),
+    (s: StepId) => dropY(dropAt(s), height),
     [height],
   );
 
