@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::mpsc::UnboundedSender;
 
 use super::diagnostics;
@@ -59,6 +59,9 @@ pub fn update_settings(app: &AppHandle, state: &AppState, next: Settings) -> Res
         *s = next.clone();
     }
     let _ = state.tx.send(Input::SettingsChanged);
+    if let Some(w) = app.get_webview_window(settings_window::LABEL) {
+        let _ = w.set_theme(settings_window::window_theme(next.theme));
+    }
     let _ = app.emit("ui://settings", &next);
     Ok(())
 }

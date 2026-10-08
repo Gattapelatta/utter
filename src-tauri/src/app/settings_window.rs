@@ -28,6 +28,15 @@ pub fn background(theme: Theme, system_dark: bool) -> (u8, u8, u8) {
     }
 }
 
+/// Window appearance (title bar, full-screen chrome) follows the app theme, not the system's.
+pub fn window_theme(theme: Theme) -> Option<tauri::Theme> {
+    match theme {
+        Theme::Dark => Some(tauri::Theme::Dark),
+        Theme::Light => Some(tauri::Theme::Light),
+        Theme::System => None,
+    }
+}
+
 /// The only external pages the UI may open.
 pub fn link_url(id: &str) -> Option<&'static str> {
     Some(match id {
@@ -83,18 +92,25 @@ pub fn open(app: &AppHandle, route: Option<&str>) {
         .inner_size(900.0, 620.0)
         .min_inner_size(760.0, 520.0)
         .visible(false)
+        .theme(window_theme(theme))
         .background_color(tauri::window::Color(r, g, b, 255));
     #[cfg(target_os = "macos")]
     let built = built.title_bar_style(tauri::TitleBarStyle::Overlay).hidden_title(true);
     match built.build() {
         Ok(w) => {
             tracing::info!(?route, "settings window created");
+            // While the window is open Utter is a regular app: it owns the menu bar (Edit menu,
+            // so ⌘V works in fields) and full screen hides the menu bar like any other app.
+            #[cfg(target_os = "macos")]
+            let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
             let app2 = app.clone();
             w.on_window_event(move |e| {
                 if let tauri::WindowEvent::Destroyed = e {
                     if let Some(s) = app2.try_state::<super::commands::AppState>() {
                         on_destroyed(&s.shared, &s.hotkeys);
                     }
+                    #[cfg(target_os = "macos")]
+                    let _ = app2.set_activation_policy(tauri::ActivationPolicy::Accessory);
                 }
             });
             let app2 = app.clone();
@@ -146,6 +162,13 @@ mod tests {
         assert_eq!(background(Theme::Light, true), (0xFA, 0xFA, 0xF9));
         assert_eq!(background(Theme::System, true), (0x0A, 0x0A, 0x0A));
         assert_eq!(background(Theme::System, false), (0xFA, 0xFA, 0xF9));
+    }
+
+    #[test]
+    fn window_chrome_follows_app_theme() {
+        assert_eq!(window_theme(Theme::Dark), Some(tauri::Theme::Dark));
+        assert_eq!(window_theme(Theme::Light), Some(tauri::Theme::Light));
+        assert_eq!(window_theme(Theme::System), None);
     }
 
     #[test]

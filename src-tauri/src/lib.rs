@@ -96,15 +96,21 @@ fn init_core(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    let route = app::settings_window::start_route(
-        settings.onboarding_done,
-        secrets.get(settings.provider).is_some(),
-        permissions::accessibility(false),
-    );
-    app.manage(AppState { shared, tx, secrets, hotkeys, providers, log_dir });
-    if let Some(r) = route {
-        app::settings_window::open(app.handle(), Some(r));
-    }
+    app.manage(AppState { shared, tx, secrets: secrets.clone(), hotkeys, providers, log_dir });
+    // Reading the key may show a Keychain prompt; never wait for it on the main thread
+    // (it froze the tray and hotkeys for as long as the prompt was open).
+    let handle = app.handle().clone();
+    std::thread::spawn(move || {
+        let route = app::settings_window::start_route(
+            settings.onboarding_done,
+            secrets.get(settings.provider).is_some(),
+            permissions::accessibility(false),
+        );
+        if let Some(r) = route {
+            let h = handle.clone();
+            let _ = handle.run_on_main_thread(move || app::settings_window::open(&h, Some(r)));
+        }
+    });
     Ok(())
 }
 
