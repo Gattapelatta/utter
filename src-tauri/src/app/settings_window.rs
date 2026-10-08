@@ -62,6 +62,15 @@ pub fn start_route(onboarding_done: bool, has_key: bool, accessibility: bool) ->
     }
 }
 
+/// Until onboarding is done, every way into the window (tray, relaunch) leads to it.
+pub fn route_for(asked: Option<&str>, onboarding_done: bool) -> Option<&str> {
+    if onboarding_done {
+        asked
+    } else {
+        Some("onboarding")
+    }
+}
+
 /// Closing the window must not leave a key capture or the onboarding trial running.
 pub fn on_destroyed(shared: &Shared, hotkeys: &HotkeyService) {
     shared.trial.store(false, Ordering::SeqCst);
@@ -70,6 +79,8 @@ pub fn on_destroyed(shared: &Shared, hotkeys: &HotkeyService) {
 
 /// Opens the window at `route` (or brings the existing one forward and navigates).
 pub fn open(app: &AppHandle, route: Option<&str>) {
+    let done = app.try_state::<super::commands::AppState>().is_none_or(|s| s.shared.settings().onboarding_done);
+    let route = route_for(route, done);
     tracing::info!(?route, "open settings");
     if let Some(w) = app.get_webview_window(LABEL) {
         if let Some(r) = route {
@@ -169,6 +180,15 @@ mod tests {
         assert_eq!(window_theme(Theme::Dark), Some(tauri::Theme::Dark));
         assert_eq!(window_theme(Theme::Light), Some(tauri::Theme::Light));
         assert_eq!(window_theme(Theme::System), None);
+    }
+
+    #[test]
+    fn unfinished_onboarding_comes_first() {
+        assert_eq!(route_for(None, false), Some("onboarding"));
+        assert_eq!(route_for(Some("history"), false), Some("onboarding"));
+        assert_eq!(route_for(Some("permissions"), false), Some("onboarding"), "onboarding has the permission steps");
+        assert_eq!(route_for(None, true), None);
+        assert_eq!(route_for(Some("history"), true), Some("history"));
     }
 
     #[test]

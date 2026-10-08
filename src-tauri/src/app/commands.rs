@@ -260,6 +260,18 @@ pub fn overlay_painted(timing: State<super::overlay::OverlayTiming>) {
     }
 }
 
+/// Script errors and milestones from the settings page, so problems on the user's Mac
+/// show up in the app log (the page itself is invisible to diagnostics otherwise).
+#[tauri::command]
+pub fn ui_log(level: String, message: String) {
+    let message: String = message.chars().take(2_000).collect();
+    if level == "error" {
+        tracing::warn!("settings page: {message}");
+    } else {
+        tracing::info!("settings page: {message}");
+    }
+}
+
 /// Frame intervals of the character animation during one recording (smoothness, §8.4).
 #[tauri::command]
 pub fn overlay_frames(avg: f64, p95: f64, max: f64, count: u32) {

@@ -32,6 +32,7 @@ export const ipc = {
   usageToday: () => invoke<UsageDay | null>("usage_today"),
   copyDiagnostics: () => invoke<string>("copy_diagnostics"),
   overlayAction: (action: string) => invoke<void>("overlay_action", { action }),
+  uiLog: (level: "info" | "error", message: string) => invoke<void>("ui_log", { level, message }),
   settingsReady: () => invoke<void>("settings_ready"),
   openSettings: (route: string | null) => invoke<void>("open_settings", { route }),
   openLink: (link: "gemini_key" | "groq_key" | "openai_key" | "github" | "releases") => invoke<void>("open_link", { link }),

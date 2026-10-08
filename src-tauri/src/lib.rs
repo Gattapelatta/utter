@@ -156,6 +156,7 @@ pub fn run() {
             app::commands::open_microphone_settings,
             app::commands::overlay_painted,
             app::commands::overlay_frames,
+            app::commands::ui_log,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]

@@ -116,7 +116,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       prevPerms.current = p;
       setPerms(p);
       setKeyOk(mask !== null);
-      setStep((s) => s ?? firstIncompleteStep(p, mask !== null));
+      const first = firstIncompleteStep(p, mask !== null);
+      ipc.uiLog("info", `onboarding resumes at ${first} (status ${status ? "read" : "unknown"}, key ${mask !== null})`).catch(() => {});
+      setStep((s) => s ?? first);
     });
     const id = setInterval(refresh, POLL_MS);
     const resize = () => setHeight(window.innerHeight);
@@ -197,6 +199,25 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     },
     [celebrate, go],
   );
+
+  // TEMP probe (black-window bug): what is actually on screen 2.5 s after a step shows.
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useEffect(() => {
+    if (!step) return;
+    const id = setTimeout(() => {
+      const root = dropEl.current?.parentElement;
+      const h1 = document.querySelector("h1");
+      const op = (el: Element | null | undefined) => (el ? getComputedStyle(el).opacity : "none");
+      const r = h1?.getBoundingClientRect();
+      ipc
+        .uiLog(
+          "info",
+          `probe step=${step} phase=${phaseRef.current} rootOpacity=${op(root)} h1Opacity=${op(h1)} h1=${r ? `${Math.round(r.x)},${Math.round(r.y)} ${Math.round(r.width)}x${Math.round(r.height)}` : "none"} drop=${dropEl.current?.style.transform} vh=${window.innerHeight} hidden=${document.hidden}`,
+        )
+        .catch(() => {});
+    }, 2500);
+    return () => clearTimeout(id);
+  }, [step]);
 
   if (!step || !settings) return null;
   const index = STEPS.indexOf(step);
