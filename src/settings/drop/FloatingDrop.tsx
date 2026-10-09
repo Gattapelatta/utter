@@ -5,6 +5,11 @@ import { useDropStage } from "./dropStage";
 
 /** Drawn at its largest size (the About page) and scaled down, so it stays sharp. */
 export const BASE = 140;
+/**
+ * A new page's first frame is heavy (layout, its cascade's layers); a flight that starts in
+ * that frame stalls for a frame. Waiting this long lets the page land first.
+ */
+const TAKE_OFF_DELAY_MS = 60;
 /** Highest priority first: a page's own place for the Drop beats the sidebar logo. */
 const SLOTS = ["about", "onboarding", "logo"];
 
@@ -51,6 +56,8 @@ export function FloatingDrop() {
     let flying = false;
     // A flight handed to the compositor (WAAPI): position and size in step with the display.
     let anim: Animation | null = null;
+    // A new place seen but not flown to yet (see TAKE_OFF_DELAY_MS).
+    let pending: { slot: HTMLElement; since: number } | null = null;
     let raf = 0;
     let last = performance.now();
     const place = (p: { x: number; y: number; s: number }) => {
@@ -66,6 +73,18 @@ export function FloatingDrop() {
         const target = { x: r.left, y: r.top, s: r.width / BASE };
         const spring = slot.dataset.dropSlot === "onboarding" ? APPLE : GLIDE;
         const moved = slot !== current && current !== null && !reduced;
+        if (moved && typeof node.animate === "function") {
+          if (pending?.slot !== slot) pending = { slot, since: now };
+          if (now - pending.since < TAKE_OFF_DELAY_MS) {
+            // Hold still on the old place for a moment.
+            useDropStage.getState().setSettled(false);
+            raf = requestAnimationFrame(frame);
+            return;
+          }
+          pending = null;
+        } else {
+          pending = null;
+        }
         if (moved) {
           // A new place: fly there, looking where it is going.
           setLook({ x: Math.sign(target.x - axes.x.x) * 7, y: target.y < axes.y.x ? -5.5 : 3 });
