@@ -18,7 +18,10 @@ export function Section({ route, subtitle, children }: { route: Route; subtitle?
   const t = useT();
   return (
     <section className="mx-auto max-w-[640px] px-10 pt-14 pb-10">
-      <h1 className="mt-0 mb-6 text-[28px] leading-[1.1] font-[450] tracking-[-0.02em]">{t(TITLES[route])}</h1>
+      {/* The mask the title rises from when the section opens (reveal.ts). */}
+      <div data-title className="mb-5 overflow-hidden pb-1">
+        <h1 className="m-0 text-[28px] leading-[1.1] font-[450] tracking-[-0.02em]">{t(TITLES[route])}</h1>
+      </div>
       {subtitle && <p className="-mt-3 mb-6 text-text-secondary">{subtitle}</p>}
       {children}
     </section>

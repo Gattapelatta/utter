@@ -40,8 +40,10 @@ export function About() {
           className="cursor-pointer rounded-full"
           style={{ width: DROP, height: Math.round((DROP * 50) / 48) }}
         />
-        <h1 className="mt-5 mb-0 text-[28px] leading-[1.1] font-[450] tracking-[-0.02em]">{t("about.drop_title")}</h1>
-        <p className="mt-3 mb-0 max-w-[440px] leading-relaxed text-pretty text-text-secondary">{t("about.drop_body")}</p>
+        <div data-title className="mt-5 overflow-hidden pb-1">
+          <h1 className="m-0 text-[28px] leading-[1.1] font-[450] tracking-[-0.02em]">{t("about.drop_title")}</h1>
+        </div>
+        <p className="mt-2 mb-0 max-w-[440px] leading-relaxed text-pretty text-text-secondary">{t("about.drop_body")}</p>
       </div>
       <div className="mt-10">
         <Row label={t("about.version")}>

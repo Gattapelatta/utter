@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { events, ipc } from "../lib/ipc";
 import { useApp } from "../lib/store";
 import { FloatingDrop } from "./drop/FloatingDrop";
 import { useDropStage } from "./drop/dropStage";
 import { Onboarding } from "./onboarding/Onboarding";
+import { revealPage } from "./reveal";
 import { parseRoute, type Route } from "./routes";
 import { About } from "./sections/About";
 import { General } from "./sections/General";
@@ -19,7 +20,6 @@ import { Sidebar } from "./Sidebar";
 /** After onboarding the Drop needs a moment to notice the logo before "settled" means "landed there". */
 const LAND_GRACE_MS = 100;
 const EASE_OUT = "cubic-bezier(0.22, 1, 0.36, 1)";
-const POP = "cubic-bezier(0.2, 0.9, 0.3, 1.15)";
 
 /** Once the Drop has landed on the logo: the menu slides in from the left, then the page cascades (§4.4). */
 function revealApp() {
@@ -31,14 +31,21 @@ function revealApp() {
       fill: "backwards",
     }),
   );
-  [...document.querySelectorAll<HTMLElement>("main h1, main h2, main p, main .row")].slice(0, 16).forEach((el, i) =>
-    el.animate?.(
-      [
-        { opacity: 0, transform: "translateY(10px)", filter: "blur(6px)" },
-        { opacity: 1, transform: "none", filter: "blur(0px)" },
-      ],
-      { duration: 420, delay: 180 + i * 40, easing: POP, fill: "backwards" },
-    ),
+  const section = document.querySelector("main section");
+  if (section) setTimeout(() => revealPage(section), 120);
+}
+
+/** Every section opens with the cascade (reveal.ts) — before its first paint. */
+function Reveal({ enabled, children }: { enabled: boolean; children: ReactNode }) {
+  const box = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const section = box.current?.querySelector("section");
+    if (enabled && section) revealPage(section);
+  }, [enabled]);
+  return (
+    <div ref={box} className="h-full">
+      {children}
+    </div>
   );
 }
 
@@ -126,11 +133,13 @@ export function App() {
       <motion.div
         key={route}
         className="h-full"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1, transition: { duration: 0.15, ease: [0.23, 1, 0.32, 1] } }}
-        exit={{ opacity: 0, transition: { duration: 0.08 } }}
+        initial={false}
+        animate={{ opacity: 1, transform: "translateY(0px)", filter: "blur(0px)" }}
+        exit={{ opacity: 0, transform: "translateY(-6px)", filter: "blur(3px)", transition: { duration: 0.16, ease: [0.4, 0, 1, 1] } }}
       >
-        <Page route={route} go={go} finishOnboarding={finishOnboarding} />
+        <Reveal enabled={route !== "onboarding" && !intro}>
+          <Page route={route} go={go} finishOnboarding={finishOnboarding} />
+        </Reveal>
       </motion.div>
     </AnimatePresence>
   );
