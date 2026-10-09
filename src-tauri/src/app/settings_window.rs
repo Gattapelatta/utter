@@ -37,6 +37,15 @@ pub fn window_theme(theme: Theme) -> Option<tauri::Theme> {
     }
 }
 
+/// Page zoom for a window of `w × h` points: the layout is designed at 900 × 620, so a
+/// bigger window (full screen) shows the same layout larger instead of a sea of empty space.
+/// Uses the tighter side, never shrinks, and stops at 1.8 on big displays.
+pub fn zoom_for(w: f64, h: f64) -> f64 {
+    const DESIGN_W: f64 = 900.0;
+    const DESIGN_H: f64 = 620.0;
+    (w / DESIGN_W).min(h / DESIGN_H).clamp(1.0, 1.8)
+}
+
 /// The only external pages the UI may open.
 pub fn link_url(id: &str) -> Option<&'static str> {
     Some(match id {
@@ -117,7 +126,13 @@ pub fn open(app: &AppHandle, route: Option<&str>) {
         Ok(w) => {
             tracing::info!(?route, "settings window created");
             let app2 = app.clone();
+            let w2 = w.clone();
             w.on_window_event(move |e| {
+                if let tauri::WindowEvent::Resized(size) = e {
+                    let scale = w2.scale_factor().unwrap_or(1.0);
+                    let zoom = zoom_for(f64::from(size.width) / scale, f64::from(size.height) / scale);
+                    let _ = w2.set_zoom(zoom);
+                }
                 if let tauri::WindowEvent::Destroyed = e {
                     if let Some(s) = app2.try_state::<super::commands::AppState>() {
                         on_destroyed(&s.shared, &s.hotkeys);
@@ -179,6 +194,16 @@ mod tests {
         assert_eq!(background(Theme::Light, true), (0xFA, 0xFA, 0xF9));
         assert_eq!(background(Theme::System, true), (0x0A, 0x0A, 0x0A));
         assert_eq!(background(Theme::System, false), (0xFA, 0xFA, 0xF9));
+    }
+
+    #[test]
+    fn interface_scales_with_the_window() {
+        assert_eq!(zoom_for(900.0, 620.0), 1.0);
+        let full = zoom_for(1470.0, 956.0); // MacBook Air 13" full screen
+        assert!((full - 956.0 / 620.0).abs() < 1e-9, "{full}");
+        assert_eq!(zoom_for(2000.0, 620.0), 1.0, "only wider: no zoom");
+        assert_eq!(zoom_for(760.0, 520.0), 1.0, "never smaller than designed");
+        assert_eq!(zoom_for(4000.0, 2400.0), 1.8);
     }
 
     #[test]
