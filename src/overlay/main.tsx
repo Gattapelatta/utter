@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Island } from "./drop/Island";
+import { useClock } from "./useClock";
 import { islandVariants, type Notch } from "./drop/islandMotion";
 import { events, ipc } from "../lib/ipc";
 import { useApp } from "../lib/store";
@@ -18,12 +19,12 @@ function Overlay() {
   const [state, setState] = useState<OverlayState>({ kind: "hidden" });
   const [level, setLevel] = useState(0);
   const [notch, setNotch] = useState<Notch>(null);
-  const [now, setNow] = useState(Date.now());
   const reduced = useReducedMotion() ?? false;
   // The last visible state stays on screen while the pill animates out.
   const shown = useRef<OverlayState>(state);
   const visible = state.kind !== "hidden" && state.kind !== "cancelled";
   if (visible) shown.current = state;
+  const now = useClock(visible);
 
   useEffect(() => {
     const stopStore = useApp.getState().init();
@@ -31,13 +32,15 @@ function Overlay() {
     const un1 = events.overlayState((s) => setState(s));
     // Speech RMS rarely exceeds ~0.3; scale so normal speech reaches ~1.
     const un2 = events.overlayLevel((l) => setLevel(Math.min(1, Math.sqrt(l) * 2.2)));
-    const timer = setInterval(() => setNow(Date.now()), 250);
+    // Diagnostics: whether WebKit treats the page as visible when the pill is shown.
+    const vis = () => ipc.uiLog("info", `overlay page ${document.visibilityState}`).catch(() => {});
+    document.addEventListener("visibilitychange", vis);
     return () => {
       stopStore.then((f) => f());
       un0.then((f) => f());
       un1.then((f) => f());
       un2.then((f) => f());
-      clearInterval(timer);
+      document.removeEventListener("visibilitychange", vis);
     };
   }, []);
 

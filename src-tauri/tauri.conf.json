@@ -25,7 +25,8 @@
         "visible": false,
         "focus": false,
         "shadow": false,
-        "resizable": false
+        "resizable": false,
+        "backgroundThrottling": "disabled"
       }
     ],
     "security": {
