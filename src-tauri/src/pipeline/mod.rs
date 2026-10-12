@@ -61,7 +61,8 @@ pub fn system_prompt(mode: Mode, opts: &PipelineOptions, audio_secs: f32) -> Opt
 
 const AUDIO_NOTE: &str = "Here the input is an audio recording instead of a <transcript> block: \
 first transcribe it faithfully, then apply the instructions above to that transcription. \
-If the recording contains no intelligible speech, output nothing.";
+If the recording contains no clear human speech (silence, breathing, clicks, background noise or \
+music), output nothing at all — never guess, invent or complete text that was not spoken.";
 
 /// Prompt for the one-request path (audio in, final text out).
 pub fn audio_system_prompt(mode: Mode, opts: &PipelineOptions, audio_secs: f32) -> Option<String> {
@@ -430,7 +431,7 @@ mod tests {
     fn audio_prompt_requires_cleanup_or_translation() {
         assert!(audio_system_prompt(Mode::Dictation, &opts(false, false, TranslateStyle::Business), 5.0).is_none());
         let p = audio_system_prompt(Mode::Dictation, &opts(true, true, TranslateStyle::Business), 45.0).unwrap();
-        assert!(p.contains("paragraphs") && p.contains("no intelligible speech"));
+        assert!(p.contains("paragraphs") && p.contains("no clear human speech") && p.contains("never guess"));
     }
 
     #[tokio::test]
