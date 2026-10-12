@@ -1,9 +1,9 @@
 import { useMemo, useRef } from "react";
-import { motion } from "motion/react";
+import { motion, useIsPresent, usePresenceData } from "motion/react";
 import { useT } from "../../i18n";
 import type { OverlayState } from "../../lib/types";
 import { Drop, type Mood } from "./Drop";
-import { contentVariants } from "./islandMotion";
+import { contentTarget, dropTarget, shapeTarget, type Notch, type View } from "./islandMotion";
 
 /** After this long without an answer the network is the likely culprit. */
 const SLOW_AFTER_MS = 4_000;
@@ -32,10 +32,29 @@ function prefersReducedMotion(): boolean {
   return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-/** The black notch island with the character and, on its right, the timer or a short message (§4.2). */
-export function Island({ state, level, now }: { state: OverlayState; level: number; now: number }) {
+interface Props {
+  state: OverlayState;
+  level: number;
+  now: number;
+  /** The open island, the ears at rest (§4.2a), or folded into the notch. */
+  view?: View;
+  notch?: Notch;
+  /** The recording was cancelled with Esc: fold faster. */
+  cancelled?: boolean;
+}
+
+/**
+ * The black notch shape with the one Drop and, on its right, the timer or a short message
+ * (§4.2). The shape is a clip of the island; the Drop flies between its place on the island
+ * and the left ear.
+ */
+export function Island({ state, level, now, view = "open", notch = null, cancelled = false }: Props) {
   const t = useT();
   const reduced = useMemo(prefersReducedMotion, []);
+  // While leaving, the props are those of the last render; AnimatePresence passes the fresh "cancelled".
+  const present = useIsPresent();
+  const leaving = usePresenceData() as boolean | undefined;
+  const fast = present ? cancelled : (leaving ?? cancelled);
   // Non-recording states keep the colour of the recording they belong to.
   const translate = useRef(false);
   if (state.kind === "recording") translate.current = state.mode === "Translate";
@@ -62,16 +81,25 @@ export function Island({ state, level, now }: { state: OverlayState; level: numb
     right = <span className="island-text">{t(key, { provider: state.provider ?? "", n: state.minutes ?? 0 })}</span>;
   }
 
+  const folded = { notch, fast, reduced };
+  const at = (v: View) => ({
+    shape: shapeTarget(v, folded.notch, folded.fast, folded.reduced),
+    drop: dropTarget(v, folded.notch, folded.fast, folded.reduced),
+  });
+  const open = view === "open";
+
   return (
     <div data-island className="island" data-clickable={state.kind === "error" && state.action ? "" : undefined}>
-      {/* The content appears once the island has grown and leaves before it folds. */}
-      <motion.div className="island-row" variants={contentVariants}>
-        <Drop mood={moodFor(state)} level={level} translate={translate.current} reduced={reduced} />
+      <motion.div data-shape className="island-shape" initial={at("folded").shape} animate={at(view).shape} exit={at("folded").shape} />
+      <div className="island-row">
+        <motion.div data-drop-place initial={at("folded").drop} animate={at(view).drop} exit={at("folded").drop}>
+          <Drop mood={open ? moodFor(state) : "idle"} rest={view === "rest"} level={level} translate={translate.current} reduced={reduced} />
+        </motion.div>
         {/* Always present and fixed-width: the character keeps its place between states. */}
-        <span data-slot className="island-slot">
+        <motion.span data-slot className="island-slot" initial={{ opacity: 0 }} animate={contentTarget(open ? "open" : "rest")} exit={contentTarget("folded")}>
           {right}
-        </span>
-      </motion.div>
+        </motion.span>
+      </div>
     </div>
   );
 }

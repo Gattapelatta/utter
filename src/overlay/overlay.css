@@ -21,9 +21,13 @@ body,
   position: relative;
   width: 360px;
   height: 104px;
+}
+/* The black shape: notch, ears (§4.2a) or island, cut out of the island's box by clip-path.
+   Only the shape is clipped; the Drop's rings and effects may reach past it. */
+.island-shape {
+  position: absolute;
+  inset: 0;
   background: #000;
-  border-radius: 0 0 40px 40px;
-  transform-origin: top center;
 }
 .island[data-clickable] {
   cursor: pointer;

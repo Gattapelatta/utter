@@ -1,43 +1,89 @@
 export type Notch = { width: number; height: number } | null;
 
+/** What the black shape shows: the full island, the ears at rest (§4.2a), or nothing (in the notch). */
+export type View = "open" | "rest" | "folded";
+
+/** A shape hanging from the top edge, centred: width, height, bottom corner radius (pt). */
+export type Box = { w: number; h: number; r: number };
+
 const ISLAND_W = 360;
 const ISLAND_H = 104;
-/** The island grows out of the notch and folds back into it: no overshoot (§5.4). */
-const grow = { type: "spring" as const, bounce: 0, duration: 0.5 };
+export const ISLAND_BOX: Box = { w: ISLAND_W, h: ISLAND_H, r: 40 };
+/** Each ear: the Drop (26) with 5 pt of air on both sides (chosen by the user 2026-10-13). */
+const EAR_W = 36;
+/** Bottom corners of the ears; matched to the notch's own rounding on screen. */
+const EAR_RADIUS = 8;
+const REST_DROP = 26;
+const PLATE: Box = { w: 36, h: 32, r: EAR_RADIUS };
+/** Where the Drop sits on the open island: the pair centred at y 61 (variant C), Drop 48 wide, gap 44, slot 48. */
+const DROP_AT = { x: ISLAND_W / 2 - 46, y: 61 };
 
-const transform = (y: number, sx: number, sy: number) =>
-  `translateY(${y}px) scaleX(${+sx.toFixed(6)}) scaleY(${+sy.toFixed(6)})`;
+export function restBox(notch: Notch): Box {
+  return notch ? { w: notch.width + 2 * EAR_W, h: notch.height, r: EAR_RADIUS } : PLATE;
+}
+
+export function foldedBox(notch: Notch): Box {
+  return notch ? { w: notch.width, h: notch.height, r: EAR_RADIUS } : { w: PLATE.w, h: 0, r: 0 };
+}
 
 /**
- * From the notch's own size (black on black, so it reads as the notch growing), or from
- * above the screen edge. Every variant uses the same transform functions: Motion cannot
- * interpolate between different lists and collapses the island to scale 0 instead.
+ * The shape as a clip of the 360 × 104 island, so its corners stay round at any size (scaling
+ * squashed the 40 pt corners into ovals at ear size). One template for every shape: Motion only
+ * interpolates strings whose functions and numbers line up.
  */
-export function islandVariants(notch: Notch) {
-  const folded = {
-    opacity: 1,
-    transform: notch ? transform(0, notch.width / ISLAND_W, notch.height / ISLAND_H) : transform(-ISLAND_H, 1, 1),
-  };
+export function clip(b: Box): string {
+  const side = (ISLAND_W - b.w) / 2;
+  return `inset(0px ${side}px ${ISLAND_H - b.h}px ${side}px round 0px 0px ${b.r}px ${b.r}px)`;
+}
+
+/** How far the Drop moves from its island place to the left ear (or the plate), and its scale there. */
+export function restDropOffset(notch: Notch): { x: number; y: number; scale: number } {
+  const at = notch ? { x: ISLAND_W / 2 - notch.width / 2 - EAR_W / 2, y: notch.height / 2 } : { x: ISLAND_W / 2, y: PLATE.h / 2 };
+  return { x: at.x - DROP_AT.x, y: at.y - DROP_AT.y, scale: REST_DROP / 48 };
+}
+
+/** The island grows out of the ears or the notch: no overshoot (§5.4). */
+const grow = { type: "spring" as const, bounce: 0, duration: 0.5 };
+/** Folding back is an even ease-in-out tween, so it ends exactly when the window may be hidden. */
+const fold = (cancelled: boolean) => ({
+  type: "tween" as const,
+  duration: cancelled ? 0.35 : 0.6,
+  ease: [0.4, 0, 0.2, 1] as [number, number, number, number],
+});
+const quick = { duration: 0.15 };
+
+function motionFor(view: View, cancelled: boolean, reduced: boolean) {
+  if (reduced) return quick;
+  return view === "open" ? grow : fold(cancelled);
+}
+
+function boxFor(view: View, notch: Notch): Box {
+  return view === "open" ? ISLAND_BOX : view === "rest" ? restBox(notch) : foldedBox(notch);
+}
+
+export function shapeTarget(view: View, notch: Notch, cancelled: boolean, reduced: boolean) {
+  return { clipPath: clip(boxFor(view, notch)), transition: motionFor(view, cancelled, reduced) };
+}
+
+const place = (x: number, y: number, s: number) => `translate(${+x.toFixed(4)}px, ${+y.toFixed(4)}px) scale(${+s.toFixed(6)})`;
+
+/** The one Drop flies between its island place and the left ear, together with the shape. */
+export function dropTarget(view: View, notch: Notch, cancelled: boolean, reduced: boolean) {
+  const o = restDropOffset(notch);
   return {
-    hidden: folded,
-    // No `transitionEnd: none`: the fold would then start from "none", which Motion turns into
-    // scale 0 — the island vanished at once and regrew unseen under the notch.
-    visible: { opacity: 1, transform: transform(0, 1, 1), transition: grow },
-    // Folding back is an even ease-in-out tween, so it ends exactly when the window is hidden.
-    leave: (cancelled: boolean) => ({
-      ...folded,
-      transition: { type: "tween" as const, duration: cancelled ? 0.35 : 0.6, ease: [0.4, 0, 0.2, 1] as [number, number, number, number] },
-    }),
+    transform: view === "open" ? place(0, 0, 1) : place(o.x, o.y, o.scale),
+    opacity: view === "folded" ? 0 : 1,
+    transition: motionFor(view, cancelled, reduced),
   };
 }
 
 /**
- * The character and timer: they appear once the island has grown, and on the way out fade
- * over most of the fold. On a dark desktop the black island's motion is barely visible, so
- * this fade is what the eye reads as "closing" — a short fade looked like a sudden vanish.
+ * The timer and texts: they appear once the island has grown, and on the way out fade over most
+ * of the fold. On a dark desktop the black island's motion is barely visible, so this fade is
+ * what the eye reads as "closing" — a short fade looked like a sudden vanish.
  */
-export const contentVariants = {
-  hidden: { opacity: 0 },
-  visible: { opacity: 1, transition: { delay: 0.18, duration: 0.22 } },
-  leave: { opacity: 0, transition: { duration: 0.5, ease: [0.4, 0, 0.6, 1] as [number, number, number, number] } },
-};
+export function contentTarget(view: View) {
+  return view === "open"
+    ? { opacity: 1, transition: { delay: 0.18, duration: 0.22 } }
+    : { opacity: 0, transition: { duration: 0.5, ease: [0.4, 0, 0.6, 1] as [number, number, number, number] } };
+}

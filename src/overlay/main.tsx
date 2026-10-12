@@ -1,29 +1,19 @@
 import React, { useEffect, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { Island } from "./drop/Island";
+import { Stage } from "./Stage";
 import { useClock } from "./useClock";
-import { islandVariants, type Notch } from "./drop/islandMotion";
+import type { Notch } from "./drop/islandMotion";
 import { events, ipc } from "../lib/ipc";
 import { useApp } from "../lib/store";
 import type { OverlayState } from "../lib/types";
 import "./overlay.css";
 
-const fadeOnly = {
-  hidden: { opacity: 0 },
-  visible: { opacity: 1, transition: { duration: 0.15 } },
-  leave: { opacity: 0, transition: { duration: 0.15 } },
-};
-
 function Overlay() {
   const [state, setState] = useState<OverlayState>({ kind: "hidden" });
+  const [rest, setRest] = useState(false);
   const [level, setLevel] = useState(0);
   const [notch, setNotch] = useState<Notch>(null);
-  const reduced = useReducedMotion() ?? false;
-  // The last visible state stays on screen while the pill animates out.
-  const shown = useRef<OverlayState>(state);
   const visible = state.kind !== "hidden" && state.kind !== "cancelled";
-  if (visible) shown.current = state;
   const now = useClock(visible);
 
   useEffect(() => {
@@ -32,6 +22,9 @@ function Overlay() {
     const un1 = events.overlayState((s) => setState(s));
     // Speech RMS rarely exceeds ~0.3; scale so normal speech reaches ~1.
     const un2 = events.overlayLevel((l) => setLevel(Math.min(1, Math.sqrt(l) * 2.2)));
+    const un3 = events.overlayRest((r) => setRest(r.shown));
+    // Events sent before these listeners existed are lost: ask for the ears again.
+    Promise.all([un0, un3]).then(() => ipc.overlayReady().catch(() => {}));
     // Diagnostics: whether WebKit treats the page as visible when the pill is shown.
     const vis = () => ipc.uiLog("info", `overlay page ${document.visibilityState}`).catch(() => {});
     document.addEventListener("visibilitychange", vis);
@@ -40,6 +33,7 @@ function Overlay() {
       un0.then((f) => f());
       un1.then((f) => f());
       un2.then((f) => f());
+      un3.then((f) => f());
       document.removeEventListener("visibilitychange", vis);
     };
   }, []);
@@ -60,22 +54,8 @@ function Overlay() {
 
   return (
     <>
-      <AnimatePresence custom={state.kind === "cancelled"}>
-        {visible && (
-          <motion.div
-            key="island"
-            onClick={onClick}
-            variants={reduced ? fadeOnly : islandVariants(notch)}
-            initial="hidden"
-            animate="visible"
-            exit="leave"
-            style={{ transformOrigin: "top center" }}
-          >
-            <Island state={shown.current} level={level} now={now} />
-          </motion.div>
-        )}
-      </AnimatePresence>
-      {import.meta.env.DEV && <DevStates onState={setState} onLevel={setLevel} onNotch={setNotch} />}
+      <Stage state={state} rest={rest} notch={notch} level={level} now={now} onClick={onClick} />
+      {import.meta.env.DEV && <DevStates onState={setState} onLevel={setLevel} onNotch={setNotch} onRest={setRest} />}
     </>
   );
 }
@@ -85,10 +65,12 @@ function DevStates({
   onState,
   onLevel,
   onNotch,
+  onRest,
 }: {
   onState: (s: OverlayState) => void;
   onLevel: (l: number) => void;
   onNotch: (n: Notch) => void;
+  onRest: (f: (r: boolean) => boolean) => void;
 }) {
   const [on, setOn] = useState(false);
   useEffect(() => {
@@ -117,6 +99,7 @@ function DevStates({
       <button onClick={() => setOn((v) => !v)}>levels</button>
       <button onClick={() => onNotch({ width: 179, height: 32 })}>notch</button>
       <button onClick={() => onNotch(null)}>no notch</button>
+      <button onClick={() => onRest((r) => !r)}>rest</button>
     </div>
   );
 }
