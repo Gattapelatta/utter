@@ -62,6 +62,8 @@
   "general.paragraphs": "Абзацы в длинных текстах",
   "general.paragraphs_hint": "Для записей длиннее 30 с.",
   "general.autostart": "Запускать при входе в систему",
+  "general.notch_drop": "Капля в чёлке",
+  "general.notch_drop_hint": "Капля живёт у выреза камеры, пока Utter ждёт",
   "general.theme": "Тема",
   "general.theme_dark": "Тёмная",
   "general.theme_light": "Светлая",

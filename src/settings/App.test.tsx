@@ -21,6 +21,7 @@ const settings: Settings = {
   hotkeys: { dictation: "RightAlt", translate: "RightMeta" },
   history_enabled: true,
   onboarding_done: true,
+  notch_drop: true,
 };
 
 vi.mock("@tauri-apps/api/core", () => ({

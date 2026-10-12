@@ -62,6 +62,8 @@
   "general.paragraphs": "Paragraphs in long texts",
   "general.paragraphs_hint": "For recordings longer than 30 s.",
   "general.autostart": "Open at login",
+  "general.notch_drop": "Drop in the notch",
+  "general.notch_drop_hint": "The Drop lives by the camera notch while Utter waits",
   "general.theme": "Theme",
   "general.theme_dark": "Dark",
   "general.theme_light": "Light",

@@ -60,6 +60,9 @@ export function General() {
       <Row label={t("general.autostart")}>
         <Switch label={t("general.autostart")} checked={s.autostart} onChange={(v) => update({ autostart: v })} />
       </Row>
+      <Row label={t("general.notch_drop")} description={t("general.notch_drop_hint")}>
+        <Switch label={t("general.notch_drop")} checked={s.notch_drop} onChange={(v) => update({ notch_drop: v })} />
+      </Row>
       <Row label={t("general.theme")}>
         <Segmented<Theme>
           label={t("general.theme")}

@@ -36,6 +36,7 @@ const base: Settings = {
   hotkeys: { dictation: "RightAlt", translate: "RightMeta" },
   history_enabled: true,
   onboarding_done: true,
+  notch_drop: true,
 };
 const entry = (id: number, over: Partial<HistoryEntry> = {}): HistoryEntry => ({
   id,

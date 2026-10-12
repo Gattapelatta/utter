@@ -41,6 +41,7 @@ const base: Settings = {
   hotkeys: { dictation: "RightAlt", translate: "RightMeta" },
   history_enabled: true,
   onboarding_done: true,
+  notch_drop: true,
 };
 const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd).map((c) => c[1]);
 const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));

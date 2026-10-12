@@ -17,6 +17,7 @@ const settings = {
   hotkeys: { dictation: "RightAlt", translate: "RightMeta" },
   history_enabled: true,
   onboarding_done: true,
+  notch_drop: true,
 };
 
 const now = Date.now();

@@ -38,6 +38,7 @@ const base: Settings = {
   hotkeys: { dictation: "RightAlt", translate: "RightMeta" },
   history_enabled: true,
   onboarding_done: true,
+  notch_drop: true,
 };
 
 const saved = () => invoke.mock.calls.filter((c) => c[0] === "save_settings").map((c) => (c[1] as { settings: Settings }).settings);
@@ -55,6 +56,14 @@ describe("general, hotkeys and translation sections", () => {
     render(<General />);
     await act(async () => fireEvent.click(screen.getByText("Нажатие")));
     expect(last()?.record_mode).toBe("Toggle");
+  });
+
+  it("the Drop in the notch can be switched off", async () => {
+    render(<General />);
+    const sw = screen.getByRole("switch", { name: "Капля в чёлке" });
+    expect(sw.getAttribute("aria-checked")).toBe("true");
+    await act(async () => fireEvent.click(sw));
+    expect(last()?.notch_drop).toBe(false);
   });
 
   it("theme switch applies immediately", () => {

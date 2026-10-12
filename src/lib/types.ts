@@ -34,6 +34,7 @@ export interface Settings {
   hotkeys: { dictation: KeyId; translate: KeyId };
   history_enabled: boolean;
   onboarding_done: boolean;
+  notch_drop: boolean;
 }
 
 export type OverlayState =
