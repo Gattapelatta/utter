@@ -11,6 +11,8 @@ export interface ModelInput {
   reduced: boolean;
   /** Where to look, in eye units (see `gazeToward`); null = look around on its own. */
   gaze?: { x: number; y: number } | null;
+  /** Living in the notch's ear while idle (§4.2a): calmer looks, an occasional smile, no glow. */
+  rest?: boolean;
 }
 
 /** Everything the SVG needs for one frame. */
@@ -32,7 +34,25 @@ export interface Frame {
   /** Seconds since the success/error effect started, or Infinity. */
   good: number;
   bad: number;
+  /** Nothing moves until `wakeAt`: the caller may stop drawing frames until then. */
+  settled: boolean;
+  /** When the next scheduled move (look, blink, smile) starts, in the same clock as `now`. */
+  wakeAt: number;
 }
+
+/**
+ * Still enough to stop drawing: positions (eye units, ~0.7 px each at the notch size, 1.6 px in
+ * the settings logo) within 0.02 px-ish, 0..1 values (lids, smile, glow, colour) within 0.5 %.
+ * A critically damped spring spends most of its time creeping through the last invisible
+ * fraction; drawing it kept the character awake half the time.
+ */
+const STILL_POS = 0.02;
+const STILL = 0.005;
+const POSITIONS = new Set(["ex", "ey", "y", "rot"]);
+/** In the notch: a new look every 2–5 s, a smile every 30–60 s held for 1.6 s (§4.2a). */
+const REST_LOOK_MS = [2000, 3000];
+const REST_SMILE_MS = [30000, 30000];
+const REST_SMILE_HOLD_MS = 1600;
 
 /** Eye travel limits, in the same units as LOOK_IDLE. */
 const GAZE_X = 8;
@@ -64,6 +84,8 @@ export interface Model {
   nextLook: number;
   nextBlink: number;
   blinkUntil: number;
+  nextSmile: number;
+  smileUntil: number;
   last: number;
   random: () => number;
 }
@@ -90,6 +112,8 @@ export function createModel(now: number, random: () => number = Math.random): Mo
     nextLook: 0,
     nextBlink: now + 2600,
     blinkUntil: 0,
+    nextSmile: 0,
+    smileUntil: 0,
     last: now,
     random,
   };
@@ -156,7 +180,7 @@ export function stepModel(m: Model, input: ModelInput, now: number): Frame {
       const [x, y] = L[Math.floor(m.random() * L.length)];
       P.ex.t = x;
       P.ey.t = y;
-      m.nextLook = now + 1400 + m.random() * 1800;
+      m.nextLook = input.rest && mood === "idle" ? now + REST_LOOK_MS[0] + m.random() * REST_LOOK_MS[1] : now + 1400 + m.random() * 1800;
     }
     if (mood === "idle" && now > m.nextBlink) {
       P.blink.t = 1;
@@ -167,6 +191,22 @@ export function stepModel(m: Model, input: ModelInput, now: number): Frame {
   if (m.blinkUntil && now > m.blinkUntil) {
     P.blink.t = 0;
     m.blinkUntil = 0;
+  }
+  const resting = !!input.rest && mood === "idle";
+  if (mood === "idle") P.glow.t = resting ? 0 : 0.75;
+  if (resting && !still) {
+    if (!m.nextSmile) m.nextSmile = now + REST_SMILE_MS[0] + m.random() * REST_SMILE_MS[1];
+    if (!m.smileUntil && now > m.nextSmile) {
+      P.smile.t = 1;
+      m.smileUntil = now + REST_SMILE_HOLD_MS;
+      m.nextSmile = now + REST_SMILE_MS[0] + m.random() * REST_SMILE_MS[1];
+    }
+  } else {
+    m.nextSmile = 0;
+  }
+  if (m.smileUntil && (now > m.smileUntil || !resting)) {
+    if (mood === "idle") P.smile.t = 0;
+    m.smileUntil = 0;
   }
   for (const s of Object.values(P)) stepSpring(s, dt);
   m.flow += dt * (0.3 + P.env.x * 0.45);
@@ -186,5 +226,16 @@ export function stepModel(m: Model, input: ModelInput, now: number): Frame {
     flow: m.flow,
     good: mood === "happy" && !still ? since : Infinity,
     bad: mood === "sad" && !still ? since : Infinity,
+    settled: (mood === "idle" || mood === "thinking") && Object.entries(P).every(([k, s]) => {
+        const tol = POSITIONS.has(k) ? STILL_POS : STILL;
+        return Math.abs(s.x - s.t) < tol && Math.abs(s.v) < tol * 4;
+      }),
+    wakeAt: Math.min(
+      m.nextLook > now && !still ? m.nextLook : Infinity,
+      mood === "idle" ? m.nextBlink : Infinity,
+      m.blinkUntil || Infinity,
+      m.smileUntil || Infinity,
+      m.nextSmile || Infinity,
+    ),
   };
 }

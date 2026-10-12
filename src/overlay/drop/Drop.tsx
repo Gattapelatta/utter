@@ -23,6 +23,8 @@ interface Props {
    * Drop, a repaint every frame made WebKit miss frames and the flight stuttered.
    */
   frozen?: boolean;
+  /** Living in the notch's ear while idle (§4.2a). */
+  rest?: boolean;
 }
 
 const BODY = "M50 14 C74 14 87 36 87 58 C87 77 71 90 50 90 C29 90 13 77 13 58 C13 36 26 14 50 14Z";
@@ -41,16 +43,22 @@ const CYAN = [74, 216, 236];
  * The «Капля» character (docs/design/drop-prototype.html). The SVG is rendered once;
  * every frame mutates attributes directly so React does not re-render at 60–120 fps.
  */
-export function Drop({ mood, level, translate, reduced, size = 48, follow = false, look = null, frozen = false }: Props) {
+export function Drop({ mood, level, translate, reduced, size = 48, follow = false, look = null, frozen = false, rest = false }: Props) {
   const svg = useRef<SVGSVGElement>(null);
-  const input = useRef({ mood, level, translate, reduced, look, frozen });
-  input.current = { mood, level, translate, reduced, look, frozen };
+  const input = useRef({ mood, level, translate, reduced, look, frozen, rest });
+  input.current = { mood, level, translate, reduced, look, frozen, rest };
   const pointer = useRef<{ x: number; y: number } | null>(null);
+  /** Restarts a sleeping frame loop (set by the loop's effect). */
+  const wake = useRef(() => {});
+
+  // Anything that changes what the character does must not wait for the sleeping loop.
+  useEffect(() => wake.current(), [mood, translate, reduced, look?.x, look?.y, frozen, rest]);
 
   useEffect(() => {
     if (!follow) return;
     const move = (e: PointerEvent) => {
       pointer.current = { x: e.clientX, y: e.clientY };
+      wake.current();
     };
     const leave = () => {
       pointer.current = null;
@@ -82,6 +90,24 @@ export function Drop({ mood, level, translate, reduced, size = 48, follow = fals
 
     const model = createModel(performance.now());
     let raf = 0;
+    let sleep: ReturnType<typeof setTimeout> | 0 = 0;
+    wake.current = () => {
+      if (!sleep) return;
+      clearTimeout(sleep);
+      sleep = 0;
+      raf = requestAnimationFrame(frame);
+    };
+    /** After this frame: the next one, or — when nothing moves — a nap until the next move. */
+    const next = (f: { settled: boolean; wakeAt: number }, now: number) => {
+      if (f.settled && !pointer.current) {
+        sleep = setTimeout(() => {
+          sleep = 0;
+          raf = requestAnimationFrame(frame);
+        }, Math.max(16, Math.min(f.wakeAt - now, 60_000)));
+      } else {
+        raf = requestAnimationFrame(frame);
+      }
+    };
     // Smoothness probe (§8.4): frame intervals while listening, reported when it ends.
     let lastFrame = 0;
     let intervals: number[] = [];
@@ -107,7 +133,7 @@ export function Drop({ mood, level, translate, reduced, size = 48, follow = fals
       }
       const f = stepModel(model, { ...cur, gaze }, now);
       if (cur.frozen) {
-        raf = requestAnimationFrame(frame);
+        next(f, now);
         return;
       }
       body.setAttribute("transform", `rotate(${f.rot.toFixed(3)} 50 90) translate(0 ${f.y.toFixed(3)})`);
@@ -147,10 +173,14 @@ export function Drop({ mood, level, translate, reduced, size = 48, follow = fals
         dropEls[i].setAttribute("transform", `translate(0 ${d.dy.toFixed(2)})`);
         dropEls[i].setAttribute("opacity", d.opacity.toFixed(3));
       });
-      raf = requestAnimationFrame(frame);
+      next(f, now);
     };
     raf = requestAnimationFrame(frame);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      if (sleep) clearTimeout(sleep);
+      wake.current = () => {};
+    };
   }, []);
 
   return (

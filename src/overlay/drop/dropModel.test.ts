@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createModel, gazeToward, stepModel, type ModelInput } from "./dropModel";
+import { createModel, gazeToward, stepModel, type Frame, type ModelInput } from "./dropModel";
 
 const listening = (level: number): ModelInput => ({ mood: "listening", level, translate: false, reduced: false });
 
@@ -62,5 +62,106 @@ describe("drop model", () => {
     expect(gazeToward(0, -500).y).toBeCloseTo(-5.5, 5);
     // Right next to the character the eyes stay near the centre instead of rolling to the side.
     expect(Math.abs(gazeToward(12, 0).x)).toBeLessThan(1);
+  });
+});
+
+/** A small deterministic random source. */
+function seeded(seed = 7) {
+  let s = seed;
+  return () => {
+    s = (s * 1103515245 + 12345) % 2147483648;
+    return s / 2147483648;
+  };
+}
+
+const rest = (extra: Partial<ModelInput> = {}): ModelInput => ({ mood: "idle", level: 0, translate: false, reduced: false, rest: true, ...extra });
+
+/** Runs the model at 60 fps for `seconds`, calling `each` with every frame. */
+function run(m: ReturnType<typeof createModel>, input: ModelInput, from: number, seconds: number, each: (f: Frame, now: number) => void) {
+  for (let i = 1; i <= seconds * 60; i++) {
+    const now = from + (i * 1000) / 60;
+    each(stepModel(m, input, now), now);
+  }
+}
+
+describe("drop in the notch (rest)", () => {
+  it("looks around every 2 to 5 s", () => {
+    const m = createModel(0, seeded());
+    const changes: number[] = [];
+    let prev = "";
+    run(m, rest(), 0, 120, (_f, now) => {
+      const target = `${m.P.ex.t},${m.P.ey.t}`;
+      if (target !== prev) changes.push(now);
+      prev = target;
+    });
+    const gaps = changes.slice(2).map((t, i) => t - changes[i + 1]);
+    expect(gaps.length).toBeGreaterThan(10);
+    // A new look may repeat the old target, so a gap can span two looks; never shorter than 2 s.
+    for (const g of gaps) expect(g).toBeGreaterThanOrEqual(2000 - 20);
+    expect(Math.min(...gaps)).toBeLessThanOrEqual(5000 + 20);
+  });
+
+  it("smiles every 30 to 60 s for about 1.6 s", () => {
+    const m = createModel(0, seeded(3));
+    const starts: number[] = [];
+    let smiling = false;
+    let longest = 0;
+    let since = 0;
+    run(m, rest(), 0, 300, (f, now) => {
+      if (f.smile > 0.5 && !smiling) {
+        starts.push(now);
+        since = now;
+      }
+      if (f.smile <= 0.5 && smiling) longest = Math.max(longest, now - since);
+      smiling = f.smile > 0.5;
+    });
+    expect(starts.length).toBeGreaterThanOrEqual(5);
+    expect(starts.length).toBeLessThanOrEqual(10);
+    expect(longest).toBeLessThan(2200); // 1.6 s held + the spring's way up and down
+    for (let i = 1; i < starts.length; i++) expect(starts[i] - starts[i - 1]).toBeGreaterThanOrEqual(30000 - 50);
+  });
+
+  it("has no glow", () => {
+    const m = createModel(0, seeded());
+    let f!: Frame;
+    run(m, rest(), 0, 3, (x) => (f = x));
+    expect(f.glow).toBeLessThan(0.01);
+  });
+
+  it("settles and reports when it must wake next", () => {
+    const m = createModel(0, seeded());
+    let settledAt = -1;
+    let frame!: Frame;
+    run(m, rest(), 0, 60, (f, now) => {
+      if (settledAt < 0 && f.settled) {
+        settledAt = now;
+        frame = f;
+      }
+    });
+    expect(settledAt).toBeGreaterThan(0);
+    const pending = [m.nextLook, m.nextBlink, m.nextSmile].filter((t) => t > settledAt);
+    expect(frame.wakeAt).toBeGreaterThan(settledAt);
+    expect(frame.wakeAt).toBeLessThanOrEqual(Math.min(...pending) + 1);
+  });
+
+  it("never settles while listening", () => {
+    const m = createModel(0, seeded());
+    run(m, { mood: "listening", level: 0, translate: false, reduced: false }, 0, 10, (f) => expect(f.settled).toBe(false));
+  });
+
+  it("with reduced motion never smiles or looks around", () => {
+    const m = createModel(0, seeded());
+    run(m, rest({ reduced: true }), 0, 300, (f) => {
+      expect(f.smile).toBeLessThan(0.01);
+      expect(m.P.ex.t).toBe(0);
+      expect(m.P.ey.t).toBe(0);
+    });
+  });
+
+  it("outside the notch keeps its usual glow", () => {
+    const m = createModel(0, seeded());
+    let f!: Frame;
+    run(m, rest({ rest: false }), 0, 3, (x) => (f = x));
+    expect(f.glow).toBeGreaterThan(0.7);
   });
 });
