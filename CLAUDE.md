@@ -29,7 +29,10 @@ open src-tauri/target/release/bundle/macos/Utter.app
 - `scripts/dev-bundle.sh` signs with the local "Utter Dev" certificate so macOS permissions survive rebuilds — always use it for builds the user tests.
 - App log: `~/Library/Logs/app.utter.desktop/utter.log`. `timing:` lines show per-stage latency (`show→pill painted`, `start→first sample`, `audio→text`, `delivered … total_ms`, `overlay frames while listening`); `piece sent while speaking`, `overlay placed … notch=`, `job failed`, `http error` explain the rest.
 - Pill design reference (approved by the user): `docs/design/drop-prototype.html`; spec §4.2/§5.4 override it where they differ (size/position under the notch, arcs, clouds).
+- Settings window: one `FloatingDrop` for the whole window flies between `[data-drop-slot]` places (logo / onboarding / about) on the compositor (WAAPI + spring sampled to `linear()`); it holds still (`frozen`) while flying and takes off 60 ms after a page mounts — both measured fixes for skipped frames. Sections open with `reveal.ts` (title from a mask, rows cascade). The page zooms with the window (`settings_window::zoom_for`).
+- Motion smoothness is judged by video, not by rAF timestamps: record `screencapture -v -V 3 -R <window rect>` and track the Drop per frame (a `+0` step followed by a double step = a missed frame).
 - The built-in browser pane does not run `requestAnimationFrame` while hidden — it cannot judge animations; use Vitest (jsdom) for motion logic and the real app for feel.
+- Every rebuild makes macOS ask for Keychain access (self-signed cdhash; user decided to keep it until a Developer ID in Plan 3): warn the user, wait until `SecurityAgent` disappears, then `open Utter.app` again to show the settings window.
 - `#[ignore]` tests touch the real Keychain, microphone, or network with the user's API key — run them only with the user's consent.
 
 ## Architecture notes that are easy to get wrong
