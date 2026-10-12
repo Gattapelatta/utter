@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render } from "@testing-library/react";
 import { Drop } from "./Drop";
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async () => undefined) }));
+const invoke = vi.fn(async (_cmd: string, _args?: unknown) => undefined);
+vi.mock("@tauri-apps/api/core", () => ({ invoke: (cmd: string, args?: unknown) => invoke(cmd, args) }));
 
 /** Frame callbacks the page asked for; the test plays the display's refresh. */
 let queue: FrameRequestCallback[] = [];
@@ -65,5 +66,25 @@ describe("Drop frame loop", () => {
     raf.mockClear();
     act(() => view.rerender(<Drop mood="listening" level={0.5} translate={false} reduced={false} rest={false} size={26} />));
     expect(raf).toHaveBeenCalled();
+  });
+
+  it("while only the eyes move, touches only the eyes", () => {
+    render(<Drop mood="idle" level={0} translate={false} reduced={false} rest size={26} />);
+    play(8000); // the glow, colour and effects have long settled
+    const spy = vi.spyOn(Element.prototype, "setAttribute");
+    play(20_000);
+    const touched = new Set(spy.mock.calls.map((c, i) => {
+      const el = spy.mock.contexts[i] as Element;
+      return `${[...el.attributes].map((a) => a.name).find((n) => n.startsWith("data-")) ?? el.tagName}.${c[0]}`;
+    }));
+    expect([...touched].sort()).toEqual(["data-eye.d", "data-eyes.transform"]);
+  });
+
+  it("reports how many frames it drew per minute in the notch", () => {
+    render(<Drop mood="idle" level={0} translate={false} reduced={false} rest size={26} />);
+    invoke.mockClear();
+    play(70_000); // asleep between moves, so the report comes with the first frame after a minute
+    const logs = invoke.mock.calls.filter((c) => c[0] === "ui_log").map((c) => (c[1] as { message: string }).message);
+    expect(logs.some((m) => /^timing: drop frames while resting per_min=\d+$/.test(m))).toBe(true);
   });
 });

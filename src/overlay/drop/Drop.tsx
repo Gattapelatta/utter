@@ -88,6 +88,16 @@ export function Drop({ mood, level, translate, reduced, size = 48, follow = fals
     const cloudEls = q<SVGGElement>("[data-cloud]");
     const dropEls = q<SVGLineElement>("[data-drop]");
 
+    // Writes only what changed: at rest only the eyes move, and rewriting every ring, star and
+    // gradient stop each frame cost ~2 ms of WebKit work per frame (5 % CPU in the notch).
+    const written = new WeakMap<Element, Record<string, string>>();
+    const put = (el: Element, name: string, value: string) => {
+      let w = written.get(el);
+      if (!w) written.set(el, (w = {}));
+      if (w[name] === value) return;
+      w[name] = value;
+      el.setAttribute(name, value);
+    };
     const model = createModel(performance.now());
     let raf = 0;
     let sleep: ReturnType<typeof setTimeout> | 0 = 0;
@@ -112,6 +122,9 @@ export function Drop({ mood, level, translate, reduced, size = 48, follow = fals
     let lastFrame = 0;
     let intervals: number[] = [];
     let wasListening = false;
+    // Idle budget (§8.4): frames drawn per minute while resting in the notch.
+    let restFrames = 0;
+    let restSince = 0;
 
     const frame = (now: number) => {
       const cur = input.current;
@@ -125,6 +138,18 @@ export function Drop({ mood, level, translate, reduced, size = 48, follow = fals
       }
       wasListening = listening;
       lastFrame = now;
+      if (cur.rest) {
+        if (!restSince) restSince = now;
+        restFrames++;
+        if (now - restSince >= 60_000) {
+          ipc.uiLog("info", `timing: drop frames while resting per_min=${restFrames}`).catch(() => {});
+          restFrames = 0;
+          restSince = now;
+        }
+      } else {
+        restSince = 0;
+        restFrames = 0;
+      }
 
       let gaze = cur.look;
       if (!gaze && pointer.current) {
@@ -136,42 +161,44 @@ export function Drop({ mood, level, translate, reduced, size = 48, follow = fals
         next(f, now);
         return;
       }
-      body.setAttribute("transform", `rotate(${f.rot.toFixed(3)} 50 90) translate(0 ${f.y.toFixed(3)})`);
-      eyes.setAttribute("transform", `translate(${f.ex.toFixed(3)} ${f.ey.toFixed(3)})`);
-      eyeL.setAttribute("d", eyePath(EYES[0][0], EYES[0][1], f.lid, f.smile));
-      eyeR.setAttribute("d", eyePath(EYES[1][0], EYES[1][1], f.lid, f.smile));
+      put(body, "transform", `rotate(${f.rot.toFixed(3)} 50 90) translate(0 ${f.y.toFixed(3)})`);
+      put(eyes, "transform", `translate(${f.ex.toFixed(3)} ${f.ey.toFixed(3)})`);
+      put(eyeL, "d", eyePath(EYES[0][0], EYES[0][1], f.lid, f.smile));
+      put(eyeR, "d", eyePath(EYES[1][0], EYES[1][1], f.lid, f.smile));
 
       const rgb = `rgb(${WHITE.map((c, i) => Math.round(c + (CYAN[i] - c) * f.cool)).join(",")})`;
-      glow.setAttribute("opacity", f.glow.toFixed(3));
-      for (const s of stops) s.setAttribute("stop-color", rgb);
+      put(glow, "opacity", f.glow.toFixed(3));
+      for (const s of stops) put(s, "stop-color", rgb);
       rings.forEach((r, i) => {
         const g = ring((f.flow * 0.8 + i / RINGS) % 1, f.env, f.rings);
-        r.setAttribute("d", arcPath(g.r));
-        r.setAttribute("opacity", g.opacity.toFixed(3));
-        r.setAttribute("stroke", rgb);
+        const opacity = g.opacity.toFixed(3);
+        put(r, "opacity", opacity);
+        // An invisible ring keeps drifting outwards; redrawing its path would only cost frames.
+        if (opacity !== "0.000") put(r, "d", arcPath(g.r));
+        put(r, "stroke", rgb);
       });
 
       const good = f.good;
       satellite(good).forEach((d, i) => {
         const [on, off] = d.front ? [satFront[i], satBack[i]] : [satBack[i], satFront[i]];
-        on.setAttribute("cx", d.x.toFixed(2));
-        on.setAttribute("cy", d.y.toFixed(2));
-        on.setAttribute("r", d.r.toFixed(2));
-        on.setAttribute("opacity", (Number.isFinite(good) ? d.opacity : 0).toFixed(3));
-        off.setAttribute("opacity", "0");
+        put(on, "cx", d.x.toFixed(2));
+        put(on, "cy", d.y.toFixed(2));
+        put(on, "r", d.r.toFixed(2));
+        put(on, "opacity", (Number.isFinite(good) ? d.opacity : 0).toFixed(3));
+        put(off, "opacity", "0");
       });
       glints(good).forEach((g, i) => {
-        glintEls[i].setAttribute("transform", `translate(${g.x} ${g.y}) rotate(${g.rotate.toFixed(2)}) scale(${g.scale.toFixed(3)})`);
-        glintEls[i].setAttribute("opacity", (Number.isFinite(good) ? g.opacity : 0).toFixed(3));
+        put(glintEls[i], "transform", `translate(${g.x} ${g.y}) rotate(${g.rotate.toFixed(2)}) scale(${g.scale.toFixed(3)})`);
+        put(glintEls[i], "opacity", (Number.isFinite(good) ? g.opacity : 0).toFixed(3));
       });
       const bad = Number.isFinite(f.bad) ? f.bad : 99;
       clouds(bad).forEach((c, i) => {
-        cloudEls[i].setAttribute("transform", `translate(${c.x.toFixed(2)} ${c.y.toFixed(2)}) scale(${c.scale})`);
-        cloudEls[i].setAttribute("opacity", c.opacity.toFixed(3));
+        put(cloudEls[i], "transform", `translate(${c.x.toFixed(2)} ${c.y.toFixed(2)}) scale(${c.scale})`);
+        put(cloudEls[i], "opacity", c.opacity.toFixed(3));
       });
       drops(bad).forEach((d, i) => {
-        dropEls[i].setAttribute("transform", `translate(0 ${d.dy.toFixed(2)})`);
-        dropEls[i].setAttribute("opacity", d.opacity.toFixed(3));
+        put(dropEls[i], "transform", `translate(0 ${d.dy.toFixed(2)})`);
+        put(dropEls[i], "opacity", d.opacity.toFixed(3));
       });
       next(f, now);
     };
