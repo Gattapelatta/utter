@@ -74,17 +74,27 @@ fn init_core(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     app.manage(app::overlay::OverlayTiming::default());
     app::overlay::configure(app.handle());
+    let gate: Arc<std::sync::Mutex<app::overlay::HideGate>> = Default::default();
+    let presence: Arc<std::sync::Mutex<app::overlay_rest::Presence>> = Default::default();
+    let rest_wake = Arc::new(tokio::sync::Notify::new());
+    app.manage(app::overlay_rest::RestWake(rest_wake.clone()));
+    app.manage(app::overlay_rest::RestPresence(presence.clone()));
     let deps = Deps {
         secrets: secrets.clone(),
         audio: recorder,
         providers: providers.clone(),
         output: Arc::new(SystemOutput::default()),
-        overlay: Arc::new(app::overlay::TauriOverlay { app: app.handle().clone(), gate: Default::default() }),
+        overlay: Arc::new(app::overlay::TauriOverlay {
+            app: app.handle().clone(),
+            gate: gate.clone(),
+            presence: presence.clone(),
+        }),
         permissions: Arc::new(SystemPermissions),
         hotkeys: hotkeys.clone(),
         ui: Arc::new(app::services::TauriUi { app: app.handle().clone() }),
     };
     let orchestrator = Orchestrator::new(deps, shared.clone(), tx.clone());
+    app::overlay_rest::spawn_watcher(app.handle().clone(), shared.clone(), presence, gate, rest_wake);
     tauri::async_runtime::spawn(orchestrator.run(rx));
 
     let handle = app.handle().clone();
@@ -158,6 +168,7 @@ pub fn run() {
             app::commands::copy_text,
             app::commands::open_microphone_settings,
             app::commands::overlay_painted,
+            app::commands::overlay_ready,
             app::commands::overlay_frames,
             app::commands::ui_log,
         ])

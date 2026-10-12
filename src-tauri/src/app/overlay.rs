@@ -6,11 +6,12 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewWindow};
 
 use super::orchestrator::{OverlaySink, OverlayState};
+use super::overlay_rest::{hide_after_state, Presence};
 
-const LABEL: &str = "overlay";
+pub const LABEL: &str = "overlay";
 /// The window is ordered out only after the island has folded back into the notch
 /// (600 / 350 ms tween in `islandMotion.ts`, plus a margin for a late frame).
-const HIDE_AFTER: Duration = Duration::from_millis(800);
+pub const HIDE_AFTER: Duration = Duration::from_millis(800);
 const CANCEL_HIDE_AFTER: Duration = Duration::from_millis(500);
 
 /// The camera cut-out of a MacBook display, in points.
@@ -49,6 +50,7 @@ pub struct OverlayTiming(pub Mutex<Option<Instant>>);
 pub struct TauriOverlay {
     pub app: AppHandle,
     pub gate: Arc<Mutex<HideGate>>,
+    pub presence: Arc<Mutex<Presence>>,
 }
 
 impl OverlaySink for TauriOverlay {
@@ -57,6 +59,9 @@ impl OverlaySink for TauriOverlay {
             Ok(mut g) => g.on_state(),
             Err(_) => return,
         };
+        if let Ok(mut p) = self.presence.lock() {
+            p.busy = !matches!(s, OverlayState::Hidden | OverlayState::Cancelled);
+        }
         if matches!(s, OverlayState::Recording { warn: false, .. }) {
             if let Some(t) = self.app.try_state::<OverlayTiming>() {
                 if let Ok(mut t) = t.0.lock() {
@@ -74,10 +79,13 @@ impl OverlaySink for TauriOverlay {
         };
         let app = self.app.clone();
         let gate = self.gate.clone();
+        let presence = self.presence.clone();
         tauri::async_runtime::spawn(async move {
             tokio::time::sleep(delay).await;
             let current = gate.lock().map(|g| g.still_current(gen)).unwrap_or(false);
-            if current {
+            // With the ears shown the island folds into them and the window stays (§4.2a).
+            let gone = presence.lock().map(|p| hide_after_state(&p)).unwrap_or(true);
+            if current && gone {
                 let a = app.clone();
                 let _ = app.run_on_main_thread(move || {
                     if let Some(w) = a.get_webview_window(LABEL) {
@@ -105,6 +113,24 @@ fn apply(app: &AppHandle, s: &OverlayState) {
             let _ = w.set_ignore_cursor_events(!clickable);
             order_front(&w);
         }
+    }
+}
+
+/// Shows the ears; `replace` first moves the window to the display under the mouse.
+/// Must run on the main thread.
+pub fn show_rest(app: &AppHandle, replace: bool) {
+    let Some(w) = app.get_webview_window(LABEL) else { return };
+    if replace {
+        place(app, &w);
+    }
+    let _ = app.emit_to(LABEL, "overlay://rest", serde_json::json!({ "shown": true }));
+    order_front(&w);
+}
+
+/// Orders the window out. Must run on the main thread.
+pub fn hide_window(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window(LABEL) {
+        order_out(&w);
     }
 }
 

@@ -72,6 +72,9 @@ pub fn update_settings(app: &AppHandle, state: &AppState, next: Settings) -> Res
         let _ = w.set_theme(settings_window::window_theme(next.theme));
     }
     super::tray::refresh(app, &next);
+    if let Some(w) = app.try_state::<super::overlay_rest::RestWake>() {
+        w.0.notify_one();
+    }
     let _ = app.emit("ui://settings", &next);
     Ok(())
 }
@@ -281,6 +284,15 @@ pub fn overlay_action(app: AppHandle, action: String) {
 }
 
 /// The pill's first painted frame of a recording (budget §8.4: < 50 ms).
+/// The overlay page has loaded its listeners; earlier rest events were lost.
+#[tauri::command]
+pub fn overlay_ready(
+    presence: State<super::overlay_rest::RestPresence>,
+    wake: State<super::overlay_rest::RestWake>,
+) {
+    super::overlay_rest::page_ready(&presence.0, &wake.0);
+}
+
 #[tauri::command]
 pub fn overlay_painted(timing: State<super::overlay::OverlayTiming>) {
     if let Some(t) = timing.0.lock().ok().and_then(|mut t| t.take()) {
