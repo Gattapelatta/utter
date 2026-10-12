@@ -1,8 +1,10 @@
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, useIsPresent, usePresenceData } from "motion/react";
 import { useT } from "../../i18n";
 import type { OverlayState } from "../../lib/types";
 import { Drop, type Mood } from "./Drop";
+import { RestDrop } from "./RestDrop";
+import type { Gaze } from "./restMotion";
 import { contentTarget, dropTarget, shapeTarget, type Notch, type View } from "./islandMotion";
 
 /** After this long without an answer the network is the likely culprit. */
@@ -87,13 +89,36 @@ export function Island({ state, level, now, view = "open", notch = null, cancell
     drop: dropTarget(v, folded.notch, folded.fast, folded.reduced),
   });
   const open = view === "open";
+  // In the ear the full Drop hands over to the compositor-driven one once it has come to rest,
+  // and takes the eyes back from it when a recording starts (§4.2a, idle budget §8.4).
+  const gaze = useRef<Gaze>({ x: 0, y: 0 });
+  const [handed, setHanded] = useState(false);
+  useEffect(() => {
+    if (view !== "rest") setHanded(false);
+  }, [view]);
+  const inEar = view === "rest" && handed;
 
   return (
     <div data-island className="island" data-clickable={state.kind === "error" && state.action ? "" : undefined}>
       <motion.div data-shape className="island-shape" initial={at("folded").shape} animate={at(view).shape} exit={at("folded").shape} />
       <div className="island-row">
         <motion.div data-drop-place initial={at("folded").drop} animate={at(view).drop} exit={at("folded").drop}>
-          <Drop mood={open ? moodFor(state) : "idle"} rest={view === "rest"} level={level} translate={translate.current} reduced={reduced} />
+          {inEar ? (
+            <RestDrop start={gaze.current} reduced={reduced} gazeRef={gaze} />
+          ) : (
+            <Drop
+              mood={open ? moodFor(state) : "idle"}
+              rest={view === "rest"}
+              level={level}
+              translate={translate.current}
+              reduced={reduced}
+              startGaze={gaze.current}
+              onSettle={(g) => {
+                gaze.current = g;
+                if (view === "rest") setHanded(true);
+              }}
+            />
+          )}
         </motion.div>
         {/* Always present and fixed-width: the character keeps its place between states. */}
         <motion.span data-slot className="island-slot" initial={{ opacity: 0 }} animate={contentTarget(open ? "open" : "rest")} exit={contentTarget("folded")}>

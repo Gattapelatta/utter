@@ -76,4 +76,17 @@ describe("Island", () => {
     expect(tr).toMatch(/rotate\(0(\.0+)? /);
     vi.unstubAllGlobals();
   });
+
+  it("hands the ear over to the compositor Drop once it has settled there, and takes it back for a recording", async () => {
+    Element.prototype.animate = (() => ({ cancel() {}, onfinish: null })) as unknown as Element["animate"];
+    const notch = { width: 185, height: 32 };
+    const { container, rerender } = render(<Island state={rec()} level={0} now={0} view="rest" notch={notch} />);
+    expect(container.querySelector("[data-body]")).not.toBeNull();
+    await act(() => new Promise((r) => setTimeout(r, 4500)));
+    expect(container.querySelector("[data-rest-drop]")).not.toBeNull();
+    expect(container.querySelector("[data-body]")).toBeNull();
+    rerender(<Island state={rec()} level={0} now={0} view="open" notch={notch} />);
+    expect(container.querySelector("[data-body]")).not.toBeNull();
+    expect(container.querySelector("[data-rest-drop]")).toBeNull();
+  }, 8000);
 });

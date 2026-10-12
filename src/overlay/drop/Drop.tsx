@@ -25,12 +25,16 @@ interface Props {
   frozen?: boolean;
   /** Living in the notch's ear while idle (§4.2a). */
   rest?: boolean;
+  /** Where the eyes look at first (handed over from the Drop in the notch). */
+  startGaze?: { x: number; y: number };
+  /** Called whenever the character comes to rest, with where it is looking. */
+  onSettle?: (gaze: { x: number; y: number }) => void;
 }
 
-const BODY = "M50 14 C74 14 87 36 87 58 C87 77 71 90 50 90 C29 90 13 77 13 58 C13 36 26 14 50 14Z";
+export const BODY = "M50 14 C74 14 87 36 87 58 C87 77 71 90 50 90 C29 90 13 77 13 58 C13 36 26 14 50 14Z";
 const STAR = "M0 -1 L.22 -.22 L1 0 L.22 .22 L0 1 L-.22 .22 L-1 0 L-.22 -.22Z";
 const CLOUD = "M-12 4 C-16 4 -16 -3 -11 -3 C-11 -9 -3 -10 -1 -5 C1 -10 10 -9 10 -3 C15 -3 15 4 11 4Z";
-const EYES: [number, number][] = [
+export const EYES: [number, number][] = [
   [38, 55],
   [62, 55],
 ];
@@ -43,10 +47,11 @@ const CYAN = [74, 216, 236];
  * The «Капля» character (docs/design/drop-prototype.html). The SVG is rendered once;
  * every frame mutates attributes directly so React does not re-render at 60–120 fps.
  */
-export function Drop({ mood, level, translate, reduced, size = 48, follow = false, look = null, frozen = false, rest = false }: Props) {
+export function Drop({ mood, level, translate, reduced, size = 48, follow = false, look = null, frozen = false, rest = false, startGaze, onSettle }: Props) {
   const svg = useRef<SVGSVGElement>(null);
-  const input = useRef({ mood, level, translate, reduced, look, frozen, rest });
-  input.current = { mood, level, translate, reduced, look, frozen, rest };
+  const input = useRef({ mood, level, translate, reduced, look, frozen, rest, onSettle });
+  input.current = { mood, level, translate, reduced, look, frozen, rest, onSettle };
+  const start = useRef(startGaze);
   const pointer = useRef<{ x: number; y: number } | null>(null);
   /** Restarts a sleeping frame loop (set by the loop's effect). */
   const wake = useRef(() => {});
@@ -98,7 +103,7 @@ export function Drop({ mood, level, translate, reduced, size = 48, follow = fals
       w[name] = value;
       el.setAttribute(name, value);
     };
-    const model = createModel(performance.now());
+    const model = createModel(performance.now(), Math.random, start.current);
     let raf = 0;
     let sleep: ReturnType<typeof setTimeout> | 0 = 0;
     wake.current = () => {
@@ -108,8 +113,9 @@ export function Drop({ mood, level, translate, reduced, size = 48, follow = fals
       raf = requestAnimationFrame(frame);
     };
     /** After this frame: the next one, or — when nothing moves — a nap until the next move. */
-    const next = (f: { settled: boolean; wakeAt: number }, now: number) => {
+    const next = (f: { settled: boolean; wakeAt: number; ex: number; ey: number }, now: number) => {
       if (f.settled && !pointer.current) {
+        input.current.onSettle?.({ x: f.ex, y: f.ey });
         sleep = setTimeout(() => {
           sleep = 0;
           raf = requestAnimationFrame(frame);

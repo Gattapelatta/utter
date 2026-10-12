@@ -87,4 +87,20 @@ describe("Drop frame loop", () => {
     const logs = invoke.mock.calls.filter((c) => c[0] === "ui_log").map((c) => (c[1] as { message: string }).message);
     expect(logs.some((m) => /^timing: drop frames while resting per_min=\d+$/.test(m))).toBe(true);
   });
+
+  it("starts looking where it is told (handed over from the notch)", () => {
+    const { container } = render(<Drop mood="idle" level={0} translate={false} reduced startGaze={{ x: 8, y: 2 }} size={26} />);
+    play(100);
+    expect(container.querySelector("[data-eyes]")?.getAttribute("transform")).toBe("translate(8.000 2.000)");
+  });
+
+  it("tells when it has settled, and where it looks", () => {
+    const onSettle = vi.fn();
+    render(<Drop mood="idle" level={0} translate={false} reduced startGaze={{ x: -6, y: -5 }} onSettle={onSettle} size={26} />);
+    play(4000);
+    expect(onSettle).toHaveBeenCalled();
+    const g = onSettle.mock.calls[0][0] as { x: number; y: number };
+    expect(g.x).toBeCloseTo(-6, 1);
+    expect(g.y).toBeCloseTo(-5, 1);
+  });
 });

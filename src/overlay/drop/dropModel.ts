@@ -70,7 +70,7 @@ export function gazeToward(dx: number, dy: number): { x: number; y: number } {
   return { x: (dx / dist) * GAZE_X * k, y: Math.max(-GAZE_UP, Math.min(GAZE_DOWN, y)) };
 }
 
-const LOOK_IDLE: [number, number][] = [[0, 0], [-8, 0], [8, 0], [-6, -5], [6, -5], [0, -5.5], [-8, 2], [8, 2]];
+export const LOOK_IDLE: [number, number][] = [[0, 0], [-8, 0], [8, 0], [-6, -5], [6, -5], [0, -5.5], [-8, 2], [8, 2]];
 const LOOK_THINK: [number, number][] = [[-6, -5.5], [6, -5.5], [0, -6], [-8, -2], [8, -2]];
 
 type Springs = Record<"close" | "blink" | "smile" | "y" | "rot" | "ex" | "ey" | "env" | "fx" | "glow" | "cool", Spring>;
@@ -90,7 +90,8 @@ export interface Model {
   random: () => number;
 }
 
-export function createModel(now: number, random: () => number = Math.random): Model {
+/** `gaze` starts the eyes looking there (handed over from the Drop in the notch). */
+export function createModel(now: number, random: () => number = Math.random, gaze?: { x: number; y: number }): Model {
   return {
     P: {
       close: spring(0, 7),
@@ -98,8 +99,8 @@ export function createModel(now: number, random: () => number = Math.random): Mo
       smile: spring(0, 7),
       y: spring(0, 6),
       rot: spring(0, 6),
-      ex: spring(0, 5.5),
-      ey: spring(0, 5.5),
+      ex: spring(gaze?.x ?? 0, 5.5),
+      ey: spring(gaze?.y ?? 0, 5.5),
       env: spring(0, 4.5),
       fx: spring(0, 4),
       glow: spring(0.75, 4.5),
@@ -121,11 +122,14 @@ export function createModel(now: number, random: () => number = Math.random): Mo
 
 function enter(m: Model, mood: Mood, now: number) {
   const P = m.P;
+  // The first mood keeps the starting gaze; later changes look straight ahead first.
+  if (m.mood !== null) {
+    P.ex.t = 0;
+    P.ey.t = 0;
+  }
   m.mood = mood;
   m.moodAt = now;
   P.smile.t = 0;
-  P.ex.t = 0;
-  P.ey.t = 0;
   P.y.t = 0;
   P.glow.t = 0.75;
   if (mood === "listening") P.close.t = 1;
