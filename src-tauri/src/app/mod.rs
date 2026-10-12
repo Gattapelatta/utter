@@ -2,6 +2,7 @@ pub mod commands;
 pub mod diagnostics;
 pub mod orchestrator;
 pub mod overlay;
+pub mod overlay_rest;
 pub mod services;
 pub mod settings_window;
 pub mod tray;
