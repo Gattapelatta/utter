@@ -53,8 +53,10 @@ describe("RestDrop", () => {
       expect(at[i] - at[i - 1]).toBeLessThanOrEqual(5000 + 100);
     }
     const l = looks();
-    expect(l[0].keyframes[0]).toEqual({ transform: `translate(${3 * (48 / 74)}px, ${-1 * (48 / 74)}px)` });
-    for (let i = 1; i < l.length; i++) expect(l[i].keyframes[0]).toEqual(l[i - 1].keyframes[1]);
+    const first = (c: Call) => (c.keyframes[0] as { transform: string }).transform;
+    const last = (c: Call) => (c.keyframes[c.keyframes.length - 1] as { transform: string }).transform;
+    expect(first(l[0])).toBe(`translate(${3 * (48 / 74)}px, ${-1 * (48 / 74)}px)`);
+    for (let i = 1; i < l.length; i++) expect(first(l[i])).toBe(last(l[i - 1]));
   });
 
   it("starts with the eyes where the full Drop left them", () => {
@@ -81,7 +83,8 @@ describe("RestDrop", () => {
     const gaze = { current: { x: 0, y: 0 } };
     render(<RestDrop start={{ x: 0, y: 0 }} reduced={false} gazeRef={gaze} />);
     vi.advanceTimersByTime(6000);
-    const last = looks()[looks().length - 1].keyframes[1] as { transform: string };
+    const l = looks()[looks().length - 1].keyframes;
+    const last = l[l.length - 1] as { transform: string };
     expect(last.transform).toBe(`translate(${gaze.current.x * (48 / 74)}px, ${gaze.current.y * (48 / 74)}px)`);
   });
 });

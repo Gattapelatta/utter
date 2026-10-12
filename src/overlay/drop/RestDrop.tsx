@@ -52,9 +52,9 @@ export function RestDrop({ start, reduced, gazeRef }: Props) {
     const look = () => {
       const [x, y] = LOOK_IDLE[Math.floor(Math.random() * LOOK_IDLE.length)];
       const to = { x, y };
-      const { keyframes, easing, duration } = gazeMove(at, to);
+      const { keyframes, duration } = gazeMove(at, to);
       g.style.transform = gazeTransform(to);
-      play(g, keyframes, { duration, easing });
+      play(g, keyframes, { duration });
       at = to;
       if (gazeRef) gazeRef.current = to;
       later(2000 + Math.random() * 3000, look);

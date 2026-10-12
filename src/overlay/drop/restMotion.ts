@@ -1,4 +1,3 @@
-import { springEasing } from "../../settings/onboarding/flight";
 import { spring, stepSpring } from "./springs";
 
 /** One eye unit of the character, in px of the 48 px wide Drop (viewBox 74 units wide). */
@@ -14,12 +13,38 @@ const SMILE_HOLD_MS = 1600;
 
 export type Gaze = { x: number; y: number };
 
+const offsets = (n: number) => Array.from({ length: n }, (_, i) => (i === n - 1 ? 1 : +(i / (n - 1)).toFixed(5)));
+
 export const gazeTransform = (g: Gaze) => `translate(${g.x * UNIT_PX}px, ${g.y * UNIT_PX}px)`;
 
-/** A look from one place to another, as one compositor animation on the spring's curve. */
-export function gazeMove(from: Gaze, to: Gaze): { keyframes: Keyframe[]; easing: string; duration: number } {
-  const { easing, duration } = springEasing({ response: (2 * Math.PI) / GAZE_OMEGA, damping: 1 });
-  return { keyframes: [{ transform: gazeTransform(from) }, { transform: gazeTransform(to) }], easing, duration };
+/**
+ * A look from one place to another, on the gaze spring, as keyframes the compositor plays.
+ * Not as a `linear(…)` easing: WebKit resolves that on the main thread every frame (measured
+ * 2 % CPU against 0.01 % for the same spring as keyframes).
+ */
+export function gazeMove(from: Gaze, to: Gaze): { keyframes: { offset: number; transform: string }[]; duration: number } {
+  const s = spring(0, GAZE_OMEGA);
+  s.t = 1;
+  const dt = 1 / 240;
+  const values = [0];
+  let t = 0;
+  let next = 1000 / 60;
+  while (t < 5000) {
+    stepSpring(s, dt);
+    t += dt * 1000;
+    const resting = Math.abs(1 - s.x) < 0.001 && Math.abs(s.v) < 0.01;
+    if (t >= next || resting) {
+      values.push(resting ? 1 : s.x);
+      next += 1000 / 60;
+    }
+    if (resting) break;
+  }
+  const at = offsets(values.length);
+  const mix = (p: number): Gaze => ({ x: from.x + (to.x - from.x) * p, y: from.y + (to.y - from.y) * p });
+  return {
+    keyframes: values.map((p, i) => ({ offset: at[i], transform: gazeTransform(i === values.length - 1 ? to : i === 0 ? from : mix(p)) })),
+    duration: Math.round(t),
+  };
 }
 
 /** Samples a 0→1→0 spring move: up for `holdMs`, then back, until it rests. */
@@ -43,8 +68,6 @@ function pulse(omega: number, holdMs: number, sampleMs: number): { values: numbe
   }
   return { values, duration: Math.round(t) };
 }
-
-const offsets = (n: number) => Array.from({ length: n }, (_, i) => (i === n - 1 ? 1 : +(i / (n - 1)).toFixed(5)));
 
 /** A blink: the open eyes squeeze vertically about their centre and open again. */
 export function blinkFrames(): { keyframes: { offset: number; transform: string }[]; duration: number } {

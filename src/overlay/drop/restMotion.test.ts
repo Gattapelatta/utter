@@ -4,10 +4,18 @@ import { blinkFrames, gazeMove, smileFrames, UNIT_PX } from "./restMotion";
 const num = (t: string, fn: string) => Number(t.match(new RegExp(`${fn}\\(([-\\d.e]+)`))![1]);
 
 describe("compositor motion of the Drop in the notch", () => {
-  it("moves the eyes with the gaze spring (ω 5.5), in pixels of the 48 px Drop", () => {
+  it("moves the eyes with the gaze spring (ω 5.5), in pixels of the 48 px Drop, as compositor keyframes", () => {
     const m = gazeMove({ x: 0, y: 0 }, { x: -8, y: 2 });
-    expect(m.keyframes).toEqual([{ transform: "translate(0px, 0px)" }, { transform: `translate(${-8 * UNIT_PX}px, ${2 * UNIT_PX}px)` }]);
-    expect(m.easing.startsWith("linear(0, ")).toBe(true);
+    expect(m.keyframes[0]).toEqual({ offset: 0, transform: "translate(0px, 0px)" });
+    expect(m.keyframes[m.keyframes.length - 1]).toEqual({ offset: 1, transform: `translate(${-8 * UNIT_PX}px, ${2 * UNIT_PX}px)` });
+    // WebKit cannot hand a linear(…) easing to the compositor and resolves it on the main
+    // thread every frame (measured 2 % CPU vs 0.01 % for the same spring as keyframes).
+    expect("easing" in m).toBe(false);
+    expect(m.keyframes.length).toBeGreaterThan(30);
+    const xs = m.keyframes.map((k) => Number(k.transform.match(/translate\(([-\d.e]+)px/)![1]));
+    for (let i = 1; i < xs.length; i++) expect(xs[i]).toBeLessThanOrEqual(xs[i - 1] + 1e-9); // no overshoot
+    // Halfway through the time the spring is already most of the way there.
+    expect(xs[Math.floor(xs.length / 2)]).toBeLessThan(-8 * UNIT_PX * 0.8);
     // A critically damped ω 5.5 spring settles to 0.1 % in about 1.7 s.
     expect(m.duration).toBeGreaterThan(1400);
     expect(m.duration).toBeLessThan(2000);
