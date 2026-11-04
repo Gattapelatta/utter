@@ -10,21 +10,27 @@ pub const GEMINI_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1b
 pub const GEMINI_STT_MODEL: &str = "gemini-3.5-transcribe";
 /// Flash-Lite: ~1.3 s audio→text in one request and 15 RPM on the free tier (Flash: 5 RPM).
 pub const GEMINI_TEXT_MODEL: &str = "gemini-3.5-flash-lite";
-/// Backup when Flash-Lite is slow: 2–3 s audio→text, measured 2026-11-04.
-/// Free tier: only 20 requests per day (429 text, 2026-11-05).
+/// Second backup, used last: 2–3 s audio→text (2026-11-04), but only 20 requests per day
+/// on the free tier.
 pub const GEMINI_BACKUP_MODEL: &str = "gemini-3.6-flash";
-/// Translation of live pieces. Measured 2026-11-05, 5 short phrases each: Flash-Lite median
-/// 646 ms (5/5 ok); 3.6 Flash 1.0–1.4 s, then 429 (20 requests/day); 3.7 and 3.8 Flash reject
-/// minimal thinking, 3.8 Flash allows 5 requests/minute.
-pub const GEMINI_TRANSLATE_MODEL: &str = GEMINI_TEXT_MODEL;
+/// First backup: a separate Lite model with its own 500 requests/day; audio→text 2.1 s,
+/// text 2.1 s (2026-11-05).
+pub const GEMINI_BACKUP_LITE_MODEL: &str = "gemini-3.1-flash-lite";
 
 /// Backup models in priority order (spec 2026-11-04 §4.5). On 2026-11-04 Flash-Lite took
-/// ~20 s while gemini-3.5-transcribe answered in 1.1 s and gemini-3.6-flash in 2–3 s.
+/// ~20 s. Free-tier limits (AI Studio, 2026-11-05): both Lite models 15 RPM / 500 RPD,
+/// 3.6 Flash 5 RPM / 20 RPD, 3.5 Transcribe 3 RPM / 25 RPD — generous routes go first and
+/// the transcribe model is not a route.
 pub const GEMINI_ROUTES: [Route; 3] = [
     Route::Direct { model: GEMINI_TEXT_MODEL },
-    Route::TwoStep { stt: GEMINI_STT_MODEL, text: GEMINI_BACKUP_MODEL },
+    Route::Direct { model: GEMINI_BACKUP_LITE_MODEL },
     Route::Direct { model: GEMINI_BACKUP_MODEL },
 ];
+
+/// Translation of live pieces. Measured 2026-11-05, 5 short phrases each: Flash-Lite median
+/// 646 ms (5/5 ok, 500 requests/day); 3.6 Flash 1.0–1.4 s, then 429 (20 requests/day); 3.7 and 3.8 Flash reject
+/// minimal thinking, 3.8 Flash allows 5 requests/minute.
+pub const GEMINI_TRANSLATE_MODEL: &str = GEMINI_TEXT_MODEL;
 
 /// Live API (WebSocket): the draft while speaking (spec 2026-11-04 §5.1).
 pub const GEMINI_LIVE_URL: &str =
@@ -122,10 +128,24 @@ mod tests {
 
     #[test]
     fn route_config_sets_route_models() {
-        let two = route_config(ProviderKind::Gemini, "k".into(), GEMINI_ROUTES[1]);
-        assert_eq!((two.stt_model.as_str(), two.text_model.as_str()), (GEMINI_STT_MODEL, GEMINI_BACKUP_MODEL));
+        let two = route_config(ProviderKind::Gemini, "k".into(), Route::TwoStep { stt: "s", text: "t" });
+        assert_eq!((two.stt_model.as_str(), two.text_model.as_str()), ("s", "t"));
         let direct = route_config(ProviderKind::Gemini, "k".into(), GEMINI_ROUTES[2]);
         assert_eq!(direct.text_model, GEMINI_BACKUP_MODEL);
         assert_eq!(direct.api_key, "k");
+    }
+
+    #[test]
+    fn generous_routes_come_first() {
+        // Free tier (AI Studio, 2026-11-05): both Lite models 500 requests/day, 3.6 Flash 20,
+        // 3.5 Transcribe 25 — so the transcribe model is not a backup route.
+        assert_eq!(
+            GEMINI_ROUTES,
+            [
+                Route::Direct { model: "gemini-3.5-flash-lite" },
+                Route::Direct { model: "gemini-3.1-flash-lite" },
+                Route::Direct { model: "gemini-3.6-flash" },
+            ]
+        );
     }
 }

@@ -1439,15 +1439,14 @@ mod tests {
         r.shared.settings.lock().unwrap().cleanup = true;
         let f = RouteFactory::new(vec![
             (Duration::from_secs(20), "Медленно."),
-            (Duration::from_millis(500), "Быстро."),
+            (Duration::from_millis(100), "Быстро."),
             (Duration::ZERO, "Третий."),
         ]);
         r.orch.set_provider_factory(f.clone());
         let t = tokio::time::Instant::now();
         r.record(Mode::Dictation, speech(1.0), Instant::now(), 1).await;
         r.settle(1).await;
-        // Route 1 is two-step (transcript, then text model); the fake's text model says "Привет.".
-        assert_eq!(*r.out.0.lock().unwrap(), vec!["Привет.".to_string()]);
+        assert_eq!(*r.out.0.lock().unwrap(), vec!["Быстро.".to_string()]);
         assert!(t.elapsed() < Duration::from_secs(4), "{:?}", t.elapsed());
         assert_eq!(f.calls()[0], 1);
         assert_eq!(f.routes[2].direct_calls.load(Ordering::SeqCst), 0);
