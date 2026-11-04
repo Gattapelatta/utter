@@ -291,3 +291,38 @@ async fn live_phrase_latency() {
         println!("  final: {}", segments.join(" "));
     }
 }
+
+#[tokio::test]
+#[ignore = "live: translation latency of candidate text models with the user's key"]
+async fn translate_models_latency() {
+    use crate::providers::{defaults, GeminiClient, TextModel};
+    let key = KeychainStore::new().get(ProviderKind::Gemini).expect("Gemini key in Keychain");
+    let opts = PipelineOptions { language: Some("ru".into()), cleanup: true, paragraphs: false, style: TranslateStyle::Business };
+    let system = system_prompt(Mode::Translate, &opts, 5.0).unwrap();
+    let phrases = [
+        "Привет, слушай, я посмотрела отчёт по продажам за сентябрь.",
+        "В целом всё хорошо, но давай завтра созвонимся.",
+        "Обсудим бюджет на рекламу и сроки запуска.",
+        "Пришли, пожалуйста, презентацию до пятницы.",
+        "Я думаю, что нам нужно нанять ещё одного дизайнера.",
+    ];
+    for model in ["gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash"] {
+        let mut cfg = defaults::config_for(ProviderKind::Gemini, key.clone());
+        cfg.text_model = model.into();
+        let client = GeminiClient::new(cfg);
+        client.prewarm().await;
+        let mut times = Vec::new();
+        for p in phrases {
+            let t = Instant::now();
+            match client.complete(&system, &user_message(p)).await {
+                Ok(c) => {
+                    times.push(t.elapsed().as_millis());
+                    println!("  {model} {} ms: {}", t.elapsed().as_millis(), c.text.trim());
+                }
+                Err(e) => println!("  {model} error after {} ms: {e:?}", t.elapsed().as_millis()),
+            }
+        }
+        times.sort();
+        println!("{model}: median {:?} ms of {} ok", times.get(times.len() / 2), times.len());
+    }
+}
