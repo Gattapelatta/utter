@@ -180,7 +180,7 @@
 - Consumes: `LiveHandle`, `LiveOutcome`, `spawn` (Task 6), `DraftField` (Task 5), `GeminiLive` (Task 2).
 - Produces:
   - `Deps` + `pub live: Arc<dyn LiveConnector>`, `pub draft: Arc<dyn DraftField>`; `Input::LiveDone(Box<LiveOutcome>)`.
-  - `Deliverer` + `fn copy_only(&self, text: &str) -> DeliveryOutcome` (кладёт в буфер обмена, возвращает `DeliveryOutcome::Copied`; реализация в `app/services.rs` рядом с `deliver`).
+  - `Deliverer` + `fn copy_only(&self, text: &str) -> DeliveryOutcome` (кладёт в буфер обмена, возвращает `DeliveryOutcome::CopiedOnly(CopyReason::FocusMoved)` — новый вариант `output::CopyReason`; реализация в `app/services.rs` рядом с `deliver`).
   - Выбор пути в `start`: «на лету», если провайдер — Gemini, очередь пуста (`in_flight == 0`) и ОС — macOS; иначе — как сейчас. При «на лету» нарезка `check_pieces` не работает (весь звук и так уходит потоком).
   - `tick`: новые отсчёты `audio.peek(offset)` → `LiveHandle::audio`.
   - `submit`: запись останавливается как сейчас (звук сохраняется для запасного пути и истории), `release()`; `LiveDone`: `Committed` → история/счётчики/«Готово» без вызова `output.deliver`; `NotCommitted { focus_moved: false }` → `output.deliver(text)` (исход — «Вставлено»/«Скопировано», как сейчас); `NotCommitted { focus_moved: true }` → `output.copy_only(text)` → «Скопировано — ⌘V»; `Fallback` → `spawn_job` с сохранённым звуком.
