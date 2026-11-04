@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>app.utter.desktop.inputmethod</string>
+	<key>CFBundleName</key>
+	<string>Utter</string>
+	<key>CFBundleDisplayName</key>
+	<string>Utter</string>
+	<key>CFBundleExecutable</key>
+	<string>UtterIM</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>LSBackgroundOnly</key>
+	<true/>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>InputMethodConnectionName</key>
+	<string>app.utter.desktop.inputmethod_Connection</string>
+	<key>InputMethodServerControllerClass</key>
+	<string>UtterController</string>
+	<key>TISInputSourceID</key>
+	<string>app.utter.desktop.inputmethod</string>
+	<key>TISIntendedLanguage</key>
+	<string>ru</string>
+	<key>tsInputMethodCharacterRepertoireKey</key>
+	<array>
+		<string>Cyrl</string>
+		<string>Latn</string>
+	</array>
+	<key>tsInputMethodIconFileKey</key>
+	<string>UtterIM.tiff</string>
+</dict>
+</plist>
