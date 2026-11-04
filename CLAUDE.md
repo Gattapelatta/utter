@@ -4,6 +4,12 @@ Free, open-source voice-to-text for macOS (Windows later): hold a hotkey, speak,
 
 **Start of every session:** read `docs/superpowers/HANDOFF.md` — current status, decisions made along the way, deferred issues, and how to begin the next plan. The spec is `docs/superpowers/specs/2026-10-06-utter-design.md`; plans live in `docs/superpowers/plans/`.
 
+## Current focus (2026-11-04) — when the user says «продолжаем работу над utter»
+
+1. Read `docs/superpowers/HANDOFF.md` («С чего начать следующую сессию»), then the spec `docs/superpowers/specs/2026-11-04-live-dictation-design.md` and the plan `docs/superpowers/plans/2026-11-04-live-dictation.md` (approved by the user 2026-11-04; execution: Native, `executing-plans`).
+2. Start with **Task 0 — backup models with hedging**: today one slow model (`gemini-3.5-flash-lite` ~20 s on 2026-11-04) breaks every dictation; the user's hard requirement is «нажал клавишу — 100 % получил текст». Then Tasks 1–8: live dictation (draft in the field while speaking via Utter's own input method, final on release).
+3. Plan 2 Task 13 is paused half-way (done: tests green, idle memory leak fixed, M16 spec drift; left: RU-layout paste matrix, stress test, budgets over 20 dictations, theme × language visual walk) — finish it after the live-dictation plan, since that plan changes delivery.
+
 ## Working with the user
 
 - Communicate in Russian. The user is not a programmer: explain in plain words, keep jargon out, give exact steps when they must click something.
@@ -45,6 +51,10 @@ open src-tauri/target/release/bundle/macos/Utter.app
 - Stopping the event tap must also disable it and invalidate its mach port (`hotkey::macos`): a stale enabled tap stalled the whole keyboard after many sleep/wake restarts.
 - Motion cannot interpolate between transform strings with different function lists (e.g. `scaleX() scaleY()` → `none` animates to scale 0): keep one template (`overlay/drop/islandMotion.ts`). This includes `transitionEnd: { transform: "none" }` — the next animation then starts from scale 0 (the island "vanished" on fold-back).
 - The top ~32 pt of the screen under the MacBook camera notch are not pixels: nothing in the island may be drawn there (the Drop sits lower, arcs are limited to ±30°, clouds are in the island's left wing).
+- Gemini Live (`gemini-3.5-transcribe-live`, WebSocket `BidiGenerateContent`): send `setup` first and audio only after `setupComplete` (buffer before); interim text arrives in `serverContent.interimInputTranscription`, finals in `serverContent.inputTranscription`; `SMART` mode cleans fillers but once wrote «по продам» for «по продажам»; `VERBATIM` is exact. Without the user's VPN Google answers «User location is not supported».
+- Drafts in other apps' fields go through Utter's input method (InputMethodKit, marked text): `InputMethodConnectionName` must be `<bundle id>_Connection` or fields never connect; after `TISSelectInputSource` the field connects only on its next key event — post F19 (the IM swallows it); reinstalling the IM breaks connections until the next real keystroke. Chromium/Electron apps (Notion, Claude, Slack) and Telegram Desktop ignore marked-text attributes (colour, italic, background) — the underline stays the app's own (blue in Notion/Claude). Electron apps don't report caret bounds over Accessibility (only the field frame, after setting `AXManualAccessibility`).
+- macOS on-device speech recognition (`SFSpeechRecognizer`, Russian supported) fails with «Siri and Dictation are disabled» unless system Dictation is on — rejected for Utter.
+- Synthetic key presses from a helper process do not reach Utter's hotkey tap: any live test that needs a dictation needs the user's hands. Each rebuild of a helper app re-asks Keychain access (cdhash); Accessibility survives if it is signed with "Utter Dev" and keeps its bundle id; apps in `/private/tmp` cannot be added to Accessibility — put helpers in `~/Applications`.
 - The Drop's per-frame logic is a pure model (`overlay/drop/dropModel.ts`) driving SVG attributes via refs — no React re-render per frame.
 - WebKit does not hand a `linear(…)` easing to the compositor: it resolves it on the main thread every frame (measured 2 % CPU vs 0.01 % for the same spring as keyframes). For anything that runs while idle, give springs as sampled keyframes (`overlay/drop/restMotion.ts`).
 - The overlay window stays on screen while idle (the Drop in the notch, §4.2a): `app/overlay_rest.rs` decides it; it is ordered out only when the ears are off (setting, full-screen app, locked, display asleep). Synthetic key presses from a helper do not reach Utter — a dictation for a video check needs the user.

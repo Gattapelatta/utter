@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** с провайдером Gemini черновик появляется прямо в поле во время речи (предварительный текст через собственный способ ввода Utter) и утверждается чистовиком через ≤ 0,8 с после отпускания; при любом сбое — нынешний пакетный путь.
+**Goal:** диктовка работает всегда (запасные модели с подстраховкой), а с провайдером Gemini черновик появляется прямо в поле во время речи (предварительный текст через собственный способ ввода Utter) и утверждается чистовиком через ≤ 0,8 с после отпускания; при любом сбое — нынешний пакетный путь.
 
 **Architecture:** Rust открывает WebSocket к `gemini-3.5-transcribe-live` в момент нажатия и раз в 100 мс досылает звук из `recorder.peek`; чистая логика `live/draft.rs` собирает черновик и чистовик; `output/ime` переключает раскладку на способ ввода «Utter» (Swift, InputMethodKit) и передаёт ему черновик/чистовик по Unix-сокету с проверкой подписи собеседника. Оркестратор выбирает путь «на лету» или пакетный и при сбое переходит на пакетный с уже записанным звуком.
 
@@ -30,7 +30,34 @@
 2. Esc посреди диктовки → черновик стёрт, раскладка возвращена, ничего не вставлено (тест `cancel_clears_draft_and_restores_layout`, Task 6).
 3. Долгая диктовка (несколько минут, 30+ кусков) в Переводе → не упираемся в бесплатный лимит запросов: переводы объединяются, не чаще раза в 4 с (тест `translation_coalesces_segments`, Task 3).
 4. Соединение открылось, но Google ничего не прислал (как 2026-11-04) → после отпускания не позже 1,5 с срабатывает пакетный путь, а не вечное ожидание (тест `silent_server_falls_back`, Task 6).
-5. Utter упал или был закрыт посреди диктовки → при следующем запуске раскладка пользователя возвращена, а не остаётся «Utter» (тест `startup_restores_saved_layout`, Task 5).
+5. Основная модель отвечает 20 с (как 2026-11-04) → текст всё равно приходит через запасной маршрут за ≈ 3,5–5 с, а следующая диктовка сразу идёт быстрым маршрутом (тесты `slow_primary_still_delivers`, `slow_route_is_skipped_next_time`, Task 0).
+6. Utter упал или был закрыт посреди диктовки → при следующем запуске раскладка пользователя возвращена, а не остаётся «Utter» (тест `startup_restores_saved_layout`, Task 5).
+
+---
+
+### Task 0: Запасные модели и подстраховка (пакетный путь) — делать первой
+
+Чинит то, что сломано уже сейчас (2026-11-04: основная модель отвечала ~20 с, все диктовки обрывались). Спецификация §4.5.
+
+**Files:**
+- Create: `src-tauri/src/pipeline/routes.rs`
+- Modify: `src-tauri/src/pipeline/mod.rs` (`pub mod routes;`), `src-tauri/src/providers/defaults.rs` (`GEMINI_ROUTES`), `src-tauri/src/app/orchestrator.rs` (`process` идёт через маршруты для Gemini), `src-tauri/src/app/services.rs` (`HttpProviders` строит клиента под маршрут)
+- Test: `routes.rs` `mod tests` (время на паузе, `tokio::time::pause`), `orchestrator.rs` `mod tests`
+
+**Interfaces:**
+- Produces:
+  - `#[derive(Clone, Copy, Debug, PartialEq)] pub enum Route { Direct { model: &'static str }, TwoStep { stt: &'static str, text: &'static str } }`; `GEMINI_ROUTES: [Route; 3]` = `Direct{"gemini-3.5-flash-lite"}`, `TwoStep{"gemini-3.5-transcribe","gemini-3.6-flash"}`, `Direct{"gemini-3.6-flash"}`.
+  - `pub fn hedge_after(audio_secs: f32) -> Duration` = 2,5 с + 0,1 с × `audio_secs`.
+  - `pub struct RouteHealth` — `pub fn order(&self, now: Instant) -> Vec<usize>` (здоровые по порядку, затем «наказанные» по порядку), `pub fn punish(&mut self, route: usize, now: Instant)` (на 10 мин).
+  - `pub async fn run_hedged<T>(attempts: Vec<Pin<Box<dyn Future<Output = Result<T, ProviderError>> + Send>>>, hedge_after: Duration) -> (Result<T, ProviderError>, Vec<AttemptReport>)` — запускает первую попытку; следующую — по истечении `hedge_after` с запуска предыдущей или сразу при её ошибке; первый `Ok` выигрывает, остальные отменяются; все ошибки → последняя ошибка; `Unauthorized` — сразу возврат без следующих попыток. `pub struct AttemptReport { pub index: usize, pub outcome: AttemptOutcome }`, `pub enum AttemptOutcome { Won, Failed(ProviderError), Cancelled, Slow }` (`Slow` — не ответил до запуска следующей).
+  - `ProviderFactory` + `fn make_route(&self, kind: ProviderKind, key: String, route: Route) -> Arc<dyn Provider>` (для не-Gemini — как `make`).
+  - Оркестратор: здоровье маршрутов — поле `RouteHealth`; после задачи — `punish` маршрутам с `Failed`/`Slow`; `requests` в `JobResult` += число запущенных попыток; лог `route won=<index> attempts=<n> ms=<…>`.
+
+- [ ] **Step 1: Failing tests (`routes.rs`):** `first_answer_wins` (попытка 0 отвечает за 1 с → она, вторая не запускалась), `slow_first_starts_second_after_hedge` (0 молчит 20 с, 1 отвечает за 1 с → результат 1, итог ≈ `hedge_after` + 1 с), `error_starts_next_at_once`, `all_fail_returns_last_error`, `unauthorized_stops_immediately`, `hedge_grows_with_audio` (`hedge_after(10.0)` = 3,5 с), `health_moves_punished_to_end_for_10_min` (через 10 мин 1 с — снова по порядку).
+- [ ] **Step 2: Failing tests (`orchestrator.rs`, фейковые провайдеры по маршрутам):** `slow_primary_still_delivers` (маршрут 0 молчит, 1 отвечает → текст вставлен, `requests == 2`), `slow_route_is_skipped_next_time` (следующая диктовка начинается с маршрута 1), `groq_uses_single_route`.
+- [ ] **Step 3:** FAIL. **Step 4:** реализовать. **Step 5:** весь `cargo test --lib` — PASS, clippy 0.
+- [ ] **Step 6: Живая проверка (с согласия, `#[ignore]`):** `routes_live` — фраза `phrase-ru.wav` по каждому маршруту отдельно, время и текст; затем сборка Utter и 3 диктовки пользователя: текст приходит, в логе видно, какой маршрут выиграл.
+- [ ] **Step 7:** commit `feat(pipeline): backup models with hedging — dictation always gets text` + push.
 
 ---
 
@@ -76,6 +103,7 @@
 - [ ] **Step 1: Failing tests (поддельный сервер):** `sends_setup_first_then_audio`, `audio_before_ready_is_held_and_flushed` (сервер отвечает `setupComplete` через 200 мс; все куски дошли по порядку), `events_arrive_in_order` (сервер шлёт interim, interim, final → те же события), `finish_sends_stream_end_after_audio`, `no_setup_complete_times_out` (≤ 3 с → `Timeout`), `server_close_is_error_event`, `key_is_sent_in_header_not_url` (сервер видит заголовок, путь без `key=`).
 - [ ] **Step 2:** FAIL. **Step 3:** реализовать. **Step 4:** PASS, clippy 0.
 - [ ] **Step 5: Живая проверка (`#[ignore]`, с согласия пользователя):** `live_phrase_latency` — `tests-data/phrase-ru.wav` в реальном темпе через `GeminiLive`; печатает первый `Interim`, `release→Segment`; ожидание: ≤ 1 с и ≤ 0,8 с; если заголовок не принят — записать в журнал правило и перейти на параметр.
+- [ ] **Step 5b: Запасная потоковая модель (`#[ignore]`, с согласия):** тот же тест на `gemini-3.1-flash-live-preview` с `inputAudioTranscription`; если приходят `inputTranscription` — `GEMINI_LIVE_MODELS = ["gemini-3.5-transcribe-live", "gemini-3.1-flash-live-preview"]` и `connect` пробует их по порядку при ошибке подключения; иначе список из одной модели (записать `Ruling`).
 - [ ] **Step 6:** commit `feat(live): streaming session over WebSocket` + push.
 
 ---
