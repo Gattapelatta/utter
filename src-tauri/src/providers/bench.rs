@@ -213,3 +213,81 @@ async fn routes_live() {
         }
     }
 }
+
+/// Run: UTTER_LIVE_MODEL=<model> cargo test --lib -- --ignored live_phrase_latency --nocapture
+#[tokio::test]
+#[ignore = "live: Live API streaming with the user's key"]
+async fn live_phrase_latency() {
+    use crate::live::pcm::Chunker;
+    use crate::providers::defaults;
+    use crate::providers::gemini_live::{connect, LiveConfig, LiveEvent, TranscribeMode};
+    let key = KeychainStore::new().get(ProviderKind::Gemini).expect("Gemini key in Keychain");
+    let model = std::env::var("UTTER_LIVE_MODEL").unwrap_or_else(|_| defaults::GEMINI_LIVE_MODEL.into());
+    let mut reader = hound::WavReader::open(concat!(env!("CARGO_MANIFEST_DIR"), "/tests-data/phrase-ru.wav")).unwrap();
+    let spec = reader.spec();
+    let samples: Vec<f32> = reader.samples::<i16>().map(|s| s.unwrap() as f32 / i16::MAX as f32).collect();
+    let mut chunker = Chunker::new(spec.sample_rate, spec.channels);
+    let step = spec.sample_rate as usize * spec.channels as usize / 10;
+    for mode in [TranscribeMode::Verbatim, TranscribeMode::Smart] {
+        let t0 = Instant::now();
+        let cfg = LiveConfig { url: defaults::GEMINI_LIVE_URL.into(), key: key.clone(), model: model.clone(), mode, language: Some("ru".into()) };
+        let mut s = match connect(cfg).await {
+            Ok(s) => s,
+            Err(e) => return println!("{model}: connect failed: {e}"),
+        };
+        println!("{model} {mode:?}: socket open {} ms", t0.elapsed().as_millis());
+        let audio = s.audio.clone();
+        let feeder = tokio::spawn({
+            let samples = samples.clone();
+            let mut chunker = std::mem::replace(&mut chunker, Chunker::new(spec.sample_rate, spec.channels));
+            async move {
+                for block in samples.chunks(step) {
+                    for c in chunker.push(block) {
+                        let _ = audio.send(c);
+                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                if let Some(c) = chunker.flush() {
+                    let _ = audio.send(c);
+                }
+                Instant::now()
+            }
+        });
+        let mut released: Option<Instant> = None;
+        let mut first_interim = None;
+        let mut segments = Vec::new();
+        let mut feeder = Some(feeder);
+        loop {
+            if let Some(f) = feeder.as_ref() {
+                if f.is_finished() {
+                    released = Some(feeder.take().unwrap().await.unwrap());
+                    s.finish();
+                }
+            }
+            let wait = if released.is_some() { Duration::from_secs(3) } else { Duration::from_millis(50) };
+            match tokio::time::timeout(wait, s.events.recv()).await {
+                Ok(Some(LiveEvent::Ready)) => println!("  ready {} ms", t0.elapsed().as_millis()),
+                Ok(Some(LiveEvent::Interim(t))) => {
+                    if first_interim.is_none() {
+                        first_interim = Some(t0.elapsed().as_millis());
+                        println!("  first interim {} ms: {t}", t0.elapsed().as_millis());
+                    }
+                }
+                Ok(Some(LiveEvent::Segment(t))) => {
+                    let after = released.map(|r| r.elapsed().as_millis() as i64).unwrap_or(-1);
+                    println!("  segment (release→ {after} ms): {t}");
+                    segments.push(t);
+                }
+                Ok(Some(LiveEvent::TurnComplete)) => println!("  turnComplete"),
+                Ok(Some(LiveEvent::Error(e))) => {
+                    println!("  error: {e}");
+                    break;
+                }
+                Ok(None) => break,
+                Err(_) if released.is_some() => break,
+                Err(_) => {}
+            }
+        }
+        println!("  final: {}", segments.join(" "));
+    }
+}
