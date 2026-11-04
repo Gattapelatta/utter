@@ -15,8 +15,9 @@ use crate::history::{EntryStatus, History, HistoryEntry};
 use crate::jobs::{JobIds, OrderedDelivery};
 use crate::output::{CopyReason, DeliveryOutcome};
 use crate::permissions::PermStatus;
+use crate::pipeline::routes::{self, AttemptOutcome, Route, RouteHealth};
 use crate::pipeline::{self, JobError, JobOutput, PipelineOptions};
-use crate::providers::{AudioLlm, ProviderError, SpeechToText, TextModel};
+use crate::providers::{defaults, AudioLlm, ProviderError, SpeechToText, TextModel};
 use crate::recorder::AudioSource;
 use crate::secrets::SecretStore;
 use crate::settings::{Hotkeys, InsertMethod, ProviderKind, Settings, TranslateStyle};
@@ -127,6 +128,19 @@ pub trait Provider: SpeechToText + TextModel {
 
 pub trait ProviderFactory: Send + Sync {
     fn make(&self, kind: ProviderKind, key: String) -> Arc<dyn Provider>;
+    /// A client for one backup route (spec 2026-11-04 §4.5).
+    fn make_route(&self, kind: ProviderKind, key: String, _route: Route) -> Arc<dyn Provider> {
+        self.make(kind, key)
+    }
+}
+
+/// The provider for jobs without an LLM step and its backup routes, in priority order
+/// (none for providers with a single route).
+#[derive(Clone)]
+struct Backend {
+    single: Arc<dyn Provider>,
+    routes: Vec<(Route, Arc<dyn Provider>)>,
+    health: Arc<Mutex<RouteHealth>>,
 }
 
 pub struct Deps {
@@ -199,7 +213,8 @@ pub struct JobResult {
     outcome: Result<JobOutput, JobError>,
 }
 
-type Piece = tokio::task::JoinHandle<Result<JobOutput, JobError>>;
+/// A piece's result and the requests it made (backup routes add attempts).
+type Piece = tokio::task::JoinHandle<(Result<JobOutput, JobError>, u32)>;
 
 /// A recording whose first pieces were already sent while the user was speaking.
 struct Split {
@@ -235,7 +250,9 @@ pub struct Orchestrator {
     deferred: Option<(OverlayState, Duration)>,
     /// When the oldest unfinished job started processing (for the "slow" hint).
     processing_since: i64,
-    provider: Option<(ProviderKind, String, Arc<dyn Provider>)>,
+    provider: Option<(ProviderKind, String, Backend)>,
+    /// Routes that were slow or failing lately go last; outlives provider changes.
+    route_health: Arc<Mutex<RouteHealth>>,
     /// `Instant` stops during sleep on macOS, so the tick gap is measured in wall time.
     wall_clock: Box<dyn Fn() -> SystemTime + Send>,
     last_tick_wall: Option<SystemTime>,
@@ -310,6 +327,7 @@ impl Orchestrator {
             deferred: None,
             processing_since: 0,
             provider: None,
+            route_health: Arc::new(Mutex::new(RouteHealth::new(defaults::GEMINI_ROUTES.len()))),
             wall_clock: Box::new(SystemTime::now),
             last_tick_wall: None,
             last_hotkey_check: None,
@@ -497,16 +515,24 @@ impl Orchestrator {
         });
     }
 
-    fn provider_for(&mut self, s: &Settings) -> Option<Arc<dyn Provider>> {
+    fn provider_for(&mut self, s: &Settings) -> Option<Backend> {
         let key = self.deps.secrets.get(s.provider)?;
-        if let Some((kind, k, p)) = &self.provider {
+        if let Some((kind, k, b)) = &self.provider {
             if *kind == s.provider && *k == key {
-                return Some(p.clone());
+                return Some(b.clone());
             }
         }
-        let p = self.deps.providers.make(s.provider, key.clone());
-        self.provider = Some((s.provider, key, p.clone()));
-        Some(p)
+        let f = &self.deps.providers;
+        let b = Backend {
+            single: f.make(s.provider, key.clone()),
+            routes: defaults::routes_for(s.provider)
+                .iter()
+                .map(|&r| (r, f.make_route(s.provider, key.clone(), r)))
+                .collect(),
+            health: self.route_health.clone(),
+        };
+        self.provider = Some((s.provider, key, b.clone()));
+        Some(b)
     }
 
     async fn exec(&mut self, cmds: Vec<Command>) {
@@ -579,7 +605,7 @@ impl Orchestrator {
             warn: false,
             pending,
         });
-        tokio::spawn(async move { provider.prewarm().await });
+        tokio::spawn(async move { provider.single.prewarm().await });
     }
 
     fn submit(&mut self, mode: Mode) {
@@ -651,15 +677,16 @@ impl Orchestrator {
                     }
                 }
             };
-            let mut requests = 1;
+            let mut requests = 0;
             let mut outcome = None;
             let split = split.map(|sp| (sp.pieces, split_tail(sp.rest)));
             // A short recording sent nowhere yet gains nothing from the piecewise path.
             let split = split.filter(|(pieces, tail)| !pieces.is_empty() || tail.len() > 1);
             if let Some((pieces, tail)) = split {
+                let crashed = || (Err(JobError::Provider(ProviderError::BadResponse("piece crashed".into()))), 1);
                 let mut outs = Vec::new();
                 for p in pieces {
-                    outs.push(p.await.unwrap_or(Err(JobError::Provider(ProviderError::BadResponse("piece crashed".into())))));
+                    outs.push(p.await.unwrap_or_else(|_| crashed()));
                 }
                 // The halves of a long tail run at the same time.
                 let tail: Vec<_> = tail
@@ -667,12 +694,12 @@ impl Orchestrator {
                     .map(|c| tokio::spawn(process_capture(mode, c, opts.clone(), provider.clone())))
                     .collect();
                 for t in tail {
-                    outs.push(t.await.unwrap_or(Err(JobError::Provider(ProviderError::BadResponse("piece crashed".into())))));
+                    outs.push(t.await.unwrap_or_else(|_| crashed()));
                 }
-                requests = outs.len() as u32;
+                requests = outs.iter().map(|(_, n)| n).sum();
+                let outs: Vec<_> = outs.into_iter().map(|(o, _)| o).collect();
                 if outs.iter().any(|o| matches!(o, Err(JobError::Provider(_)))) {
                     tracing::warn!("a piece failed; sending the whole recording in one request");
-                    requests += 1;
                 } else {
                     outcome = Some(combine(outs));
                 }
@@ -681,9 +708,14 @@ impl Orchestrator {
                 Some(o) => o,
                 None => match wav {
                     None => Err(JobError::NothingHeard),
-                    Some(wav) => process(mode, wav, secs, &opts, provider).await,
+                    Some(wav) => {
+                        let (o, n) = process(mode, wav, secs, &opts, provider).await;
+                        requests += n;
+                        o
+                    }
                 },
             };
+            let requests = requests.max(1);
             JobResult { mode, submitted, history_id, audio_path, audio_secs: secs, created_at_ms, requests, outcome }
         });
         // A bug in one job must fail that job only, never stall the ordered queue.
@@ -836,21 +868,97 @@ fn pipeline_options(s: &Settings) -> PipelineOptions {
     }
 }
 
-/// One speech request (plus the LLM step when the provider needs a second one).
+/// One recording through the provider: its backup routes when it has them and the job
+/// needs an LLM step, else one request (plus the LLM step when the provider needs a
+/// second one). Returns the result and the speech requests made.
 async fn process(
     mode: Mode,
     wav: Vec<u8>,
     secs: f32,
     opts: &PipelineOptions,
-    provider: Option<Arc<dyn Provider>>,
-) -> Result<JobOutput, JobError> {
-    let Some(p) = provider else { return Err(JobError::Provider(ProviderError::Unauthorized)) };
-    match p.direct() {
-        Some(direct) if pipeline::audio_system_prompt(mode, opts, secs).is_some() => {
-            pipeline::run_direct(mode, wav, secs, opts, direct, p.as_ref()).await
-        }
-        _ => pipeline::run(mode, wav, secs, opts, p.as_ref(), p.as_ref()).await,
+    backend: Option<Backend>,
+) -> (Result<JobOutput, JobError>, u32) {
+    let Some(b) = backend else { return (Err(JobError::Provider(ProviderError::Unauthorized)), 1) };
+    // Without an LLM step every route would be the same transcription model.
+    if b.routes.is_empty() || pipeline::system_prompt(mode, opts, secs).is_none() {
+        let p = b.single.as_ref();
+        let out = match p.direct() {
+            Some(direct) if pipeline::audio_system_prompt(mode, opts, secs).is_some() => {
+                pipeline::run_direct(mode, wav, secs, opts, direct, p).await
+            }
+            _ => pipeline::run(mode, wav, secs, opts, p, p).await,
+        };
+        return (out, 1);
     }
+    process_routed(mode, wav, secs, opts, &b).await
+}
+
+/// Backup models with hedging (spec 2026-11-04 §4.5): the next route starts when the
+/// current one is slow or fails; the first answer wins.
+async fn process_routed(
+    mode: Mode,
+    wav: Vec<u8>,
+    secs: f32,
+    opts: &PipelineOptions,
+    b: &Backend,
+) -> (Result<JobOutput, JobError>, u32) {
+    let all: Vec<usize> = (0..b.routes.len()).collect();
+    let order: Vec<usize> = match b.health.lock() {
+        Ok(h) => h.order(Instant::now()).into_iter().filter(|&i| i < b.routes.len()).collect(),
+        Err(_) => all,
+    };
+    let attempts: Vec<routes::Attempt<Result<JobOutput, JobError>>> = order
+        .iter()
+        .map(|&i| {
+            let (route, p) = b.routes[i].clone();
+            let (wav, opts) = (wav.clone(), opts.clone());
+            Box::pin(async move {
+                let r = match (route, p.direct()) {
+                    (Route::Direct { .. }, Some(audio)) => pipeline::run_audio_only(mode, wav, secs, &opts, audio).await,
+                    _ => pipeline::run(mode, wav, secs, &opts, p.as_ref(), p.as_ref()).await,
+                };
+                // "Nothing heard" is an answer; only provider errors move on to the next route.
+                match r {
+                    Err(JobError::Provider(e)) => Err(e),
+                    other => Ok(other),
+                }
+            }) as routes::Attempt<_>
+        })
+        .collect();
+    let t = Instant::now();
+    let (result, reports) = routes::run_hedged(attempts, routes::hedge_after(secs)).await;
+    let now = Instant::now();
+    if let Ok(mut h) = b.health.lock() {
+        for r in &reports {
+            let bad = match &r.outcome {
+                AttemptOutcome::Slow => true,
+                AttemptOutcome::Failed(e) => *e != ProviderError::Unauthorized,
+                AttemptOutcome::Won | AttemptOutcome::Cancelled => false,
+            };
+            if bad {
+                h.punish(order[r.index], now);
+            }
+        }
+    }
+    let won = reports.iter().find(|r| r.outcome == AttemptOutcome::Won).map_or(-1, |r| order[r.index] as i64);
+    let detail: Vec<String> = reports
+        .iter()
+        .map(|r| {
+            let what = match &r.outcome {
+                AttemptOutcome::Won => "won".to_string(),
+                AttemptOutcome::Slow => "slow".to_string(),
+                AttemptOutcome::Cancelled => "cancelled".to_string(),
+                AttemptOutcome::Failed(e) => format!("failed ({})", super::diagnostics::redact(&e.to_string())),
+            };
+            format!("{}: {what}", order[r.index])
+        })
+        .collect();
+    tracing::info!(won, attempts = reports.len(), ms = t.elapsed().as_millis() as u64, detail = detail.join(", "), "route won");
+    let out = match result {
+        Ok(r) => r,
+        Err(e) => Err(JobError::Provider(e)),
+    };
+    (out, reports.len().max(1) as u32)
 }
 
 /// Prepares raw audio off the async threads, then processes it.
@@ -858,12 +966,12 @@ async fn process_capture(
     mode: Mode,
     c: Captured,
     opts: PipelineOptions,
-    provider: Option<Arc<dyn Provider>>,
-) -> Result<JobOutput, JobError> {
+    provider: Option<Backend>,
+) -> (Result<JobOutput, JobError>, u32) {
     let prepared = tokio::task::spawn_blocking(move || audio::prepare(c)).await.ok().flatten();
     match prepared {
         Some(p) => process(mode, p.wav, p.audio_secs, &opts, provider).await,
-        None => Err(JobError::NothingHeard),
+        None => (Err(JobError::NothingHeard), 0),
     }
 }
 
@@ -963,6 +1071,8 @@ mod tests {
         direct_calls: AtomicUsize,
         /// Replies for successive one-request calls; `direct_reply` once these run out.
         direct_replies: Mutex<VecDeque<Result<String, ProviderError>>>,
+        /// How long a one-request call takes.
+        direct_delay: Duration,
     }
     impl FakeProvider {
         fn new(slow: Result<String, ProviderError>, fast: Result<String, ProviderError>) -> Self {
@@ -974,6 +1084,7 @@ mod tests {
                 panic_on_slow: false,
                 direct_calls: AtomicUsize::new(0),
                 direct_replies: Mutex::new(VecDeque::new()),
+                direct_delay: Duration::ZERO,
             }
         }
     }
@@ -981,6 +1092,7 @@ mod tests {
     impl AudioLlm for FakeProvider {
         async fn complete_audio(&self, _: &str, _: Vec<u8>, _: Option<String>, _: f32) -> Result<Completion, ProviderError> {
             self.direct_calls.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(self.direct_delay).await;
             if let Some(r) = self.direct_replies.lock().unwrap().pop_front() {
                 return r.map(|text| Completion { text, total_tokens: 5 });
             }
@@ -1021,6 +1133,43 @@ mod tests {
     impl ProviderFactory for FakeFactory {
         fn make(&self, _: ProviderKind, _: String) -> Arc<dyn Provider> {
             self.0.clone()
+        }
+    }
+
+    /// A separate fake per backup route.
+    struct RouteFactory {
+        single: Arc<FakeProvider>,
+        routes: Vec<Arc<FakeProvider>>,
+        made: Mutex<Vec<Route>>,
+    }
+    impl RouteFactory {
+        /// One-request fakes answering `reply` after `delay`.
+        fn new(routes: Vec<(Duration, &str)>) -> Arc<Self> {
+            let fake = |delay: Duration, reply: &str| {
+                let mut p = FakeProvider::new(Ok("x".into()), Ok("сырой".into()));
+                p.direct_reply = Some(reply.into());
+                p.direct_delay = delay;
+                Arc::new(p)
+            };
+            Arc::new(Self {
+                single: fake(Duration::ZERO, "Один маршрут."),
+                routes: routes.into_iter().map(|(d, r)| fake(d, r)).collect(),
+                made: Mutex::new(Vec::new()),
+            })
+        }
+        fn calls(&self) -> Vec<usize> {
+            self.routes.iter().map(|p| p.direct_calls.load(Ordering::SeqCst)).collect()
+        }
+    }
+    impl ProviderFactory for RouteFactory {
+        fn make(&self, _: ProviderKind, _: String) -> Arc<dyn Provider> {
+            self.single.clone()
+        }
+        fn make_route(&self, _: ProviderKind, _: String, route: Route) -> Arc<dyn Provider> {
+            let mut made = self.made.lock().unwrap();
+            let i = defaults::GEMINI_ROUTES.iter().position(|r| *r == route).unwrap();
+            made.push(route);
+            self.routes[i].clone()
         }
     }
 
@@ -1104,6 +1253,7 @@ mod tests {
         hotkeys: Arc<NoHotkeys>,
         perms: Arc<AllGranted>,
         ui: Arc<FakeUi>,
+        secrets: Arc<MemoryStore>,
         _dir: tempfile::TempDir,
     }
 
@@ -1125,7 +1275,7 @@ mod tests {
         let perms = Arc::new(AllGranted(Mutex::new(PermStatus::Granted)));
         let ui = Arc::new(FakeUi::default());
         let deps = Deps {
-            secrets,
+            secrets: secrets.clone(),
             audio: audio.clone(),
             providers: Arc::new(FakeFactory(provider.clone())),
             output: out.clone(),
@@ -1136,7 +1286,7 @@ mod tests {
         };
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let orch = Orchestrator::new(deps, shared.clone(), tx);
-        Rig { orch, rx, audio, provider, out, overlay, shared, hotkeys, perms, ui, _dir: dir }
+        Rig { orch, rx, audio, provider, out, overlay, shared, hotkeys, perms, ui, secrets, _dir: dir }
     }
 
     impl Rig {
@@ -1277,6 +1427,70 @@ mod tests {
         assert_eq!(*r.out.0.lock().unwrap(), vec!["Hello there.".to_string()]);
         assert_eq!(r.provider.direct_calls.load(Ordering::SeqCst), 1);
         assert_eq!(r.provider.stt_calls.load(Ordering::SeqCst), 0);
+    }
+
+    fn stt_requests_today(r: &Rig) -> u32 {
+        r.shared.usage.lock().unwrap().today(chrono::Local::now().date_naive()).stt_requests
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn slow_primary_still_delivers() {
+        let mut r = rig(FakeProvider::new(Ok("x".into()), Ok("x".into())), true);
+        r.shared.settings.lock().unwrap().cleanup = true;
+        let f = RouteFactory::new(vec![
+            (Duration::from_secs(20), "Медленно."),
+            (Duration::from_millis(500), "Быстро."),
+            (Duration::ZERO, "Третий."),
+        ]);
+        r.orch.set_provider_factory(f.clone());
+        let t = tokio::time::Instant::now();
+        r.record(Mode::Dictation, speech(1.0), Instant::now(), 1).await;
+        r.settle(1).await;
+        // Route 1 is two-step (transcript, then text model); the fake's text model says "Привет.".
+        assert_eq!(*r.out.0.lock().unwrap(), vec!["Привет.".to_string()]);
+        assert!(t.elapsed() < Duration::from_secs(4), "{:?}", t.elapsed());
+        assert_eq!(f.calls()[0], 1);
+        assert_eq!(f.routes[2].direct_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(stt_requests_today(&r), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn slow_route_is_skipped_next_time() {
+        let mut r = rig(FakeProvider::new(Ok("x".into()), Ok("x".into())), true);
+        r.shared.settings.lock().unwrap().cleanup = true;
+        let f = RouteFactory::new(vec![
+            (Duration::from_secs(20), "Медленно."),
+            (Duration::ZERO, "Быстро."),
+            (Duration::ZERO, "Третий."),
+        ]);
+        r.orch.set_provider_factory(f.clone());
+        r.record(Mode::Translate, speech(1.0), Instant::now(), 1).await;
+        r.settle(1).await;
+        let t = tokio::time::Instant::now();
+        r.record(Mode::Translate, speech(1.0), Instant::now(), 1).await;
+        r.settle(1).await;
+        assert!(t.elapsed() < Duration::from_secs(1), "{:?}", t.elapsed());
+        assert_eq!(f.calls()[0], 1, "the slow route was not tried again");
+        assert_eq!(r.out.0.lock().unwrap().len(), 2);
+        assert_eq!(stt_requests_today(&r), 3);
+    }
+
+    #[tokio::test]
+    async fn groq_uses_single_route() {
+        let mut r = rig(FakeProvider::new(Ok("x".into()), Ok("x".into())), true);
+        {
+            let mut s = r.shared.settings.lock().unwrap();
+            s.cleanup = true;
+            s.provider = ProviderKind::Groq;
+        }
+        r.secrets.set(ProviderKind::Groq, "groq-key").unwrap();
+        let f = RouteFactory::new(vec![(Duration::ZERO, "a"), (Duration::ZERO, "b"), (Duration::ZERO, "c")]);
+        r.orch.set_provider_factory(f.clone());
+        r.record(Mode::Translate, speech(1.0), Instant::now(), 1).await;
+        r.settle(1).await;
+        assert_eq!(*r.out.0.lock().unwrap(), vec!["Один маршрут.".to_string()]);
+        assert!(f.made.lock().unwrap().is_empty());
+        assert_eq!(f.calls(), vec![0, 0, 0]);
     }
 
     #[tokio::test]
@@ -1491,7 +1705,10 @@ mod tests {
     #[tokio::test]
     async fn failed_piece_falls_back_to_one_request() {
         // A piece that never got an answer (a 5xx gets a plain transcript inside the pipeline instead).
+        // Groq has no backup routes, which would otherwise rescue the piece.
         let mut r = piece_rig(vec![Err(ProviderError::Timeout), Ok("Tail.".into())]);
+        r.shared.settings.lock().unwrap().provider = ProviderKind::Groq;
+        r.secrets.set(ProviderKind::Groq, "groq-key").unwrap();
         let t0 = Instant::now();
         *r.audio.live.lock().unwrap() = Some(long_speech());
         r.orch.handle(Input::Hotkey(HotkeyEvent::Down(Mode::Translate)), t0).await;

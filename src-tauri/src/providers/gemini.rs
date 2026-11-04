@@ -45,14 +45,22 @@ pub struct GeminiClient {
     retry_delay: Duration,
 }
 
+/// One connection pool can serve several clients (the backup routes share it).
+pub fn http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .pool_idle_timeout(Duration::from_secs(90))
+        // Offline, DNS/TCP would otherwise hang until the full request timeout.
+        .connect_timeout(Duration::from_secs(3))
+        .build()
+        .unwrap_or_default()
+}
+
 impl GeminiClient {
     pub fn new(cfg: ProviderConfig) -> Self {
-        let client = reqwest::Client::builder()
-            .pool_idle_timeout(Duration::from_secs(90))
-            // Offline, DNS/TCP would otherwise hang until the full request timeout.
-            .connect_timeout(Duration::from_secs(3))
-            .build()
-            .unwrap_or_default();
+        Self::with_client(cfg, http_client())
+    }
+
+    pub fn with_client(cfg: ProviderConfig, client: reqwest::Client) -> Self {
         Self { client, cfg, timeout_override: None, retry_delay: RETRY_DELAY }
     }
 

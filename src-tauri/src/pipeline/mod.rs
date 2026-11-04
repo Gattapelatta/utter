@@ -1,5 +1,7 @@
 //! Speech → text → (cleanup | translation). Pure orchestration over provider traits.
 
+pub mod routes;
+
 use crate::providers::{AudioLlm, ProviderError, SpeechToText, TextModel};
 use crate::settings::TranslateStyle;
 use crate::types::Mode;
@@ -163,6 +165,36 @@ pub async fn run(
     }
 }
 
+/// One request: audio → cleaned or translated text, with no fallback of its own
+/// (the backup routes are the fallback).
+pub async fn run_audio_only(
+    mode: Mode,
+    wav: Vec<u8>,
+    audio_secs: f32,
+    opts: &PipelineOptions,
+    audio: &dyn AudioLlm,
+) -> Result<JobOutput, JobError> {
+    let Some(system) = audio_system_prompt(mode, opts, audio_secs) else {
+        return Err(JobError::Provider(ProviderError::BadResponse("no audio prompt".into())));
+    };
+    let t = std::time::Instant::now();
+    let result = audio.complete_audio(&system, wav, opts.language.clone(), audio_secs).await;
+    tracing::info!(
+        direct_ms = t.elapsed().as_millis() as u64,
+        audio_secs,
+        error = result.as_ref().err().map(|e| e.to_string()),
+        "timing: audio→text (one request)"
+    );
+    let c = result.map_err(JobError::Provider)?;
+    let text = postprocess(&c.text);
+    // The phrase list describes Whisper-style transcripts; a translation such as
+    // "Bye!" or "You." is a legitimate result.
+    if text.is_empty() || (mode == Mode::Dictation && is_hallucination(&text)) {
+        return Err(JobError::NothingHeard);
+    }
+    Ok(JobOutput { raw: text.clone(), text, degraded: false, tokens: c.total_tokens, llm_used: true, direct: true })
+}
+
 /// One request: audio → cleaned or translated text. Falls back to a plain
 /// transcript (degraded) when the audio model is rate-limited or failing.
 pub async fn run_direct(
@@ -173,32 +205,9 @@ pub async fn run_direct(
     audio: &dyn AudioLlm,
     stt: &dyn SpeechToText,
 ) -> Result<JobOutput, JobError> {
-    let Some(system) = audio_system_prompt(mode, opts, audio_secs) else {
-        return Err(JobError::Provider(ProviderError::BadResponse("no audio prompt".into())));
-    };
-    let t = std::time::Instant::now();
-    let result = audio.complete_audio(&system, wav.clone(), opts.language.clone(), audio_secs).await;
-    tracing::info!(
-        direct_ms = t.elapsed().as_millis() as u64,
-        audio_secs,
-        error = result.as_ref().err().map(|e| e.to_string()),
-        "timing: audio→text (one request)"
-    );
-    match result {
-        Ok(c) => {
-            let text = postprocess(&c.text);
-            // The phrase list describes Whisper-style transcripts; a translation such as
-            // "Bye!" or "You." is a legitimate result.
-            if text.is_empty() || (mode == Mode::Dictation && is_hallucination(&text)) {
-                return Err(JobError::NothingHeard);
-            }
-            Ok(JobOutput { raw: text.clone(), text, degraded: false, tokens: c.total_tokens, llm_used: true, direct: true })
-        }
+    match run_audio_only(mode, wav.clone(), audio_secs, opts, audio).await {
         // Without a network (or with a bad key) the fallback would fail the same way.
-        Err(e @ (ProviderError::Unauthorized | ProviderError::Network | ProviderError::Timeout)) => {
-            Err(JobError::Provider(e))
-        }
-        Err(e) => {
+        Err(JobError::Provider(e)) if !matches!(e, ProviderError::Unauthorized | ProviderError::Network | ProviderError::Timeout) => {
             tracing::warn!("audio model failed ({e}); falling back to plain transcription");
             let raw = stt
                 .transcribe(wav, opts.language.clone(), audio_secs)
@@ -211,6 +220,7 @@ pub async fn run_direct(
             }
             Ok(JobOutput { text: raw.clone(), raw, degraded: true, tokens: 0, llm_used: false, direct: false })
         }
+        other => other,
     }
 }
 
@@ -397,6 +407,13 @@ mod tests {
         assert_eq!(audio.calls.load(Ordering::SeqCst), 1);
         let sys = audio.last_system.lock().unwrap().clone();
         assert!(sys.contains("English") && sys.contains("audio recording"), "{sys}");
+    }
+
+    #[tokio::test]
+    async fn run_audio_only_does_not_fall_back() {
+        let audio = FakeAudioLlm::new(Err(ProviderError::RateLimited { retry_after: None }));
+        let r = run_audio_only(Mode::Dictation, vec![], 3.0, &opts(true, false, TranslateStyle::Business), &audio).await;
+        assert_eq!(r, Err(JobError::Provider(ProviderError::RateLimited { retry_after: None })));
     }
 
     #[tokio::test]

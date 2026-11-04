@@ -191,3 +191,25 @@ async fn pipeline_direct_live() {
     let out = crate::pipeline::run(Mode::Dictation, wav, 9.9, &opts, &client, &client).await;
     println!("Dictation without cleanup (transcribe model): {} ms → {:?}", t.elapsed().as_millis(), out.map(|o| o.text));
 }
+
+#[tokio::test]
+#[ignore = "live: each backup route once with the user's key"]
+async fn routes_live() {
+    use crate::pipeline::routes::Route;
+    use crate::providers::{defaults, GeminiClient};
+    let key = KeychainStore::new().get(ProviderKind::Gemini).expect("Gemini key in Keychain");
+    let wav = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests-data/phrase-ru.wav")).unwrap();
+    for (mode, style) in [(Mode::Dictation, TranslateStyle::Business), (Mode::Translate, TranslateStyle::Business)] {
+        let opts = PipelineOptions { language: Some("ru".into()), cleanup: true, paragraphs: false, style };
+        for (i, route) in defaults::GEMINI_ROUTES.iter().enumerate() {
+            let client = GeminiClient::new(defaults::route_config(ProviderKind::Gemini, key.clone(), *route));
+            client.prewarm().await;
+            let t = Instant::now();
+            let out = match route {
+                Route::Direct { .. } => crate::pipeline::run_audio_only(mode, wav.clone(), 9.9, &opts, &client).await,
+                Route::TwoStep { .. } => crate::pipeline::run(mode, wav.clone(), 9.9, &opts, &client, &client).await,
+            };
+            println!("{mode:?} route {i} {route:?}: {} ms → {:?}", t.elapsed().as_millis(), out.map(|o| (o.text, o.degraded)));
+        }
+    }
+}

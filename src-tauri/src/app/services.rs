@@ -12,7 +12,8 @@ use super::orchestrator::{
 use crate::hotkey::{self, HotkeyHandle};
 use crate::output::{self, DeliveryOutcome};
 use crate::permissions::{self, PermStatus};
-use crate::providers::{defaults, GeminiClient, OpenAiCompatible, ProviderError};
+use crate::pipeline::routes::Route;
+use crate::providers::{defaults, gemini_http_client, GeminiClient, OpenAiCompatible, ProviderError};
 use crate::settings::{Hotkeys, InsertMethod, ProviderKind};
 use crate::types::KeyId;
 
@@ -61,14 +62,32 @@ impl Provider for GeminiClient {
     }
 }
 
-pub struct HttpProviders;
+/// Gemini clients share one connection pool, so a backup route starts on a warm connection.
+pub struct HttpProviders {
+    gemini_http: reqwest::Client,
+}
+
+impl Default for HttpProviders {
+    fn default() -> Self {
+        Self { gemini_http: gemini_http_client() }
+    }
+}
 
 impl ProviderFactory for HttpProviders {
     fn make(&self, kind: ProviderKind, key: String) -> Arc<dyn Provider> {
         let cfg = defaults::config_for(kind, key);
         match kind {
-            ProviderKind::Gemini => Arc::new(GeminiClient::new(cfg)),
+            ProviderKind::Gemini => Arc::new(GeminiClient::with_client(cfg, self.gemini_http.clone())),
             ProviderKind::Groq | ProviderKind::OpenAi => Arc::new(OpenAiCompatible::new(cfg)),
+        }
+    }
+
+    fn make_route(&self, kind: ProviderKind, key: String, route: Route) -> Arc<dyn Provider> {
+        match kind {
+            ProviderKind::Gemini => {
+                Arc::new(GeminiClient::with_client(defaults::route_config(kind, key, route), self.gemini_http.clone()))
+            }
+            ProviderKind::Groq | ProviderKind::OpenAi => self.make(kind, key),
         }
     }
 }

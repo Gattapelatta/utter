@@ -69,7 +69,7 @@ fn init_core(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let (level_tx, mut level_rx) = tokio::sync::watch::channel(0.0f32);
     let recorder = Arc::new(recorder::Recorder::new(level_tx));
     let secrets: Arc<dyn secrets::SecretStore> = Arc::new(secrets::KeychainStore::new());
-    let providers: Arc<dyn app::orchestrator::ProviderFactory> = Arc::new(HttpProviders);
+    let providers: Arc<dyn app::orchestrator::ProviderFactory> = Arc::new(HttpProviders::default());
     let hotkeys = Arc::new(HotkeyService::new(settings.hotkeys.clone(), tx.clone()));
 
     app.manage(app::overlay::OverlayTiming::default());
