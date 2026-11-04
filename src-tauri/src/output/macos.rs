@@ -124,6 +124,11 @@ impl MacInput {
             .map_err(|_| "cannot create event source".to_string())
     }
 
+    /// Presses and releases one key, marked as Utter's own (the hotkey tap ignores it).
+    pub fn tap_key(code: CGKeyCode) -> Result<(), String> {
+        Self::key(code, CGEventFlags::CGEventFlagNull)
+    }
+
     fn key(code: CGKeyCode, flags: CGEventFlags) -> Result<(), String> {
         for down in [true, false] {
             let ev = CGEvent::new_keyboard_event(Self::source()?, code, down)
