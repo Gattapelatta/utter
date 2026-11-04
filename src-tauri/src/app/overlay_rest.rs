@@ -48,6 +48,21 @@ pub fn window_is_fullscreen(layer: i64, pid: i64, own_pid: i64, bounds: Rect, sc
     layer == 0 && pid != own_pid && covers_screen(bounds, screen)
 }
 
+fn intersects(a: Rect, b: Rect) -> bool {
+    a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+}
+
+/// `windows` (layer, owner pid, bounds) front to back, as the window server lists them. Only
+/// the frontmost normal window of another app on this display decides: a screen-sized window
+/// lying behind others (an auto-hidden menu bar lets zoomed windows reach the top) is not a
+/// full-screen app.
+pub fn fullscreen_in(windows: &[(i64, i64, Rect)], own_pid: i64, screen: Rect) -> bool {
+    windows
+        .iter()
+        .find(|&&(layer, pid, b)| layer == 0 && pid != own_pid && intersects(b, screen))
+        .is_some_and(|&(layer, pid, b)| window_is_fullscreen(layer, pid, own_pid, b, screen))
+}
+
 /// How the overlay window stands, shared by the pill and the watcher.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Presence {
@@ -83,6 +98,24 @@ pub fn decide(p: &Presence, f: &RestFacts) -> RestAction {
 /// After the pill folds (hidden / cancelled), the window goes away only if no ears are shown.
 pub fn hide_after_state(p: &Presence) -> bool {
     !p.shown
+}
+
+/// A new pill state. Returns whether to move the window to the display under the mouse: only
+/// for the first state after idle — a recording, its result and the fold never change display
+/// (§4.2a). Hidden / cancelled keep the pill busy until [`after_fold`].
+pub fn on_pill_state(p: &mut Presence, hidden: bool) -> bool {
+    if hidden {
+        return false;
+    }
+    let fresh = !p.busy;
+    p.busy = true;
+    fresh
+}
+
+/// The island has folded with no newer state. Returns whether to order the window out.
+pub fn after_fold(p: &mut Presence) -> bool {
+    p.busy = false;
+    hide_after_state(p)
 }
 
 #[cfg(target_os = "macos")]
@@ -168,12 +201,16 @@ pub fn spawn_watcher(
                         let (app, gate, presence) = (app.clone(), gate.clone(), presence.clone());
                         tauri::async_runtime::spawn(async move {
                             tokio::time::sleep(overlay::HIDE_AFTER).await;
-                            let current = gate.lock().map(|g| g.still_current(gen)).unwrap_or(false);
-                            let gone = presence.lock().map(|p| !p.busy && hide_after_state(&p)).unwrap_or(false);
-                            if current && gone {
-                                let a = app.clone();
-                                let _ = app.run_on_main_thread(move || overlay::hide_window(&a));
-                            }
+                            let a = app.clone();
+                            // Checked on the main thread, where `show_rest` also runs: a show
+                            // queued after this check would otherwise be undone by the order-out.
+                            let _ = app.run_on_main_thread(move || {
+                                let current = gate.lock().map(|g| g.still_current(gen)).unwrap_or(false);
+                                let gone = presence.lock().map(|p| !p.busy && hide_after_state(&p)).unwrap_or(false);
+                                if current && gone {
+                                    overlay::hide_window(&a);
+                                }
+                            });
                         });
                     }
                 }
@@ -197,7 +234,7 @@ mod mac {
         copy_window_info, kCGNullWindowID, kCGWindowListExcludeDesktopElements, kCGWindowListOptionOnScreenOnly,
     };
 
-    use super::{window_is_fullscreen, Rect, RestFacts};
+    use super::{fullscreen_in, Rect, RestFacts};
 
     #[link(name = "CoreGraphics", kind = "framework")]
     extern "C" {
@@ -229,24 +266,21 @@ mod mac {
         else {
             return false;
         };
-        let own = std::process::id() as i64;
-        list.iter().any(|item| {
-            // SAFETY: every element of the window list is a CFDictionary.
-            let d: CFDictionary<CFString, CFType> = unsafe { CFDictionary::wrap_under_get_rule(*item as CFDictionaryRef) };
-            let (Some(layer), Some(pid)) = (number(&d, "kCGWindowLayer"), number(&d, "kCGWindowOwnerPID")) else {
-                return false;
-            };
-            let Some(b) = d.find(CFString::new("kCGWindowBounds")).and_then(|b| b.downcast::<CFDictionary>()) else {
-                return false;
-            };
-            // SAFETY: the bounds entry is a CFDictionary with CFString keys and CFNumber values.
-            let b: CFDictionary<CFString, CFType> = unsafe { CFDictionary::wrap_under_get_rule(b.as_concrete_TypeRef()) };
-            let (Some(x), Some(y), Some(w), Some(h)) = (number(&b, "X"), number(&b, "Y"), number(&b, "Width"), number(&b, "Height"))
-            else {
-                return false;
-            };
-            window_is_fullscreen(layer as i64, pid as i64, own, Rect { x, y, w, h }, screen)
-        })
+        let windows: Vec<(i64, i64, Rect)> = list
+            .iter()
+            .filter_map(|item| {
+                // SAFETY: every element of the window list is a CFDictionary.
+                let d: CFDictionary<CFString, CFType> = unsafe { CFDictionary::wrap_under_get_rule(*item as CFDictionaryRef) };
+                let layer = number(&d, "kCGWindowLayer")?;
+                let pid = number(&d, "kCGWindowOwnerPID")?;
+                let b = d.find(CFString::new("kCGWindowBounds"))?.downcast::<CFDictionary>()?;
+                // SAFETY: the bounds entry is a CFDictionary with CFString keys and CFNumber values.
+                let b: CFDictionary<CFString, CFType> = unsafe { CFDictionary::wrap_under_get_rule(b.as_concrete_TypeRef()) };
+                let r = Rect { x: number(&b, "X")?, y: number(&b, "Y")?, w: number(&b, "Width")?, h: number(&b, "Height")? };
+                Some((layer as i64, pid as i64, r))
+            })
+            .collect();
+        fullscreen_in(&windows, std::process::id() as i64, screen)
     }
 
     fn locked() -> bool {
@@ -343,6 +377,36 @@ mod tests {
     }
 
     #[test]
+    fn only_the_first_pill_state_after_idle_moves_the_window() {
+        let mut p = Presence { display: Some(1), ..Default::default() };
+        assert!(on_pill_state(&mut p, false), "recording starts: follow the mouse");
+        assert!(!on_pill_state(&mut p, false), "limit warning");
+        assert!(!on_pill_state(&mut p, false), "processing");
+        assert!(!on_pill_state(&mut p, false), "done");
+    }
+
+    #[test]
+    fn folding_island_is_still_busy() {
+        let mut p = Presence { shown: true, display: Some(1), ..Default::default() };
+        on_pill_state(&mut p, false);
+        on_pill_state(&mut p, true); // hidden: the island folds for HIDE_AFTER
+        assert!(p.busy);
+        assert_eq!(decide(&p, &shown_facts(2)), RestAction::None, "no jump to the other display mid-fold");
+        assert!(!on_pill_state(&mut p, false), "a recording during the fold stays where it is");
+    }
+
+    #[test]
+    fn after_the_fold_the_window_goes_only_without_ears() {
+        let mut p = Presence { busy: true, shown: true, display: Some(1) };
+        assert!(!after_fold(&mut p));
+        assert!(!p.busy);
+        let mut p = Presence { busy: true, shown: false, display: Some(1) };
+        assert!(after_fold(&mut p));
+        let off = RestFacts { enabled: false, ..shown_facts(2) };
+        assert_eq!(decide(&p, &off), RestAction::None, "ears off: nothing to show");
+    }
+
+    #[test]
     fn page_ready_forces_a_fresh_show() {
         let presence = Mutex::new(Presence { busy: false, shown: true, display: Some(1) });
         page_ready(&presence, &Notify::new());
@@ -378,6 +442,26 @@ mod tests {
     #[test]
     fn fullscreen_on_other_display_does_not_count() {
         assert!(!covers_screen(Rect { x: 1512.0, y: 0.0, w: 1920.0, h: 1080.0 }, SCREEN));
+    }
+
+    const OTHER: Rect = Rect { x: 1512.0, y: 0.0, w: 1920.0, h: 1080.0 };
+    const SMALL: Rect = Rect { x: 100.0, y: 100.0, w: 600.0, h: 400.0 };
+
+    #[test]
+    fn frontmost_window_covering_the_screen_is_fullscreen() {
+        assert!(fullscreen_in(&[(0, 42, SCREEN), (0, 43, SMALL)], 7, SCREEN));
+    }
+
+    #[test]
+    fn a_screen_sized_window_behind_another_does_not_count() {
+        assert!(!fullscreen_in(&[(0, 43, SMALL), (0, 42, SCREEN)], 7, SCREEN));
+    }
+
+    #[test]
+    fn our_own_and_other_layers_and_other_displays_are_skipped() {
+        let list = [(25, 50, SMALL), (0, 7, SMALL), (0, 44, OTHER), (0, 42, SCREEN)];
+        assert!(fullscreen_in(&list, 7, SCREEN));
+        assert!(!fullscreen_in(&[], 7, SCREEN));
     }
 
     #[test]

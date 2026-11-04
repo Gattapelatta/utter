@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewWindow};
 
 use super::orchestrator::{OverlaySink, OverlayState};
-use super::overlay_rest::{hide_after_state, Presence};
+use super::overlay_rest::{after_fold, on_pill_state, Presence};
 
 pub const LABEL: &str = "overlay";
 /// The window is ordered out only after the island has folded back into the notch
@@ -59,9 +59,8 @@ impl OverlaySink for TauriOverlay {
             Ok(mut g) => g.on_state(),
             Err(_) => return,
         };
-        if let Ok(mut p) = self.presence.lock() {
-            p.busy = !matches!(s, OverlayState::Hidden | OverlayState::Cancelled);
-        }
+        let hidden = matches!(s, OverlayState::Hidden | OverlayState::Cancelled);
+        let fresh = self.presence.lock().map(|mut p| on_pill_state(&mut p, hidden)).unwrap_or(true);
         if matches!(s, OverlayState::Recording { warn: false, .. }) {
             if let Some(t) = self.app.try_state::<OverlayTiming>() {
                 if let Ok(mut t) = t.0.lock() {
@@ -71,7 +70,7 @@ impl OverlaySink for TauriOverlay {
         }
         let app = self.app.clone();
         let state = s.clone();
-        let _ = self.app.run_on_main_thread(move || apply(&app, &state));
+        let _ = self.app.run_on_main_thread(move || apply(&app, &state, fresh));
         let delay = match s {
             OverlayState::Hidden => HIDE_AFTER,
             OverlayState::Cancelled => CANCEL_HIDE_AFTER,
@@ -82,22 +81,24 @@ impl OverlaySink for TauriOverlay {
         let presence = self.presence.clone();
         tauri::async_runtime::spawn(async move {
             tokio::time::sleep(delay).await;
-            let current = gate.lock().map(|g| g.still_current(gen)).unwrap_or(false);
-            // With the ears shown the island folds into them and the window stays (§4.2a).
-            let gone = presence.lock().map(|p| hide_after_state(&p)).unwrap_or(true);
-            if current && gone {
-                let a = app.clone();
-                let _ = app.run_on_main_thread(move || {
-                    if let Some(w) = a.get_webview_window(LABEL) {
-                        order_out(&w);
-                    }
-                });
-            }
+            let a = app.clone();
+            // Decided on the main thread, in order with the watcher's `show_rest`.
+            let _ = app.run_on_main_thread(move || {
+                if !gate.lock().map(|g| g.still_current(gen)).unwrap_or(false) {
+                    return;
+                }
+                // With the ears shown the island folds into them and the window stays (§4.2a).
+                let gone = presence.lock().map(|mut p| after_fold(&mut p)).unwrap_or(true);
+                if gone {
+                    hide_window(&a);
+                }
+            });
         });
     }
 }
 
-fn apply(app: &AppHandle, s: &OverlayState) {
+/// `fresh`: the first state after idle — only then may the window follow the mouse to another display.
+fn apply(app: &AppHandle, s: &OverlayState, fresh: bool) {
     let Some(w) = app.get_webview_window(LABEL) else { return };
     match s {
         // The window stays up while the island folds away; see `TauriOverlay::show`.
@@ -107,7 +108,10 @@ fn apply(app: &AppHandle, s: &OverlayState) {
         }
         _ => {
             // The notch size must reach the page before the state that makes the island grow.
-            place(app, &w);
+            // Mid-recording (limit warning, processing, result) the island never changes display.
+            if fresh {
+                place(app, &w);
+            }
             let _ = app.emit_to(LABEL, "overlay://state", s);
             let clickable = matches!(s, OverlayState::Error { action: Some(_), .. });
             let _ = w.set_ignore_cursor_events(!clickable);
