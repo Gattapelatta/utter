@@ -1,17 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type {
-  FreeLimits,
-  HistoryEntry,
-  KeyId,
-  Mode,
-  OverlayState,
-  PermissionsStatus,
-  ProviderKind,
-  Settings,
-  TrialOutcome,
-  UsageDay,
-} from "./types";
+import type { FreeLimits, HistoryEntry, KeyId, Mode, OverlayState, PermissionsStatus, ProviderKind, Settings, TrialOutcome, UpdateState, UsageDay } from "./types";
 
 export const ipc = {
   getSettings: () => invoke<Settings>("get_settings"),
@@ -41,6 +30,9 @@ export const ipc = {
   openMicrophoneSettings: () => invoke<void>("open_microphone_settings"),
   overlayPainted: () => invoke<void>("overlay_painted"),
   overlayReady: () => invoke<void>("overlay_ready"),
+  updateState: () => invoke<UpdateState>("update_state"),
+  checkUpdates: () => invoke<void>("check_updates"),
+  installUpdate: () => invoke<void>("install_update"),
   overlayFrames: (avg: number, p95: number, max: number, count: number) =>
     invoke<void>("overlay_frames", { avg, p95, max, count }),
 };
@@ -54,6 +46,7 @@ export const events = {
     listen<{ notch: { width: number; height: number } | null }>("overlay://screen", (e) => cb(e.payload)),
   overlayRest: (cb: (r: { shown: boolean }) => void): Promise<UnlistenFn> =>
     listen<{ shown: boolean }>("overlay://rest", (e) => cb(e.payload)),
+  update: (cb: (s: UpdateState) => void): Promise<UnlistenFn> => listen<UpdateState>("ui://update", (e) => cb(e.payload)),
   hotkey: (cb: (e: { mode: Mode; down: boolean }) => void): Promise<UnlistenFn> =>
     listen<{ mode: Mode; down: boolean }>("ui://hotkey", (e) => cb(e.payload)),
   trial: (cb: (o: TrialOutcome) => void): Promise<UnlistenFn> => listen<TrialOutcome>("ui://trial", (e) => cb(e.payload)),

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowUpRight, Check } from "@phosphor-icons/react";
 import { useT } from "../../i18n";
-import { ipc } from "../../lib/ipc";
+import { events, ipc } from "../../lib/ipc";
+import type { UpdateState } from "../../lib/types";
 import { useDropStage } from "../drop/dropStage";
 import { Button } from "../ui/Button";
 import { Row } from "../ui/Row";
@@ -14,11 +15,17 @@ export function About() {
   const t = useT();
   const [info, setInfo] = useState<{ version: string; os: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [update, setUpdate] = useState<UpdateState>({ kind: "idle" });
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
     ipc.appInfo().then(setInfo).catch(() => {});
-    return () => clearTimeout(timer.current);
+    ipc.updateState().then(setUpdate).catch(() => {});
+    const un = events.update(setUpdate);
+    return () => {
+      clearTimeout(timer.current);
+      un.then((f) => f());
+    };
   }, []);
 
   const copyDiagnostics = async () => {
@@ -52,6 +59,13 @@ export function About() {
         <Row label={t("about.os")}>
           <span className="font-mono text-[13px] text-text-secondary">{info?.os ?? "—"}</span>
         </Row>
+        <Row label={t("about.updates")} description={updateText(update, t)}>
+          {update.kind === "available" ? (
+            <Button onClick={() => ipc.installUpdate().catch(() => {})}>{t("about.install")}</Button>
+          ) : update.kind === "idle" || update.kind === "up_to_date" || update.kind === "failed" ? (
+            <Button onClick={() => ipc.checkUpdates().catch(() => {})}>{t("about.check")}</Button>
+          ) : null}
+        </Row>
         <Row label={t("about.diagnostics")} description={t("about.diagnostics_hint")}>
           <Button onClick={copyDiagnostics}>
             {copied ? <Check data-accent size={14} className="text-success" aria-hidden /> : null}
@@ -69,4 +83,24 @@ export function About() {
       </div>
     </section>
   );
+}
+
+/** The line under "Updates": what the updater is doing or found; a failed check is said calmly. */
+function updateText(u: UpdateState, t: ReturnType<typeof useT>): string | undefined {
+  switch (u.kind) {
+    case "checking":
+      return t("about.checking");
+    case "up_to_date":
+      return t("about.up_to_date");
+    case "available":
+      return t("about.available", { version: u.version });
+    case "downloading":
+      return t("about.downloading", { n: u.percent });
+    case "ready":
+      return t("about.ready");
+    case "failed":
+      return t("about.update_failed");
+    default:
+      return undefined;
+  }
 }

@@ -102,3 +102,13 @@ export function keyLabel(k: KeyId): string {
   };
   return names[k] ?? k;
 }
+
+/** The updater's state (Rust `app::updates::UpdateState`). */
+export type UpdateState =
+  | { kind: "idle" }
+  | { kind: "checking" }
+  | { kind: "up_to_date" }
+  | { kind: "available"; version: string; notes: string | null }
+  | { kind: "downloading"; percent: number }
+  | { kind: "ready" }
+  | { kind: "failed" };

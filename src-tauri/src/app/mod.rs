@@ -6,5 +6,6 @@ pub mod overlay_rest;
 pub mod services;
 pub mod settings_window;
 pub mod tray;
+pub mod updates;
 #[cfg(feature = "debug-eval")]
 pub mod debug_eval;

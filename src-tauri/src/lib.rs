@@ -73,6 +73,8 @@ fn init_core(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let hotkeys = Arc::new(HotkeyService::new(settings.hotkeys.clone(), tx.clone()));
 
     app.manage(app::overlay::OverlayTiming::default());
+    app.manage(app::updates::Updates::default());
+    app::updates::spawn(app.handle().clone());
     app::overlay::configure(app.handle());
     let gate: Arc<std::sync::Mutex<app::overlay::HideGate>> = Default::default();
     let presence: Arc<std::sync::Mutex<app::overlay_rest::Presence>> = Default::default();
@@ -138,6 +140,7 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     let builder = builder.plugin(tauri_nspanel::init());
     builder
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             app::settings_window::open(app, None);
@@ -169,6 +172,9 @@ pub fn run() {
             app::commands::open_microphone_settings,
             app::commands::overlay_painted,
             app::commands::overlay_ready,
+            app::commands::update_state,
+            app::commands::check_updates,
+            app::commands::install_update,
             app::commands::overlay_frames,
             app::commands::ui_log,
         ])

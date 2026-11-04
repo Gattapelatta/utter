@@ -163,6 +163,8 @@ pub struct TrayHandles {
     history: MenuItem<Wry>,
     settings: MenuItem<Wry>,
     updates: MenuItem<Wry>,
+    /// The version a found update offers (the item then reads "Update to …").
+    offer: Mutex<Option<String>>,
     quit: MenuItem<Wry>,
     /// Each status change gets a generation; a blink loop stops once a newer one exists.
     gen: Mutex<(u64, AppStatus)>,
@@ -215,6 +217,7 @@ pub fn build(app: &AppHandle, s: &Settings) -> tauri::Result<()> {
         history,
         settings,
         updates,
+        offer: Mutex::new(None),
         quit,
         gen: Mutex::new((0, AppStatus::Idle)),
     });
@@ -262,10 +265,29 @@ pub fn refresh(app: &AppHandle, s: &Settings) {
     let _ = h.casual.set_text(l.casual);
     let _ = h.history.set_text(l.history);
     let _ = h.settings.set_text(l.settings);
-    let _ = h.updates.set_text(l.check_updates);
+    let offer = h.offer.lock().ok().and_then(|o| o.clone());
+    let _ = h.updates.set_text(updates_text(&l, offer.as_deref()));
     let _ = h.quit.set_text(l.quit);
     let status = h.gen.lock().map(|g| g.1).unwrap_or(AppStatus::Idle);
     let _ = h.status.set_text(status_text(&l, status));
+}
+
+/// "Check for updates", or "Update to {v}…" once an update is found.
+fn updates_text(l: &TrayLabels, offer: Option<&str>) -> String {
+    match offer {
+        Some(v) => l.update_to.replace("{v}", v),
+        None => l.check_updates.to_owned(),
+    }
+}
+
+/// Called by the updater when an update is found (or no longer offered).
+pub fn set_update(app: &AppHandle, version: Option<&str>) {
+    let Some(h) = app.try_state::<TrayHandles>() else { return };
+    if let Ok(mut o) = h.offer.lock() {
+        *o = version.map(str::to_owned);
+    }
+    let lang = app.try_state::<AppState>().map(|s| lang_of(&s.shared.settings())).unwrap_or(Lang::En);
+    let _ = h.updates.set_text(updates_text(&labels(lang), version));
 }
 
 fn status_text(l: &TrayLabels, s: AppStatus) -> &'static str {
@@ -330,6 +352,14 @@ mod tests {
     fn px(img: &[u8], x: usize, y: usize) -> [u8; 4] {
         let i = (y * SIZE + x) * 4;
         [img[i], img[i + 1], img[i + 2], img[i + 3]]
+    }
+
+    #[test]
+    fn updates_item_offers_the_found_version() {
+        let ru = labels(Lang::Ru);
+        assert_eq!(updates_text(&ru, None), "Проверить обновления");
+        assert_eq!(updates_text(&ru, Some("1.2.0")), "Обновить до 1.2.0…");
+        assert_eq!(updates_text(&labels(Lang::En), Some("1.2.0")), "Update to 1.2.0…");
     }
 
     #[test]

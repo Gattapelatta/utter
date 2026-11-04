@@ -284,6 +284,22 @@ pub fn overlay_action(app: AppHandle, action: String) {
 }
 
 /// The pill's first painted frame of a recording (budget §8.4: < 50 ms).
+#[tauri::command]
+pub fn update_state(updates: State<super::updates::Updates>) -> super::updates::UpdateState {
+    updates.state()
+}
+
+#[tauri::command]
+pub fn check_updates(app: AppHandle) {
+    tauri::async_runtime::spawn(super::updates::check(app));
+}
+
+/// Installs only on the user's press (§3.7); restarts Utter when done.
+#[tauri::command]
+pub fn install_update(app: AppHandle) {
+    tauri::async_runtime::spawn(super::updates::install(app));
+}
+
 /// The overlay page has loaded its listeners; earlier rest events were lost.
 #[tauri::command]
 pub fn overlay_ready(
