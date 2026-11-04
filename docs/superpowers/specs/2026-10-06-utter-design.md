@@ -207,7 +207,7 @@
 | `accent-danger` | `#F2555A` | `#D93A40` |
 | `accent-warning` (янтарный) | `#F5B544` | `#C98A12` |
 
-Пилюля использует тёмные значения в обеих темах. Все пары текст/фон проверяются на контраст WCAG AA (4.5:1 для основного текста).
+Пилюля использует тёмные значения в обеих темах. Все пары текст/фон проверяются на контраст WCAG AA (4.5:1 для основного текста; тест `src/styles/tokens.test.ts`): `text` и `text-secondary` — на `bg` и `surface`; на `surface-raised` — только `text` (у `text-secondary` там 4,07:1 в тёмной теме); в светлой теме акцентные цвета — только заливки и значки рядом с текстом, не цвет текста.
 
 ### 5.2 Типографика
 
@@ -271,7 +271,7 @@ Rust-ядро владеет всей системной логикой и со�
 
 | Модуль | Ответственность | Зависит от |
 |---|---|---|
-| `hotkey/` | Глобальный слушатель клавиатуры. `mod.rs` — платформонезависимый интерфейс: `start(bindings) -> Receiver<KeyEvent>`, `KeyEvent { key: KeyId, kind: Down/Up, other_key_during_hold: bool }`. `macos.rs` — CGEventTap (listen-only, `kCGEventKeyDown/KeyUp/FlagsChanged`), различение левых/правых модификаторов по keycode, авто-переподключение при `kCGEventTapDisabledByTimeout/ByUserInput`. `windows.rs` — `WH_KEYBOARD_LL` на отдельном потоке с message loop, колбэк только пересылает событие в канал. Режим захвата клавиши для настроек (`capture_next_key`). | ОС |
+| `hotkey/` | Глобальный слушатель клавиатуры. `mod.rs` — платформонезависимый интерфейс: `start(bindings) -> Receiver<KeyEvent>`, `KeyEvent { key: KeyId, kind: Down/Up, other_key_during_hold: bool }`. `macos.rs` — CGEventTap (**активный**, `CGEventTapOptions::Default`: горячие клавиши «проглатываются», свои нажатия Utter помечены `SYNTHETIC_MARK` и пропускаются; `kCGEventKeyDown/KeyUp/FlagsChanged`; при остановке tap выключается и его mach-порт инвалидируется), различение левых/правых модификаторов по keycode, авто-переподключение при `kCGEventTapDisabledByTimeout/ByUserInput`. `windows.rs` — `WH_KEYBOARD_LL` на отдельном потоке с message loop, колбэк только пересылает событие в канал. Режим захвата клавиши для настроек (`capture_next_key`). | ОС |
 | `controller/` | Чистая машина состояний без системных вызовов. Вход: события клавиш, тики времени, результаты задач. Выход: команды (`StartRecording(mode)`, `StopAndSubmit`, `Cancel`, `ShowOverlay(state)`). Реализует удержание/нажатие, порог 0,3 с, лимит 10 мин, Esc, отмену сочетанием. Время — через инжектируемые часы. | — |
 | `recorder/` | `cpal`-захват с устройства ввода по умолчанию (или выбранного), конвертация в mono f32, ресемплинг в 16 кГц (`rubato`), high-pass 80 Гц, обрезка тишины по краям (порог по RMS с запасом 150 мс), нормализация пика к −1 dBFS, кодирование WAV 16-bit (`hound`). Уровни RMS ~30 раз/с в канал для волны. Обработка смены/отключения устройства: переключение на устройство по умолчанию без потери уже записанного. | `cpal`, `rubato`, `hound` |
 | `providers/` | Трейт `SpeechToText { transcribe(wav, language) }` и `TextModel { complete(system, user) }`. Одна реализация `OpenAiCompatible { base_url, api_key, stt_model, text_model }`: Groq — `https://api.groq.com/openai/v1`, OpenAI — `https://api.openai.com/v1`. Общий `reqwest::Client` (keep-alive, HTTP/2), `prewarm()` открывает соединение. Таймаут запроса — 10 с (для аудио длиннее 2 мин — 10 с + 5 с на каждую минуту), таймаут соединения — 3 с; через 4 с ожидания пилюля показывает «Жду ответа сервера…». Вторая реализация `GeminiClient` — Interactions API Google (`POST {base}/interactions`, ключ в заголовке `x-goog-api-key`, аудио передаётся inline base64, `store: false`, подсказка языка — `generation_config.transcription_config.language_codes`). Маппинг ошибок в `ProviderError { Unauthorized, RateLimited { retry_after }, Network, Timeout, BadResponse, Server }`; у Gemini неверный ключ приходит как 400 с «API key not valid» и тоже маппится в `Unauthorized`, задержка при 429 берётся из `retryDelay` в теле. | `reqwest` |
@@ -295,12 +295,12 @@ Rust-ядро владеет всей системной логикой и со�
 
 ### 6.4 Плагины Tauri
 
-`tauri-plugin-autostart`, `tauri-plugin-updater`, `tauri-plugin-single-instance`, tray API ядра Tauri; на macOS — `tauri-nspanel`, `window-vibrancy` не используется (дизайн матовый). `macOSPrivateApi: true` для прозрачных окон.
+`tauri-plugin-autostart`, `tauri-plugin-updater`, `tauri-plugin-single-instance`, tray API ядра Tauri; на macOS — `tauri-nspanel` 2.1 (git): окно острова — non-activating NSPanel, никогда не забирает фокус (долг M8 закрыт), `window-vibrancy` не используется (дизайн матовый). `macOSPrivateApi: true` для прозрачных окон.
 
 ### 6.5 Модели и промпты
 
 - Значения по умолчанию задаются в одном модуле `providers/defaults.rs`:
-  - Gemini: base `https://generativelanguage.googleapis.com/v1beta`, STT `gemini-3.5-transcribe`, текст `gemini-3.5-flash`.
+  - Gemini (по умолчанию): base `https://generativelanguage.googleapis.com/v1beta`, **один запрос «аудио → готовый текст»** на `gemini-3.5-flash-lite` (`thinking_level: minimal`; ~1,3 с, 15 RPM бесплатно против 5 у Flash); `gemini-3.5-transcribe` — запасной STT.
   - Groq: STT `whisper-large-v3-turbo`, текст `openai/gpt-oss-120b`.
   - OpenAI: STT `gpt-4o-mini-transcribe`, текст `gpt-4o-mini`.
 - **Первая задача реализации провайдеров:** сверить названия моделей и лимиты с актуальной документацией Groq и OpenAI; если модель из списка выше устарела — заменить на рекомендованного провайдером преемника и обновить эту спецификацию.
