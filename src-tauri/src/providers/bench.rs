@@ -326,3 +326,24 @@ async fn translate_models_latency() {
         println!("{model}: median {:?} ms of {} ok", times.get(times.len() / 2), times.len());
     }
 }
+
+#[tokio::test]
+#[ignore = "live: raw 429 details and the model list with the user's key"]
+async fn quota_details() {
+    let key = KeychainStore::new().get(ProviderKind::Gemini).expect("Gemini key in Keychain");
+    let http = reqwest::Client::new();
+    let models: Value = http.get(format!("{BASE}/models?pageSize=200")).header("x-goog-api-key", &key).send().await.unwrap().json().await.unwrap();
+    for m in models["models"].as_array().into_iter().flatten() {
+        let name = m["name"].as_str().unwrap_or("");
+        if name.contains("flash") || name.contains("pro") || name.contains("transcribe") {
+            println!("model {name} methods={}", m["supportedGenerationMethods"]);
+        }
+    }
+    for model in ["gemini-3.6-flash", "gemini-3.8-flash"] {
+        let body = json!({"model": model, "input": "Say hi", "store": false, "generation_config": {"thinking_level": "low"}});
+        let r = http.post(format!("{BASE}/interactions")).header("x-goog-api-key", &key).json(&body).send().await.unwrap();
+        let status = r.status();
+        let v: Value = r.json().await.unwrap_or(Value::Null);
+        println!("{model}: HTTP {status}\n{}", serde_json::to_string_pretty(&v.get("error").cloned().unwrap_or(v.clone())).unwrap());
+    }
+}

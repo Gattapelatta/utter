@@ -11,7 +11,12 @@ pub const GEMINI_STT_MODEL: &str = "gemini-3.5-transcribe";
 /// Flash-Lite: ~1.3 s audio→text in one request and 15 RPM on the free tier (Flash: 5 RPM).
 pub const GEMINI_TEXT_MODEL: &str = "gemini-3.5-flash-lite";
 /// Backup when Flash-Lite is slow: 2–3 s audio→text, measured 2026-11-04.
+/// Free tier: only 20 requests per day (429 text, 2026-11-05).
 pub const GEMINI_BACKUP_MODEL: &str = "gemini-3.6-flash";
+/// Translation of live pieces. Measured 2026-11-05, 5 short phrases each: Flash-Lite median
+/// 646 ms (5/5 ok); 3.6 Flash 1.0–1.4 s, then 429 (20 requests/day); 3.7 and 3.8 Flash reject
+/// minimal thinking, 3.8 Flash allows 5 requests/minute.
+pub const GEMINI_TRANSLATE_MODEL: &str = GEMINI_TEXT_MODEL;
 
 /// Backup models in priority order (spec 2026-11-04 §4.5). On 2026-11-04 Flash-Lite took
 /// ~20 s while gemini-3.5-transcribe answered in 1.1 s and gemini-3.6-flash in 2–3 s.
