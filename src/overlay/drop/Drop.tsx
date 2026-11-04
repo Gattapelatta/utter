@@ -25,8 +25,12 @@ interface Props {
   frozen?: boolean;
   /** Living in the notch's ear while idle (§4.2a). */
   rest?: boolean;
-  /** Where the eyes look at first (handed over from the Drop in the notch). */
-  startGaze?: { x: number; y: number };
+  /**
+   * Where the eyes look at first (handed over from the Drop in the notch). A function is read
+   * when the character mounts — after the ear Drop, leaving in the same commit, has said where
+   * its eyes really are.
+   */
+  startGaze?: { x: number; y: number } | (() => { x: number; y: number });
   /** Called whenever the character comes to rest, with where it is looking. */
   onSettle?: (gaze: { x: number; y: number }) => void;
 }
@@ -103,7 +107,8 @@ export function Drop({ mood, level, translate, reduced, size = 48, follow = fals
       w[name] = value;
       el.setAttribute(name, value);
     };
-    const model = createModel(performance.now(), Math.random, start.current);
+    const s = start.current;
+    const model = createModel(performance.now(), Math.random, typeof s === "function" ? s() : s);
     let raf = 0;
     let sleep: ReturnType<typeof setTimeout> | 0 = 0;
     wake.current = () => {

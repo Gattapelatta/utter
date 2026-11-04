@@ -87,4 +87,20 @@ describe("RestDrop", () => {
     const last = l[l.length - 1] as { transform: string };
     expect(last.transform).toBe(`translate(${gaze.current.x * (48 / 74)}px, ${gaze.current.y * (48 / 74)}px)`);
   });
+
+  it("hands back where the eyes are right now when a recording interrupts a look", () => {
+    const gaze = { current: { x: 0, y: 0 } };
+    const view = render(<RestDrop start={{ x: 0, y: 0 }} reduced={false} gazeRef={gaze} />);
+    while (looks().length === 0) vi.advanceTimersByTime(1);
+    const l = looks()[0].keyframes;
+    const to = (l[l.length - 1] as { transform: string }).transform;
+    vi.advanceTimersByTime(250); // a quarter second into a ~1.7 s look
+    view.unmount();
+    const g = gaze.current;
+    const target = to.match(/translate\(([-\d.e]+)px, ([-\d.e]+)px\)/)!.slice(1).map((v) => Number(v) / (48 / 74));
+    const p = 1 - (1 + 5.5 * 0.25) * Math.exp(-5.5 * 0.25);
+    if (target[0] !== 0) expect(g.x / target[0]).toBeCloseTo(p, 2);
+    if (target[1] !== 0) expect(g.y / target[1]).toBeCloseTo(p, 2);
+    expect(Math.abs(g.x - target[0]) + Math.abs(g.y - target[1])).toBeGreaterThan(0.5);
+  });
 });

@@ -2,13 +2,13 @@ import { useEffect, useRef, type MutableRefObject } from "react";
 import { BODY, EYES } from "./Drop";
 import { LOOK_IDLE } from "./dropModel";
 import { eyePath } from "./eye";
-import { blinkFrames, gazeMove, gazeTransform, smileFrames, type Gaze } from "./restMotion";
+import { blinkFrames, gazeMove, gazeProgress, gazeTransform, smileFrames, type Gaze } from "./restMotion";
 
 interface Props {
   /** Where the eyes look when it appears (handed over by the full Drop, so nothing jumps). */
   start: Gaze;
   reduced: boolean;
-  /** Where it is looking now, for handing back to the full Drop. */
+  /** Where it is looking, for handing back to the full Drop — set to where the eyes really are as it leaves. */
   gazeRef?: MutableRefObject<Gaze>;
 }
 
@@ -48,6 +48,8 @@ export function RestDrop({ start, reduced, gazeRef }: Props) {
       a.onfinish = () => animations.delete(a);
     };
     let at = startAt.current;
+    /** The look in progress, to know where the eyes are if a recording interrupts it. */
+    let moving: { from: Gaze; to: Gaze; since: number } | null = null;
 
     const look = () => {
       const [x, y] = LOOK_IDLE[Math.floor(Math.random() * LOOK_IDLE.length)];
@@ -55,6 +57,7 @@ export function RestDrop({ start, reduced, gazeRef }: Props) {
       const { keyframes, duration } = gazeMove(at, to);
       g.style.transform = gazeTransform(to);
       play(g, keyframes, { duration });
+      moving = { from: at, to, since: Date.now() };
       at = to;
       if (gazeRef) gazeRef.current = to;
       later(2000 + Math.random() * 3000, look);
@@ -78,6 +81,11 @@ export function RestDrop({ start, reduced, gazeRef }: Props) {
     }
     later(2800 + Math.random() * 2600, blink);
     return () => {
+      if (gazeRef && moving) {
+        const p = gazeProgress(Date.now() - moving.since);
+        const { from, to } = moving;
+        gazeRef.current = { x: from.x + (to.x - from.x) * p, y: from.y + (to.y - from.y) * p };
+      }
       for (const t of timers) clearTimeout(t);
       for (const a of animations) a.cancel();
     };

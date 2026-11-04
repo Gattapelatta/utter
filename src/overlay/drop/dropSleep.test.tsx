@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render } from "@testing-library/react";
+import { useEffect } from "react";
 import { Drop } from "./Drop";
 
 const invoke = vi.fn(async (_cmd: string, _args?: unknown) => undefined);
@@ -102,5 +103,25 @@ describe("Drop frame loop", () => {
     const g = onSettle.mock.calls[0][0] as { x: number; y: number };
     expect(g.x).toBeCloseTo(-6, 1);
     expect(g.y).toBeCloseTo(-5, 1);
+  });
+
+  it("reads the handed-over gaze when it mounts, after the ear Drop has left", () => {
+    const handed = { x: 0, y: 0 };
+    /** Stands in for the ear Drop: it reports where the eyes are as it unmounts. */
+    function Ear() {
+      useEffect(
+        () => () => {
+          handed.x = -6;
+          handed.y = 2;
+        },
+        [],
+      );
+      return null;
+    }
+    const swap = (ear: boolean) => (ear ? <Ear /> : <Drop mood="idle" level={0} translate={false} reduced startGaze={() => handed} size={26} />);
+    const view = render(swap(true));
+    act(() => view.rerender(swap(false))); // one commit: the ear leaves, the full Drop mounts
+    play(100);
+    expect(view.container.querySelector("[data-eyes]")?.getAttribute("transform")).toBe("translate(-6.000 2.000)");
   });
 });

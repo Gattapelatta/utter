@@ -47,6 +47,12 @@ export function gazeMove(from: Gaze, to: Gaze): { keyframes: { offset: number; t
   };
 }
 
+/** How far along a look is after `ms` (0..1), on the same critically damped gaze spring. */
+export function gazeProgress(ms: number): number {
+  const t = Math.max(0, ms) / 1000;
+  return 1 - (1 + GAZE_OMEGA * t) * Math.exp(-GAZE_OMEGA * t);
+}
+
 /** Samples a 0→1→0 spring move: up for `holdMs`, then back, until it rests. */
 function pulse(omega: number, holdMs: number, sampleMs: number): { values: number[]; duration: number } {
   const s = spring(0, omega);

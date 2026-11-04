@@ -112,7 +112,7 @@ export function Island({ state, level, now, view = "open", notch = null, cancell
               level={level}
               translate={translate.current}
               reduced={reduced}
-              startGaze={gaze.current}
+              startGaze={() => gaze.current}
               onSettle={(g) => {
                 gaze.current = g;
                 if (view === "rest") setHanded(true);
