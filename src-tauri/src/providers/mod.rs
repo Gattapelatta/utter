@@ -2,6 +2,7 @@ mod client;
 pub mod defaults;
 mod error;
 mod gemini;
+pub mod gemini_live;
 #[cfg(test)]
 mod bench;
 

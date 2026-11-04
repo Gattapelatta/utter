@@ -21,6 +21,11 @@ pub const GEMINI_ROUTES: [Route; 3] = [
     Route::Direct { model: GEMINI_BACKUP_MODEL },
 ];
 
+/// Live API (WebSocket): the draft while speaking (spec 2026-11-04 §5.1).
+pub const GEMINI_LIVE_URL: &str =
+    "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
+pub const GEMINI_LIVE_MODEL: &str = "gemini-3.5-transcribe-live";
+
 pub const GROQ_BASE_URL: &str = "https://api.groq.com/openai/v1";
 pub const GROQ_STT_MODEL: &str = "whisper-large-v3-turbo";
 pub const GROQ_TEXT_MODEL: &str = "openai/gpt-oss-120b";

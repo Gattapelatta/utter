@@ -4,6 +4,7 @@ pub mod controller;
 pub mod history;
 pub mod hotkey;
 pub mod jobs;
+pub mod live;
 pub mod output;
 pub mod pipeline;
 pub mod permissions;
