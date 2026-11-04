@@ -347,3 +347,48 @@ async fn quota_details() {
         println!("{model}: HTTP {status}\n{}", serde_json::to_string_pretty(&v.get("error").cloned().unwrap_or(v.clone())).unwrap());
     }
 }
+
+#[tokio::test]
+#[ignore = "live: candidate backup models — audio→text and text latency, limits from 429"]
+async fn backup_candidates() {
+    use crate::pipeline::audio_system_prompt;
+    let key = KeychainStore::new().get(ProviderKind::Gemini).expect("Gemini key in Keychain");
+    let bench = Bench { http: reqwest::Client::new(), key };
+    let _ = bench.http.get(format!("{BASE}/models")).header("x-goog-api-key", &bench.key).send().await;
+    let wav = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests-data/phrase-ru.wav")).unwrap();
+    let audio = json!({"type": "audio", "mime_type": "audio/wav", "data": base64::engine::general_purpose::STANDARD.encode(&wav)});
+    let opts = PipelineOptions { language: Some("ru".into()), cleanup: true, paragraphs: false, style: TranslateStyle::Business };
+    let audio_system = audio_system_prompt(Mode::Dictation, &opts, 9.9).unwrap();
+    let text_system = system_prompt(Mode::Translate, &opts, 5.0).unwrap();
+    let models = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-3-flash-preview"];
+    for model in models {
+        for level in [Some("minimal"), None] {
+            let audio_body = json!({"model": model, "system_instruction": audio_system, "store": false,
+                "input": [{"type": "text", "text": "Process the attached audio. The speaker most likely uses ru-RU."}, audio.clone()],
+                "generation_config": thinking(level)});
+            let (d, out) = bench.interact(audio_body).await;
+            let label = format!("{model} thinking={}", level.unwrap_or("default"));
+            match out {
+                Err(e) if e.contains("thinking") || e.contains("Thinking") => {
+                    println!("{label}: audio → {e}");
+                    continue;
+                }
+                Err(e) => {
+                    println!("{label}: audio ERROR after {} ms: {e}", d.as_millis());
+                    break;
+                }
+                Ok(t) => println!("{label}: audio {} ms → {}", d.as_millis(), t.trim()),
+            }
+            for _ in 0..2 {
+                let body = json!({"model": model, "system_instruction": text_system, "store": false,
+                    "input": user_message("Пришли, пожалуйста, презентацию до пятницы."), "generation_config": thinking(level)});
+                let (d, out) = bench.interact(body).await;
+                match out {
+                    Ok(t) => println!("{label}: text {} ms → {}", d.as_millis(), t.trim()),
+                    Err(e) => println!("{label}: text ERROR after {} ms: {e}", d.as_millis()),
+                }
+            }
+            break;
+        }
+    }
+}
