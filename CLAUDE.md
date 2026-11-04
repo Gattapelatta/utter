@@ -4,11 +4,11 @@ Free, open-source voice-to-text for macOS (Windows later): hold a hotkey, speak,
 
 **Start of every session:** read `docs/superpowers/HANDOFF.md` — current status, decisions made along the way, deferred issues, and how to begin the next plan. The spec is `docs/superpowers/specs/2026-10-06-utter-design.md`; plans live in `docs/superpowers/plans/`.
 
-## Current focus (2026-11-04) — when the user says «продолжаем работу над utter»
+## Current focus (2026-11-05) — when the user says «продолжаем работу над utter»
 
-1. Read `docs/superpowers/HANDOFF.md` («С чего начать следующую сессию»), then the spec `docs/superpowers/specs/2026-11-04-live-dictation-design.md` and the plan `docs/superpowers/plans/2026-11-04-live-dictation.md` (approved by the user 2026-11-04; execution: Native, `executing-plans`).
-2. Start with **Task 0 — backup models with hedging**: today one slow model (`gemini-3.5-flash-lite` ~20 s on 2026-11-04) breaks every dictation; the user's hard requirement is «нажал клавишу — 100 % получил текст». Then Tasks 1–8: live dictation (draft in the field while speaking via Utter's own input method, final on release).
-3. Plan 2 Task 13 is paused half-way (done: tests green, idle memory leak fixed, M16 spec drift; left: RU-layout paste matrix, stress test, budgets over 20 dictations, theme × language visual walk) — finish it after the live-dictation plan, since that plan changes delivery.
+1. Read `docs/superpowers/HANDOFF.md` («С чего начать следующую сессию» and «Диктовка на лету — ход выполнения»), the spec `docs/superpowers/specs/2026-11-04-live-dictation-design.md`, the plan `docs/superpowers/plans/2026-11-04-live-dictation.md` and its ledger `.superpowers/sdd/2026-11-04-live-dictation/progress.md` (execution: Native, `executing-plans`).
+2. Tasks 0–4 are done. **Task 5 is blocked on macOS not enabling the «Utter» input source** (a stale entry of the 2026-11-04 prototype at the same path); next step per HANDOFF: a fresh bundle id and file name for the input method. Then Tasks 6–8.
+3. Plan 2 Task 13 is paused half-way — finish it after the live-dictation plan.
 
 ## Working with the user
 
@@ -39,6 +39,8 @@ open src-tauri/target/release/bundle/macos/Utter.app
 - Motion smoothness is judged by video, not by rAF timestamps: record `screencapture -v -V 3 -R <window rect>` and track the Drop per frame (a `+0` step followed by a double step = a missed frame).
 - The built-in browser pane does not run `requestAnimationFrame` while hidden — it cannot judge animations; use Vitest (jsdom) for motion logic and the real app for feel.
 - Every rebuild makes macOS ask for Keychain access (self-signed cdhash; user decided to keep it until a Developer ID in Plan 3): warn the user, wait until `SecurityAgent` disappears, then `open Utter.app` again to show the settings window.
+- Never kill processes by a loose pattern (`pkill -f …` once closed every app on the user's Mac): only `pkill -x utter` / `killall UtterIM`; any system process only with the user's OK.
+- Text Input Sources: a process caches the source list at its first TIS query, so register an input method before listing (or in a fresh process); `TISEnableInputSource` may return 0 without enabling.
 - `#[ignore]` tests touch the real Keychain, microphone, or network with the user's API key — run them only with the user's consent.
 
 ## Architecture notes that are easy to get wrong
