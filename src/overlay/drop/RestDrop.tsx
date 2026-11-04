@@ -33,7 +33,10 @@ export function RestDrop({ start, reduced, gazeRef }: Props) {
     const s = smile.current;
     if (!g || !o || !s) return;
     const timers = new Set<ReturnType<typeof setTimeout>>();
-    const animations = new Set<Animation>();
+    // One animation per kind of move, replayed each time: a new Animation every few seconds is
+    // kept by WebKit long after it ends (a bare WKWebView grew 34 MB in 3 minutes; replaying
+    // one stayed flat).
+    const live = new Map<string, Animation>();
     const later = (ms: number, fn: () => void) => {
       const t = setTimeout(() => {
         timers.delete(t);
@@ -41,11 +44,18 @@ export function RestDrop({ start, reduced, gazeRef }: Props) {
       }, ms);
       timers.add(t);
     };
-    const play = (el: Element, keyframes: Keyframe[], options: KeyframeAnimationOptions) => {
+    const play = (kind: string, el: Element, keyframes: Keyframe[], duration: number, changes: boolean) => {
       if (typeof el.animate !== "function") return;
-      const a = el.animate(keyframes, options);
-      animations.add(a);
-      a.onfinish = () => animations.delete(a);
+      const a = live.get(kind);
+      if (!a) {
+        live.set(kind, el.animate(keyframes, { duration }));
+        return;
+      }
+      const effect = a.effect as KeyframeEffect | null;
+      if (changes) effect?.setKeyframes(keyframes);
+      effect?.updateTiming({ duration });
+      a.currentTime = 0;
+      a.play();
     };
     let at = startAt.current;
     /** The look in progress, to know where the eyes are if a recording interrupts it. */
@@ -56,7 +66,7 @@ export function RestDrop({ start, reduced, gazeRef }: Props) {
       const to = { x, y };
       const { keyframes, duration } = gazeMove(at, to);
       g.style.transform = gazeTransform(to);
-      play(g, keyframes, { duration });
+      play("gaze", g, keyframes, duration, true);
       moving = { from: at, to, since: Date.now() };
       at = to;
       if (gazeRef) gazeRef.current = to;
@@ -64,13 +74,13 @@ export function RestDrop({ start, reduced, gazeRef }: Props) {
     };
     const blink = () => {
       const { keyframes, duration } = blinkFrames();
-      play(o, keyframes, { duration });
+      play("blink", o, keyframes, duration, false);
       later(2800 + Math.random() * 2600, blink);
     };
     const smileOnce = () => {
       const f = smileFrames();
-      play(o, f.open, { duration: f.duration });
-      play(s, f.smile, { duration: f.duration });
+      play("smile-open", o, f.open, f.duration, false);
+      play("smile", s, f.smile, f.duration, false);
       later(30_000 + Math.random() * 30_000, smileOnce);
     };
 
@@ -87,7 +97,7 @@ export function RestDrop({ start, reduced, gazeRef }: Props) {
         gazeRef.current = { x: from.x + (to.x - from.x) * p, y: from.y + (to.y - from.y) * p };
       }
       for (const t of timers) clearTimeout(t);
-      for (const a of animations) a.cancel();
+      for (const a of live.values()) a.cancel();
     };
   }, [reduced, gazeRef]);
 

@@ -4,7 +4,10 @@ import { cleanup, render } from "@testing-library/react";
 import { RestDrop } from "./RestDrop";
 
 type Call = { el: Element; keyframes: Keyframe[]; options: KeyframeAnimationOptions };
+/** Every time a move plays (a new animation or a replayed one), with its keyframes. */
 let calls: Call[] = [];
+/** Animations created with Element.animate — each one lives until the page drops it. */
+let created = 0;
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -15,9 +18,28 @@ beforeEach(() => {
     return seed / 2147483648;
   });
   vi.stubGlobal("requestAnimationFrame", vi.fn());
+  created = 0;
   Element.prototype.animate = function (this: Element, keyframes: Keyframe[], options: KeyframeAnimationOptions) {
-    calls.push({ el: this, keyframes, options });
-    return { cancel() {}, finish() {}, onfinish: null } as unknown as Animation;
+    const el = this;
+    let frames = keyframes;
+    created++;
+    calls.push({ el, keyframes: frames, options });
+    const effect = {
+      setKeyframes(k: Keyframe[]) {
+        frames = k;
+      },
+      updateTiming() {},
+    };
+    return {
+      effect,
+      currentTime: 0,
+      cancel() {},
+      finish() {},
+      play() {
+        calls.push({ el, keyframes: frames, options });
+      },
+      onfinish: null,
+    } as unknown as Animation;
   } as Element["animate"];
 });
 afterEach(() => {
@@ -102,5 +124,14 @@ describe("RestDrop", () => {
     if (target[0] !== 0) expect(g.x / target[0]).toBeCloseTo(p, 2);
     if (target[1] !== 0) expect(g.y / target[1]).toBeCloseTo(p, 2);
     expect(Math.abs(g.x - target[0]) + Math.abs(g.y - target[1])).toBeGreaterThan(0.5);
+  });
+
+  it("replays one animation per kind of move instead of piling up new ones", () => {
+    render(<RestDrop start={{ x: 0, y: 0 }} reduced={false} />);
+    vi.advanceTimersByTime(300_000);
+    expect(looks().length).toBeGreaterThan(50);
+    // Measured in a bare WKWebView: a new animation every few seconds grew the page by
+    // 34 MB in 3 minutes; replaying one kept it flat. Gaze, blink, and smile (two layers).
+    expect(created).toBeLessThanOrEqual(4);
   });
 });
