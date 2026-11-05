@@ -8,7 +8,7 @@ use core_foundation::data::{CFData, CFDataRef};
 use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
 use core_foundation::string::{CFString, CFStringRef};
 
-pub const IM_IDENTIFIER: &str = "app.utter.desktop.inputmethod";
+pub const IM_IDENTIFIER: &str = super::IM_ID;
 
 type OSStatus = i32;
 type SecCodeRef = *const c_void;
@@ -110,7 +110,7 @@ mod tests {
     fn requirement_string() {
         assert_eq!(
             requirement(IM_IDENTIFIER, "5439ABCD"),
-            r#"identifier "app.utter.desktop.inputmethod" and certificate leaf = H"5439ABCD""#
+            r#"identifier "app.utter.inputmethod.live" and certificate leaf = H"5439ABCD""#
         );
     }
 

@@ -28,10 +28,11 @@ pub fn needs_install(bundled: &Path, installed: &Path) -> bool {
 }
 
 pub fn installed_path() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Input Methods/UtterIM.app"))
+    std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Input Methods/UtterLive.app"))
 }
 
-/// Copies (when needed), registers and enables the input method. Returns whether it was copied.
+/// Copies (when needed), registers and asks macOS to enable the input method. Returns whether
+/// it was copied; `tis::is_enabled` (in a fresh list) tells whether the user has added it.
 pub fn install(bundled: &Path) -> Result<bool, String> {
     let installed = installed_path().ok_or("no home folder")?;
     let copied = needs_install(bundled, &installed);
@@ -47,14 +48,12 @@ pub fn install(bundled: &Path) -> Result<bool, String> {
         // A running old copy would keep serving fields.
         let _ = std::process::Command::new("/usr/bin/killall").arg("UtterIM").status();
     }
-    if !tis::is_enabled(IM_ID) {
-        if !tis::register(&installed) {
-            return Err("register failed".into());
-        }
-        if !tis::enable(IM_ID) {
-            return Err("enable failed".into());
-        }
+    if !tis::register(&installed) {
+        return Err("register failed".into());
     }
+    // macOS 15 answers "ok" but enables a third-party input method only when the user adds
+    // it in System Settings (measured 2026-11-05); ask, never fail on it.
+    let _ = tis::enable(IM_ID);
     Ok(copied)
 }
 
@@ -94,6 +93,23 @@ mod tests {
         assert!(needs_install(&bundled, &bundle(d.path(), "rebuilt.app", Some(2), b"other")), "same version, new build");
         assert!(!needs_install(&bundled, &bundle(d.path(), "newer.app", Some(3), b"x")), "newer installed");
         assert!(!needs_install(&d.path().join("none.app"), &bundled), "nothing bundled");
+    }
+
+    /// The input method's plist names the same source, connection and bundle as the code.
+    #[test]
+    fn plist_ids_match_the_code() {
+        let plist = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../macos/UtterIM/Info.plist")).unwrap();
+        let value = |key: &str| {
+            let after = plist.split(&format!("<key>{key}</key>")).nth(1).unwrap();
+            after.split("<string>").nth(1).unwrap().split("</string>").next().unwrap().to_string()
+        };
+        assert_eq!(value("CFBundleIdentifier"), IM_ID);
+        assert_eq!(value("TISInputSourceID"), IM_ID);
+        assert_eq!(value("InputMethodConnectionName"), format!("{IM_ID}_Connection"));
+        assert_eq!(super::super::peer::IM_IDENTIFIER, IM_ID);
+        // A fresh id: macOS still maps the 2026-11-04 prototype's path and id to old entries.
+        assert_eq!(IM_ID, "app.utter.inputmethod.live");
+        assert!(installed_path().unwrap().ends_with("Input Methods/UtterLive.app"));
     }
 
     #[test]

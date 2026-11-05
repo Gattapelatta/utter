@@ -4,7 +4,7 @@ import Cocoa
 import InputMethodKit
 
 let connectionName = Bundle.main.infoDictionary?["InputMethodConnectionName"] as? String
-    ?? "app.utter.desktop.inputmethod_Connection"
+    ?? "app.utter.inputmethod.live_Connection"
 let server = IMKServer(name: connectionName, bundleIdentifier: Bundle.main.bundleIdentifier)
 _ = server
 IMLog.write("started, version \(Channel.version)")

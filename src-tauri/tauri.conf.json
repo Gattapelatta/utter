@@ -46,7 +46,7 @@
     ],
     "macOS": {
       "files": {
-        "Resources/UtterIM.app": "../macos/UtterIM/build/UtterIM.app"
+        "Resources/UtterLive.app": "../macos/UtterIM/build/UtterLive.app"
       }
     }
   },

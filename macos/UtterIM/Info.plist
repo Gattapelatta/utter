@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleIdentifier</key>
-	<string>app.utter.desktop.inputmethod</string>
+	<string>app.utter.inputmethod.live</string>
 	<key>CFBundleName</key>
 	<string>Utter</string>
 	<key>CFBundleDisplayName</key>
@@ -23,11 +23,11 @@
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>InputMethodConnectionName</key>
-	<string>app.utter.desktop.inputmethod_Connection</string>
+	<string>app.utter.inputmethod.live_Connection</string>
 	<key>InputMethodServerControllerClass</key>
 	<string>UtterController</string>
 	<key>TISInputSourceID</key>
-	<string>app.utter.desktop.inputmethod</string>
+	<string>app.utter.inputmethod.live</string>
 	<key>TISIntendedLanguage</key>
 	<string>ru</string>
 	<key>tsInputMethodCharacterRepertoireKey</key>

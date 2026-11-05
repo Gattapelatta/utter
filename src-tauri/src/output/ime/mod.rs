@@ -16,7 +16,9 @@ use std::time::Duration;
 
 use channel::{ImChannel, ToIm};
 
-pub const IM_ID: &str = "app.utter.desktop.inputmethod";
+/// Not `app.utter.desktop.inputmethod`: macOS kept mapping that path to the 2026-11-04
+/// prototype and would not enable it (2026-11-05).
+pub const IM_ID: &str = "app.utter.inputmethod.live";
 /// F19: the input method swallows it; posting it makes the field connect at once.
 pub const WAKE_KEY: u16 = 80;
 /// How long the field may take to connect after the wake key.
@@ -205,6 +207,9 @@ pub fn start(bundled: PathBuf, data_dir: PathBuf) -> Arc<dyn DraftField> {
         match install::install(&bundled) {
             Ok(copied) => tracing::info!(copied, "input method installed"),
             Err(e) => return tracing::warn!("input method not installed: {e}"),
+        }
+        if !tis::is_enabled(IM_ID) {
+            return tracing::warn!("input method not enabled: the user adds «Utter» in System Settings → Keyboard");
         }
         std::thread::sleep(Duration::from_millis(1_500));
         if !ch.connected() {

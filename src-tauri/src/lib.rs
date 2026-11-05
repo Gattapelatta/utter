@@ -64,7 +64,7 @@ fn init_core(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let settings = settings::load(&data_dir.join("settings.json"), lang.as_deref());
     app::tray::build(app.handle(), &settings)?;
     #[cfg(target_os = "macos")]
-    let draft_field = output::ime::start(app.path().resource_dir()?.join("UtterIM.app"), data_dir.clone());
+    let draft_field = output::ime::start(app.path().resource_dir()?.join("UtterLive.app"), data_dir.clone());
     #[cfg(not(target_os = "macos"))]
     let draft_field: Arc<dyn output::ime::DraftField> = Arc::new(output::ime::NoDraftField);
     app.manage(output::ime::DraftFieldState(draft_field));
