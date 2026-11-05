@@ -5,7 +5,7 @@ import { useClock } from "./useClock";
 import type { Notch } from "./drop/islandMotion";
 import { events, ipc } from "../lib/ipc";
 import { useApp } from "../lib/store";
-import type { OverlayState } from "../lib/types";
+import type { DraftParts, OverlayState } from "../lib/types";
 import "./overlay.css";
 
 function Overlay() {
@@ -13,6 +13,7 @@ function Overlay() {
   const [rest, setRest] = useState(false);
   const [level, setLevel] = useState(0);
   const [notch, setNotch] = useState<Notch>(null);
+  const [draft, setDraft] = useState<DraftParts | null>(null);
   const visible = state.kind !== "hidden" && state.kind !== "cancelled";
   const now = useClock(visible);
 
@@ -23,6 +24,7 @@ function Overlay() {
     // Speech RMS rarely exceeds ~0.3; scale so normal speech reaches ~1.
     const un2 = events.overlayLevel((l) => setLevel(Math.min(1, Math.sqrt(l) * 2.2)));
     const un3 = events.overlayRest((r) => setRest(r.shown));
+    const un4 = events.overlayDraft((d) => setDraft(d));
     // Events sent before these listeners existed are lost: ask for the ears again.
     Promise.all([un0, un3]).then(() => ipc.overlayReady().catch(() => {}));
     // Diagnostics: whether WebKit treats the page as visible when the pill is shown.
@@ -34,6 +36,7 @@ function Overlay() {
       un1.then((f) => f());
       un2.then((f) => f());
       un3.then((f) => f());
+      un4.then((f) => f());
       document.removeEventListener("visibilitychange", vis);
     };
   }, []);
@@ -43,6 +46,8 @@ function Overlay() {
   useEffect(() => {
     const recording = state.kind === "recording";
     if (recording && !wasRecording.current) {
+      // A new recording never shows the last one's draft.
+      setDraft(null);
       requestAnimationFrame(() => requestAnimationFrame(() => ipc.overlayPainted().catch(() => {})));
     }
     wasRecording.current = recording;
@@ -54,8 +59,8 @@ function Overlay() {
 
   return (
     <>
-      <Stage state={state} rest={rest} notch={notch} level={level} now={now} onClick={onClick} />
-      {import.meta.env.DEV && <DevStates onState={setState} onLevel={setLevel} onNotch={setNotch} onRest={setRest} />}
+      <Stage state={state} rest={rest} notch={notch} level={level} now={now} onClick={onClick} draft={draft} />
+      {import.meta.env.DEV && <DevStates onState={setState} onLevel={setLevel} onNotch={setNotch} onRest={setRest} onDraft={setDraft} />}
     </>
   );
 }
@@ -66,11 +71,13 @@ function DevStates({
   onLevel,
   onNotch,
   onRest,
+  onDraft,
 }: {
   onState: (s: OverlayState) => void;
   onLevel: (l: number) => void;
   onNotch: (n: Notch) => void;
   onRest: (f: (r: boolean) => boolean) => void;
+  onDraft: (d: DraftParts | null) => void;
 }) {
   const [on, setOn] = useState(false);
   useEffect(() => {
@@ -100,6 +107,8 @@ function DevStates({
       <button onClick={() => onNotch({ width: 179, height: 32 })}>notch</button>
       <button onClick={() => onNotch(null)}>no notch</button>
       <button onClick={() => onRest((r) => !r)}>rest</button>
+      <button onClick={() => onDraft({ settled: "Привет, слушай, я посмотрела отчёт по продажам за сентябрь.", interim: "В целом всё" })}>draft</button>
+      <button onClick={() => onDraft(null)}>no draft</button>
     </div>
   );
 }

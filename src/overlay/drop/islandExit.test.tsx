@@ -13,7 +13,7 @@ const hidden: OverlayState = { kind: "hidden" };
 /** Width of the black shape from its clip-path inset. */
 const width = (el: Element | null) => {
   const m = (el as HTMLElement | null)?.style.clipPath.match(/inset\(0px ([\d.]+)px/);
-  return m ? 360 - 2 * Number(m[1]) : NaN;
+  return m ? 420 - 2 * Number(m[1]) : NaN;
 };
 const shape = (c: HTMLElement) => c.querySelector("[data-shape]");
 const wait = (ms: number) => act(() => new Promise((r) => setTimeout(r, ms)));
@@ -69,5 +69,60 @@ describe("island and ears", () => {
     await wait(700);
     expect(container.querySelector("svg")).not.toBeNull();
     expect(container.querySelector("[data-timer]")).toBeNull();
+  });
+});
+
+describe("draft window", () => {
+  const draft = { settled: "Привет, слушай", interim: "я" };
+  const proc: OverlayState = { kind: "processing", pending: 1, since_ms: 0 };
+  const done: OverlayState = { kind: "done", outcome: "pasted", degraded: false };
+  const at = (state: OverlayState, d: typeof draft | null) => <Stage state={state} rest={true} notch={notch} level={0} now={7_000} draft={d} />;
+  const viewOf = (c: HTMLElement) => c.querySelector("[data-island]")?.getAttribute("data-view");
+
+  it("window_opens_only_with_draft", async () => {
+    const { container, rerender } = render(at(rec, null));
+    await wait(50);
+    expect(viewOf(container)).toBe("open");
+    expect(container.querySelector("[data-draft-panel]")).toBeNull();
+    rerender(at(rec, draft));
+    await wait(50);
+    expect(viewOf(container)).toBe("window");
+    expect(container.querySelector("[data-draft-panel]")).not.toBeNull();
+    rerender(at(proc, draft));
+    expect(viewOf(container)).toBe("window");
+    expect(container.querySelector("[data-timer]")?.textContent).toBe("0:07");
+  });
+
+  it("done_after_window_marks_leaving: field and timer leave together, then go", async () => {
+    const { container, rerender } = render(at(proc, draft));
+    await wait(50);
+    rerender(at(done, null));
+    expect(viewOf(container)).toBe("open");
+    expect(container.querySelector("[data-draft-panel]"), "still leaving").not.toBeNull();
+    expect(container.querySelector("[data-timer]"), "timer leaves with it").not.toBeNull();
+    await wait(600);
+    expect(container.querySelector("[data-draft-panel]")).toBeNull();
+    // The timer fades out in the wing (its slot stays, as in every state).
+    expect((container.querySelector("[data-slot]") as HTMLElement).style.opacity).toBe("0");
+  });
+
+  it("the field is clipped by the island's shape, so it never hangs below a shrinking island", async () => {
+    const { container } = render(at(rec, draft));
+    await wait(50);
+    const clipBox = container.querySelector("[data-draft-clip]") as HTMLElement;
+    expect(clipBox.contains(container.querySelector("[data-draft-panel]"))).toBe(true);
+    await wait(700);
+    expect(clipBox.style.clipPath).toBe((container.querySelector("[data-shape]") as HTMLElement).style.clipPath);
+  });
+
+  it("new_recording_starts_without_old_draft", async () => {
+    const { container, rerender } = render(at(proc, draft));
+    await wait(50);
+    rerender(at(done, null));
+    await wait(600);
+    rerender(at(rec, null));
+    await wait(50);
+    expect(viewOf(container)).toBe("open");
+    expect(container.querySelector("[data-draft-panel]")).toBeNull();
   });
 });

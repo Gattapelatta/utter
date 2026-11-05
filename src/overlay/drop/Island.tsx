@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { motion, useIsPresent, usePresenceData } from "motion/react";
+import { AnimatePresence, motion, useIsPresent, usePresenceData } from "motion/react";
 import { useT } from "../../i18n";
-import type { OverlayState } from "../../lib/types";
+import type { DraftParts, OverlayState } from "../../lib/types";
+import { DraftPanel } from "./DraftPanel";
 import { Drop, type Mood } from "./Drop";
 import { RestDrop } from "./RestDrop";
 import type { Gaze } from "./restMotion";
-import { contentTarget, dropTarget, shapeTarget, type Notch, type View } from "./islandMotion";
+import { contentTarget, dropTarget, shapeTarget, timerLeaveTarget, timerTarget, type Notch, type View } from "./islandMotion";
 
 /** After this long without an answer the network is the likely culprit. */
 const SLOW_AFTER_MS = 4_000;
@@ -43,6 +44,8 @@ interface Props {
   notch?: Notch;
   /** The recording was cancelled with Esc: fold faster. */
   cancelled?: boolean;
+  /** The live draft shown in the window view. */
+  draft?: DraftParts | null;
 }
 
 /**
@@ -50,7 +53,7 @@ interface Props {
  * (§4.2). The shape is a clip of the island; the Drop flies between its place on the island
  * and the left ear.
  */
-export function Island({ state, level, now, view = "open", notch = null, cancelled = false }: Props) {
+export function Island({ state, level, now, view = "open", notch = null, cancelled = false, draft = null }: Props) {
   const t = useT();
   const reduced = useMemo(prefersReducedMotion, []);
   // While leaving, the props are those of the last render; AnimatePresence passes the fresh "cancelled".
@@ -60,9 +63,23 @@ export function Island({ state, level, now, view = "open", notch = null, cancell
   // Non-recording states keep the colour of the recording they belong to.
   const translate = useRef(false);
   if (state.kind === "recording") translate.current = state.mode === "Translate";
+  // This recording opened the draft window: its timer stays in the wing until it leaves with the field.
+  const windowed = useRef(false);
+  if (view === "window") windowed.current = true;
+  else if (state.kind === "recording") windowed.current = false;
+  const lastTimer = useRef("0:00");
+  if (state.kind === "recording") lastTimer.current = formatTimer(now - state.started_at_ms);
+  const frozenTimer = (
+    <span className="island-timer">
+      <span data-timer>{lastTimer.current}</span>
+    </span>
+  );
+  const fieldLeaving = windowed.current && state.kind === "done" && state.outcome !== "copied";
 
   let right: React.ReactNode = null;
-  if (state.kind === "recording") {
+  if (fieldLeaving || (windowed.current && state.kind === "processing")) {
+    right = frozenTimer;
+  } else if (state.kind === "recording") {
     right = (
       <span className="island-timer" data-warn={state.warn ? "" : undefined}>
         <span data-timer>{formatTimer(now - state.started_at_ms)}</span>
@@ -88,7 +105,12 @@ export function Island({ state, level, now, view = "open", notch = null, cancell
     shape: shapeTarget(v, folded.notch, folded.fast, folded.reduced),
     drop: dropTarget(v, folded.notch, folded.fast, folded.reduced),
   });
-  const open = view === "open";
+  const open = view === "open" || view === "window";
+  const content = contentTarget(open ? "open" : "rest");
+  const timer = timerTarget(view === "window" ? "window" : "open");
+  const slot = fieldLeaving
+    ? timerLeaveTarget()
+    : { opacity: content.opacity, filter: "blur(0px)", transform: timer.transform, transition: { opacity: content.transition, transform: timer.transition, filter: { duration: 0 } } };
   // In the ear the full Drop hands over to the compositor-driven one once it has come to rest,
   // and takes the eyes back from it when a recording starts (§4.2a, idle budget §8.4).
   const gaze = useRef<Gaze>({ x: 0, y: 0 });
@@ -99,8 +121,13 @@ export function Island({ state, level, now, view = "open", notch = null, cancell
   const inEar = view === "rest" && handed;
 
   return (
-    <div data-island className="island" data-clickable={state.kind === "error" && state.action ? "" : undefined}>
+    <div data-island data-view={view} className="island" data-clickable={state.kind === "error" && state.action ? "" : undefined}>
       <motion.div data-shape className="island-shape" initial={at("folded").shape} animate={at(view).shape} exit={at("folded").shape} />
+      {/* The field is cut by the island's own shape: while the window shrinks back into the island,
+          a fading field must not hang below it. */}
+      <motion.div data-draft-clip className="island-shape-clip" initial={at("folded").shape} animate={at(view).shape} exit={at("folded").shape}>
+        <AnimatePresence>{view === "window" && draft && <DraftPanel key="draft" draft={draft} />}</AnimatePresence>
+      </motion.div>
       <div className="island-row">
         <motion.div data-drop-place initial={at("folded").drop} animate={at(view).drop} exit={at("folded").drop}>
           {inEar ? (
@@ -121,7 +148,7 @@ export function Island({ state, level, now, view = "open", notch = null, cancell
           )}
         </motion.div>
         {/* Always present and fixed-width: the character keeps its place between states. */}
-        <motion.span data-slot className="island-slot" initial={{ opacity: 0 }} animate={contentTarget(open ? "open" : "rest")} exit={contentTarget("folded")}>
+        <motion.span data-slot className="island-slot" initial={{ opacity: 0 }} animate={slot} exit={contentTarget("folded")}>
           {right}
         </motion.span>
       </div>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clip, contentTarget, dropTarget, foldedBox, ISLAND_BOX, restBox, restDropOffset, shapeTarget } from "./islandMotion";
+import { clip, contentTarget, dropTarget, foldedBox, ISLAND_BOX, leaveTarget, restBox, restDropOffset, shapeTarget, timerTarget, WINDOW_BOX } from "./islandMotion";
 
 const notch = { width: 185, height: 32 };
 /** The same string with every number replaced: Motion only interpolates matching templates. */
@@ -40,11 +40,35 @@ describe("island geometry", () => {
   it("every shape uses one clip template", () => {
     const all = [notch, null].flatMap((n) => [clip(restBox(n)), clip(foldedBox(n)), clip(ISLAND_BOX)]);
     for (const c of all) expect(template(c)).toBe(template(all[0]));
-    expect(clip(ISLAND_BOX)).toBe("inset(0px 0px 0px 0px round 0px 0px 40px 40px)");
+    expect(clip(ISLAND_BOX)).toBe("inset(0px 30px 102px 30px round 0px 0px 40px 40px)");
+    expect(template(clip(WINDOW_BOX))).toBe(template(all[0]));
+  });
+
+  it("the draft window is the whole 420 × 206 base", () => {
+    expect(WINDOW_BOX).toEqual({ w: 420, h: 206, r: 30 });
+    expect(clip(WINDOW_BOX)).toBe("inset(0px 0px 0px 0px round 0px 0px 30px 30px)");
+  });
+
+  it("in the window the Drop sits in the left wing: centre (37, 43), 26 pt", () => {
+    // Island place of the Drop in the 420 base: centre (164, 61).
+    expect(dropTarget("window", notch, false, false).transform).toBe("translate(-127px, -18px) scale(0.541667)");
+    expect(dropTarget("window", notch, false, false).opacity).toBe(1);
+  });
+
+  it("in the window the timer shrinks to 13 pt with its right edge 24 pt from the window's", () => {
+    expect(timerTarget("open").transform).toBe("translate(0px, 0px) scale(1)");
+    // Slot left in the base: 164 + 24 + 44 = 232, 48 wide; 13/21 of it ends at 420 − 24 = 396.
+    expect(timerTarget("window").transform).toBe("translate(134.2857px, -18px) scale(0.619048)");
+    expect(template(timerTarget("window").transform)).toBe(template(timerTarget("open").transform));
+  });
+
+  it("the field and the timer leave together: fade, rise 10, shrink to 0.96, blur 2, 0.3 s", () => {
+    expect(leaveTarget).toMatchObject({ opacity: 0, y: -10, scale: 0.96, filter: "blur(2px)" });
+    expect((leaveTarget as T).transition.duration).toBe(0.3);
   });
 
   it("every Drop place uses one transform template", () => {
-    const all = (["open", "rest", "folded"] as const).flatMap((v) => [notch, null].map((n) => dropTarget(v, n, false, false).transform));
+    const all = (["open", "window", "rest", "folded"] as const).flatMap((v) => [notch, null].map((n) => dropTarget(v, n, false, false).transform));
     for (const t of all) expect(template(t)).toBe(template(all[0]));
     expect(dropTarget("open", notch, false, false).transform).toBe("translate(0px, 0px) scale(1)");
   });

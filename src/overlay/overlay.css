@@ -17,10 +17,12 @@ body,
   justify-content: center;
 }
 
+/* The base every shape is cut from: the 420 × 206 draft window (spec 2026-11-06). The open
+   island's content keeps its 360 × 104 frame, centred at the top. */
 .island {
   position: relative;
-  width: 360px;
-  height: 104px;
+  width: 420px;
+  height: 206px;
 }
 /* The black shape: notch, ears (§4.2a) or island, cut out of the island's box by clip-path.
    Only the shape is clipped; the Drop's rings and effects may reach past it. */
@@ -28,6 +30,11 @@ body,
   position: absolute;
   inset: 0;
   background: #000;
+}
+.island-shape-clip {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }
 .island[data-clickable] {
   cursor: pointer;
@@ -38,7 +45,10 @@ body,
    approved 2026-10-08). */
 .island-row {
   position: absolute;
-  inset: 18px 0 0 0;
+  top: 18px;
+  left: 30px;
+  width: 360px;
+  height: 86px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -59,6 +69,7 @@ body,
    slot's left edge and run towards the island's right edge, so nothing shifts. */
 .island-slot {
   position: relative;
+  transform-origin: 0% 50%;
   width: 48px;
   height: 21px;
   display: flex;
