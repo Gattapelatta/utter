@@ -77,8 +77,8 @@ pub fn error_of(reason: &str) -> ProviderError {
     }
 }
 
-/// Starts one live dictation. `draft` gets the island's draft (`None` at the end, always);
-/// `done` gets the outcome once.
+/// Starts one live dictation. `draft` gets the island's draft (`None` only on cancel: on any other
+/// outcome the window stays until the orchestrator has pasted the text); `done` gets the outcome once.
 pub fn spawn(
     req: LiveRequest,
     connector: Arc<dyn LiveConnector>,
@@ -88,7 +88,9 @@ pub fn spawn(
     let (tx, rx) = mpsc::unbounded_channel();
     tokio::spawn(async move {
         let outcome = run(req, connector, draft.as_ref(), rx).await;
-        draft(None);
+        if outcome == LiveOutcome::Cancelled {
+            draft(None);
+        }
         if let LiveOutcome::Fallback { reason, .. } = &outcome {
             tracing::info!(reason = %reason, "live fallback");
         }
@@ -365,7 +367,7 @@ mod tests {
         let out = r.outcome.await.unwrap();
         assert_eq!(out, LiveOutcome::Final { text: "Привет, мир.".into(), raw: "Привет, мир.".into(), requests: 0 });
         let drafts = r.drafts.lock().unwrap().clone();
-        assert_eq!(drafts.last().unwrap().1, None, "the window's draft is cleared at the end");
+        assert!(drafts.iter().all(|(_, p)| p.is_some()), "the orchestrator clears the window after pasting");
         let shown: Vec<_> = drafts.iter().filter(|(_, p)| p.is_some()).collect();
         assert!(!shown.is_empty());
         for w in shown.windows(2) {
@@ -426,7 +428,7 @@ mod tests {
         r.handle.release();
         let out = r.outcome.await.unwrap();
         assert!(matches!(out, LiveOutcome::Fallback { error: Some(ProviderError::Network), .. }), "{out:?}");
-        assert_eq!(r.drafts.lock().unwrap().last().unwrap().1, None);
+        assert!(r.drafts.lock().unwrap().is_empty());
     }
 
     #[tokio::test(start_paused = true)]

@@ -95,6 +95,7 @@ fn init_core(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         permissions: Arc::new(SystemPermissions),
         hotkeys: hotkeys.clone(),
         ui: Arc::new(app::services::TauriUi { app: app.handle().clone() }),
+        live: Some(Arc::new(providers::gemini_live::GeminiLive)),
     };
     let orchestrator = Orchestrator::new(deps, shared.clone(), tx.clone());
     app::overlay_rest::spawn_watcher(app.handle().clone(), shared.clone(), presence, gate, rest_wake);

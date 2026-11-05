@@ -24,6 +24,8 @@
   "errors.rate_limited": "{provider} limit reached, resets in {n} min",
   "errors.rate_limited_later": "{provider} limit reached, try later",
   "errors.service_down": "{provider} is unavailable",
+  "errors.slow_provider": "Gemini is taking too long",
+  "errors.region_blocked": "Gemini isn't available in your region — use a VPN",
   "errors.hotkeys_unavailable": "Keys aren't active yet — Accessibility access needed",
   "errors.timeout": "Timed out — try again",
   "errors.not_assignable": "Use a right-side modifier (⌥ ⌘ ⌃ ⇧), Fn, Caps Lock or an F-key",

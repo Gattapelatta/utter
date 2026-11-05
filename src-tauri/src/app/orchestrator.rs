@@ -13,10 +13,12 @@ use crate::audio::{self, dsp, segment, Captured};
 use crate::controller::{Command, Controller, HotkeyEvent, State};
 use crate::history::{EntryStatus, History, HistoryEntry};
 use crate::jobs::{JobIds, OrderedDelivery};
+use crate::live::run::{self as live_run, Finisher, LiveHandle, LiveOutcome, LiveRequest};
 use crate::output::{CopyReason, DeliveryOutcome};
 use crate::permissions::PermStatus;
 use crate::pipeline::routes::{self, AttemptOutcome, Route, RouteHealth};
 use crate::pipeline::{self, JobError, JobOutput, PipelineOptions};
+use crate::providers::gemini_live::{LiveConfig, LiveConnector, TranscribeMode};
 use crate::providers::{defaults, AudioLlm, ProviderError, SpeechToText, TextModel};
 use crate::recorder::AudioSource;
 use crate::secrets::SecretStore;
@@ -154,6 +156,9 @@ pub struct Deps {
     pub permissions: Arc<dyn PermissionCheck>,
     pub hotkeys: Arc<dyn HotkeyControl>,
     pub ui: Arc<dyn UiSink>,
+    /// The Live API for the draft while speaking (spec 2026-11-06); `None` keeps every
+    /// recording on the batch path.
+    pub live: Option<Arc<dyn LiveConnector>>,
 }
 
 /// State the settings UI reads and writes directly.
@@ -231,6 +236,48 @@ pub enum Input {
     HideOverlay(u64),
     SettingsChanged,
     Retry(u64),
+    /// A live dictation (by its sequence number) has its outcome.
+    LiveDone(u64, Box<LiveOutcome>),
+}
+
+/// The live dictation of the current recording.
+struct LiveRec {
+    seq: u64,
+    handle: LiveHandle,
+    /// Interleaved samples already streamed.
+    offset: usize,
+    layout: (u32, u16),
+}
+
+/// A released live dictation waiting for its outcome.
+struct LiveJob {
+    id: u64,
+    mode: Mode,
+    captured: Captured,
+    submitted: Instant,
+    created_at_ms: i64,
+    /// Kept alive until the outcome: dropping it cancels the dictation.
+    _handle: LiveHandle,
+}
+
+impl LiveJob {
+    fn secs(&self) -> f32 {
+        let per_sec = self.captured.rate as f32 * self.captured.channels.max(1) as f32;
+        if per_sec > 0.0 { self.captured.samples.len() as f32 / per_sec } else { 0.0 }
+    }
+
+    fn result(&self, outcome: Result<JobOutput, JobError>, requests: u32) -> JobResult {
+        JobResult {
+            mode: self.mode,
+            submitted: self.submitted,
+            history_id: None,
+            audio_path: None,
+            audio_secs: self.secs(),
+            created_at_ms: self.created_at_ms,
+            requests,
+            outcome,
+        }
+    }
 }
 
 enum AudioInput {
@@ -266,6 +313,9 @@ pub struct Orchestrator {
     piece_offset: usize,
     piece_layout: Option<(u32, u16)>,
     last_piece_check: Option<Instant>,
+    live: Option<LiveRec>,
+    live_seq: u64,
+    live_jobs: std::collections::HashMap<u64, LiveJob>,
 }
 
 fn now_ms() -> i64 {
@@ -289,7 +339,12 @@ fn error_state(e: &ProviderError, kind: ProviderKind) -> OverlayState {
             minutes: retry_after.map(|d| d.as_secs().div_ceil(60).max(1) as u32),
             provider: None,
         },
-        ProviderError::Network | ProviderError::Timeout => OverlayState::error("network", None),
+        ProviderError::Network => OverlayState::error("network", None),
+        // The connection is fine but no answer came in time (spec 2026-11-04 §4.3).
+        ProviderError::Timeout => OverlayState::error("slow_provider", None),
+        ProviderError::BadResponse(m) if m.to_lowercase().contains("location is not supported") => {
+            OverlayState::error("region_blocked", None)
+        }
         ProviderError::Server(_) | ProviderError::BadResponse(_) => OverlayState::error("service_down", None),
     };
     if let OverlayState::Error { provider, .. } = &mut state {
@@ -338,6 +393,9 @@ impl Orchestrator {
             piece_offset: 0,
             piece_layout: None,
             last_piece_check: None,
+            live: None,
+            live_seq: 0,
+            live_jobs: Default::default(),
         }
     }
 
@@ -410,6 +468,7 @@ impl Orchestrator {
                     self.finish(r).await;
                 }
             }
+            Input::LiveDone(seq, outcome) => self.live_done(seq, *outcome),
             Input::HideOverlay(seq) => {
                 if seq == self.overlay_seq && self.recording.is_none() {
                     if self.in_flight > 0 {
@@ -447,12 +506,27 @@ impl Orchestrator {
         }
         let cmds = self.controller.tick(now);
         self.exec(cmds).await;
+        self.stream_live();
         self.check_pieces(now);
+    }
+
+    /// Sends what was recorded since the last tick to the live dictation.
+    fn stream_live(&mut self) {
+        let Some(l) = self.live.as_mut() else { return };
+        let Some(c) = self.deps.audio.peek(l.offset) else { return };
+        if (c.rate, c.channels) == l.layout && !c.samples.is_empty() {
+            l.handle.audio(&c.samples);
+            l.offset += c.samples.len();
+        }
     }
 
     /// Sends the finished part of a long recording at a pause, while the user keeps speaking.
     fn check_pieces(&mut self, now: Instant) {
         let Some((mode, _)) = self.recording else { return };
+        // A live dictation already streams everything.
+        if self.live.is_some() {
+            return;
+        }
         if self.last_piece_check.is_some_and(|t| now.saturating_duration_since(t) < PIECE_CHECK) {
             return;
         }
@@ -546,6 +620,10 @@ impl Orchestrator {
                     tracing::info!("recording cancelled: {reason:?}");
                     self.deps.audio.cancel();
                     self.drop_pieces();
+                    if let Some(l) = self.live.take() {
+                        l.handle.cancel();
+                    }
+                    self.deps.overlay.draft(None);
                     if let Some((state, visible)) = self.end_recording() {
                         self.show_result(state, visible);
                     } else if self.in_flight > 0 {
@@ -596,6 +674,9 @@ impl Orchestrator {
             return self.fail_start(OverlayState::error("no_microphone", None));
         }
         self.drop_pieces();
+        if let Some(l) = self.live.take() {
+            l.handle.cancel();
+        }
         let started = now_ms();
         self.recording = Some((mode, started));
         self.deps.hotkeys.set_recording(true);
@@ -607,10 +688,140 @@ impl Orchestrator {
             warn: false,
             pending,
         });
-        tokio::spawn(async move { provider.single.prewarm().await });
+        self.live = self.start_live(mode, &s);
+        if self.live.is_none() {
+            tokio::spawn(async move { provider.single.prewarm().await });
+        }
+    }
+
+    /// The live path: Gemini, nothing else in the queue (insertion order), no paragraphs (they
+    /// split the whole text by meaning), and a recorder that reports its format.
+    fn start_live(&mut self, mode: Mode, s: &Settings) -> Option<LiveRec> {
+        let connector = self.deps.live.clone()?;
+        if s.provider != ProviderKind::Gemini || self.in_flight > 0 || s.paragraphs {
+            return None;
+        }
+        let c = self.deps.audio.peek(0)?;
+        if c.channels == 0 || c.rate == 0 {
+            return None;
+        }
+        let key = self.deps.secrets.get(s.provider)?;
+        let finisher = match live_system(mode, &pipeline_options(s)) {
+            None => Finisher::Plain,
+            Some(system) => {
+                let route = Route::Direct { model: defaults::GEMINI_TRANSLATE_MODEL };
+                let model: Arc<dyn TextModel> = self.deps.providers.make_route(s.provider, key.clone(), route);
+                Finisher::Text { model, system }
+            }
+        };
+        let cfg = LiveConfig {
+            url: defaults::GEMINI_LIVE_URL.into(),
+            key,
+            model: defaults::GEMINI_LIVE_MODEL.into(),
+            mode: TranscribeMode::Verbatim,
+            language: s.speech_language.clone(),
+        };
+        self.live_seq += 1;
+        let seq = self.live_seq;
+        let overlay = self.deps.overlay.clone();
+        let tx = self.tx.clone();
+        let handle = live_run::spawn(
+            LiveRequest { cfg, finisher, rate: c.rate, channels: c.channels },
+            connector,
+            Arc::new(move |p| overlay.draft(p.as_ref())),
+            move |o| {
+                let _ = tx.send(Input::LiveDone(seq, Box::new(o)));
+            },
+        );
+        handle.audio(&c.samples);
+        Some(LiveRec { seq, handle, offset: c.samples.len(), layout: (c.rate, c.channels) })
+    }
+
+    fn submit_live(&mut self, l: LiveRec, mode: Mode) {
+        let deferred = self.end_recording();
+        let captured = self.deps.audio.stop().unwrap_or_default();
+        if (captured.rate, captured.channels) == l.layout && captured.samples.len() > l.offset {
+            l.handle.audio(&captured.samples[l.offset..]);
+        }
+        l.handle.release();
+        self.drop_pieces();
+        let id = self.ids.next();
+        if self.in_flight == 0 {
+            self.processing_since = now_ms();
+        }
+        self.in_flight += 1;
+        self.show(self.processing_state());
+        let job = LiveJob { id, mode, captured, submitted: Instant::now(), created_at_ms: now_ms(), _handle: l.handle };
+        self.live_jobs.insert(l.seq, job);
+        if let Some((state, visible)) = deferred {
+            self.show_result(state, visible);
+        }
+    }
+
+    fn live_done(&mut self, seq: u64, outcome: LiveOutcome) {
+        let Some(job) = self.live_jobs.remove(&seq) else { return };
+        match outcome {
+            LiveOutcome::Final { text, raw, requests } => {
+                let out = JobOutput { text, raw, degraded: false, tokens: 0, llm_used: requests > 0, direct: false };
+                let _ = self.tx.send(Input::JobDone(job.id, Box::new(job.result(Ok(out), 1 + requests))));
+            }
+            LiveOutcome::Unfinished { raw, requests } => self.finish_text(job, raw, requests),
+            // The batch path with the recorded audio; a cancel after release cannot happen, but
+            // never lose a recording if it does.
+            LiveOutcome::Fallback { .. } | LiveOutcome::Cancelled => {
+                self.run_job(job.id, job.mode, AudioInput::Captured(job.captured), None, None);
+            }
+        }
+    }
+
+    /// Cleanup or translation of the verbatim text did not come while speaking: one request over
+    /// the backup routes; failing that, Dictation pastes the verbatim text, Translate takes the
+    /// batch path.
+    fn finish_text(&mut self, job: LiveJob, raw: String, requests: u32) {
+        let s = self.shared.settings();
+        let opts = pipeline_options(&s);
+        let backend = self.provider_for(&s);
+        let system = live_system(job.mode, &opts);
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            let models: Vec<Arc<dyn Provider>> = match &backend {
+                Some(b) if !b.routes.is_empty() => b.routes.iter().map(|(_, p)| p.clone()).collect(),
+                Some(b) => vec![b.single.clone()],
+                None => Vec::new(),
+            };
+            let mut n = requests;
+            let mut text = None;
+            if let Some(system) = system {
+                let attempts: Vec<routes::Attempt<String>> = models
+                    .into_iter()
+                    .map(|p| {
+                        let (system, user) = (system.clone(), pipeline::user_message(&raw));
+                        Box::pin(async move { p.complete(&system, &user).await.map(|c| pipeline::postprocess(&c.text)) }) as routes::Attempt<String>
+                    })
+                    .collect();
+                let (r, reports) = routes::run_hedged(attempts, routes::hedge_after(0.0)).await;
+                n += reports.len() as u32;
+                text = r.ok().filter(|t| !t.trim().is_empty());
+            }
+            let outcome = match text {
+                Some(text) => Ok(JobOutput { text, raw, degraded: false, tokens: 0, llm_used: true, direct: false }),
+                None if job.mode == Mode::Dictation => {
+                    Ok(JobOutput { text: raw.clone(), raw, degraded: true, tokens: 0, llm_used: true, direct: false })
+                }
+                None => {
+                    let (o, m) = process_capture(job.mode, job.captured.clone(), opts, backend).await;
+                    n += m;
+                    o
+                }
+            };
+            let _ = tx.send(Input::JobDone(job.id, Box::new(job.result(outcome, 1 + n))));
+        });
     }
 
     fn submit(&mut self, mode: Mode) {
+        if let Some(l) = self.live.take() {
+            return self.submit_live(l, mode);
+        }
         let deferred = self.end_recording();
         let captured = self.deps.audio.stop().unwrap_or_default();
         let pieces = std::mem::take(&mut self.pieces);
@@ -643,12 +854,17 @@ impl Orchestrator {
     }
 
     fn spawn_job(&mut self, mode: Mode, audio_in: AudioInput, history_id: Option<u64>, split: Option<Split>) {
-        let s = self.shared.settings();
         let id = self.ids.next();
         if self.in_flight == 0 {
             self.processing_since = now_ms();
         }
         self.in_flight += 1;
+        self.run_job(id, mode, audio_in, history_id, split);
+    }
+
+    /// Processes a recording under a job id already counted in `in_flight`.
+    fn run_job(&mut self, id: u64, mode: Mode, audio_in: AudioInput, history_id: Option<u64>, split: Option<Split>) {
+        let s = self.shared.settings();
         if self.recording.is_none() {
             self.show(self.processing_state());
         }
@@ -847,6 +1063,8 @@ impl Orchestrator {
             }
         }
         self.show_result(overlay, visible);
+        // The draft window (if any) leaves together with the result (spec 2026-11-06 §3.1).
+        self.deps.overlay.draft(None);
     }
 
     /// History ids are unique across restarts: milliseconds since epoch, bumped on collision.
@@ -859,6 +1077,11 @@ impl Orchestrator {
         }
         id
     }
+}
+
+/// The prompt that finishes a live dictation's pieces: translation always, cleanup when on.
+fn live_system(mode: Mode, opts: &PipelineOptions) -> Option<String> {
+    pipeline::system_prompt(mode, opts, 0.0)
 }
 
 fn pipeline_options(s: &Settings) -> PipelineOptions {
@@ -1075,6 +1298,8 @@ mod tests {
         direct_replies: Mutex<VecDeque<Result<String, ProviderError>>>,
         /// How long a one-request call takes.
         direct_delay: Duration,
+        /// The text model answers with a server error.
+        text_fail: bool,
     }
     impl FakeProvider {
         fn new(slow: Result<String, ProviderError>, fast: Result<String, ProviderError>) -> Self {
@@ -1087,6 +1312,7 @@ mod tests {
                 direct_calls: AtomicUsize::new(0),
                 direct_replies: Mutex::new(VecDeque::new()),
                 direct_delay: Duration::ZERO,
+                text_fail: false,
             }
         }
     }
@@ -1118,6 +1344,9 @@ mod tests {
     #[async_trait::async_trait]
     impl TextModel for FakeProvider {
         async fn complete(&self, _: &str, _: &str) -> Result<Completion, ProviderError> {
+            if self.text_fail {
+                return Err(ProviderError::Server(500));
+            }
             Ok(Completion { text: "Привет.".into(), total_tokens: 3 })
         }
     }
@@ -1185,10 +1414,13 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct FakeOverlay(Mutex<Vec<OverlayState>>);
+    struct FakeOverlay(Mutex<Vec<OverlayState>>, Mutex<Vec<Option<crate::live::draft::DraftParts>>>);
     impl OverlaySink for FakeOverlay {
         fn show(&self, s: &OverlayState) {
             self.0.lock().unwrap().push(s.clone());
+        }
+        fn draft(&self, parts: Option<&crate::live::draft::DraftParts>) {
+            self.1.lock().unwrap().push(parts.cloned());
         }
     }
     impl FakeOverlay {
@@ -1285,6 +1517,7 @@ mod tests {
             permissions: perms.clone(),
             hotkeys: hotkeys.clone(),
             ui: ui.clone(),
+            live: None,
         };
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let orch = Orchestrator::new(deps, shared.clone(), tx);
@@ -1556,6 +1789,7 @@ mod tests {
             permissions: r.perms.clone(),
             hotkeys: r.hotkeys.clone(),
             ui: r.ui.clone(),
+            live: None,
         };
         r.orch = Orchestrator::new(deps, r.shared.clone(), tx);
         r.rx = rx;
@@ -1768,5 +2002,219 @@ mod tests {
         r.settle(1).await;
         assert_eq!(r.provider.direct_calls.load(Ordering::SeqCst), 1);
         assert_eq!(*r.out.0.lock().unwrap(), vec!["Whole.".to_string()]);
+    }
+
+    /// A Live API stand-in: `script` arrives at once, `after_end` once the audio stream ends.
+    #[derive(Default)]
+    struct FakeLive {
+        script: Vec<crate::providers::gemini_live::LiveEvent>,
+        after_end: Vec<crate::providers::gemini_live::LiveEvent>,
+        fail: Option<ProviderError>,
+        connects: AtomicUsize,
+        audio_samples: Arc<AtomicUsize>,
+    }
+    #[async_trait::async_trait]
+    impl crate::providers::gemini_live::LiveConnector for FakeLive {
+        async fn connect(&self, _: crate::providers::gemini_live::LiveConfig) -> Result<crate::providers::gemini_live::LiveSession, ProviderError> {
+            self.connects.fetch_add(1, Ordering::SeqCst);
+            if let Some(e) = &self.fail {
+                return Err(e.clone());
+            }
+            let (audio_tx, mut audio_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+            let (ev_tx, ev_rx) = tokio::sync::mpsc::unbounded_channel();
+            for e in &self.script {
+                ev_tx.send(e.clone()).unwrap();
+            }
+            let after = self.after_end.clone();
+            let samples = self.audio_samples.clone();
+            tokio::spawn(async move {
+                while let Some(chunk) = audio_rx.recv().await {
+                    if chunk.is_empty() {
+                        for e in after {
+                            let _ = ev_tx.send(e);
+                        }
+                        break;
+                    }
+                    samples.fetch_add(chunk.len(), Ordering::SeqCst);
+                }
+                // Keep the events channel open until the session is dropped.
+                std::future::pending::<()>().await;
+            });
+            Ok(crate::providers::gemini_live::LiveSession { audio: audio_tx, events: ev_rx })
+        }
+    }
+
+    use crate::providers::gemini_live::LiveEvent;
+
+    fn live_rig(live: FakeLive) -> (Rig, Arc<FakeLive>) {
+        let r = rig(FakeProvider::new(Ok("пакетный".into()), Ok("пакетный".into())), true);
+        let live = Arc::new(live);
+        let mut r = r;
+        r.orch.deps.live = Some(live.clone());
+        *r.audio.live.lock().unwrap() = Some(Captured { samples: Vec::new(), rate: 16_000, channels: 1 });
+        (r, live)
+    }
+
+    fn heard(text: &str) -> FakeLive {
+        FakeLive {
+            script: vec![LiveEvent::Ready, LiveEvent::Interim(text.to_lowercase()), LiveEvent::Segment(text.into())],
+            after_end: vec![LiveEvent::TurnComplete],
+            ..Default::default()
+        }
+    }
+
+    fn drafts(r: &Rig) -> Vec<Option<crate::live::draft::DraftParts>> {
+        r.overlay.1.lock().unwrap().clone()
+    }
+
+    #[tokio::test]
+    async fn gemini_dictation_goes_live() {
+        let (mut r, live) = live_rig(heard("Привет, мир."));
+        r.record(Mode::Dictation, speech(1.0), Instant::now(), 1).await;
+        r.settle(1).await;
+        assert_eq!(*r.out.0.lock().unwrap(), vec!["Привет, мир.".to_string()]);
+        assert_eq!(live.connects.load(Ordering::SeqCst), 1);
+        assert!(live.audio_samples.load(Ordering::SeqCst) > 0, "the recording was streamed");
+        assert_eq!(r.provider.stt_calls.load(Ordering::SeqCst), 0, "no batch request");
+        let h = r.shared.history.lock().unwrap();
+        assert_eq!(h.entries().front().map(|e| (e.text.as_str(), e.raw.as_str())), Some(("Привет, мир.", "Привет, мир.")));
+        drop(h);
+        let d = drafts(&r);
+        assert!(d.iter().any(Option::is_some), "the island showed the draft");
+        assert_eq!(d.last(), Some(&None));
+    }
+
+    #[tokio::test]
+    async fn live_waits_for_empty_queue() {
+        let (mut r, live) = live_rig(heard("Первая."));
+        r.record(Mode::Dictation, speech(1.0), Instant::now(), 1).await;
+        r.record(Mode::Dictation, speech(1.0), Instant::now(), 1).await;
+        r.settle(2).await;
+        assert_eq!(live.connects.load(Ordering::SeqCst), 1, "the second recording took the batch path");
+        assert_eq!(*r.out.0.lock().unwrap(), vec!["Первая.".to_string(), "пакетный".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn live_fallback_runs_batch_with_recorded_audio() {
+        let (mut r, live) = live_rig(FakeLive { fail: Some(ProviderError::Network), ..Default::default() });
+        r.record(Mode::Dictation, speech(1.0), Instant::now(), 1).await;
+        r.settle(1).await;
+        assert_eq!(live.connects.load(Ordering::SeqCst), 1);
+        assert_eq!(*r.out.0.lock().unwrap(), vec!["пакетный".to_string()]);
+        assert_eq!(r.provider.stt_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn mid_speech_drop_falls_back_keeping_window() {
+        let (mut r, live) = live_rig(FakeLive {
+            script: vec![LiveEvent::Interim("начало".into()), LiveEvent::Error("closed".into())],
+            ..Default::default()
+        });
+        r.record(Mode::Dictation, speech(1.0), Instant::now(), 1).await;
+        r.settle(1).await;
+        assert_eq!(live.connects.load(Ordering::SeqCst), 1);
+        assert_eq!(*r.out.0.lock().unwrap(), vec!["пакетный".to_string()]);
+        let d = drafts(&r);
+        let first_none = d.iter().position(Option::is_none).expect("cleared at the end");
+        assert_eq!(first_none, d.len() - 1, "the window stayed until the batch text was pasted: {d:?}");
+    }
+
+    #[tokio::test]
+    async fn translate_ignores_cleanup_off() {
+        let (mut r, live) = live_rig(heard("привет мир"));
+        assert!(!r.shared.settings().cleanup);
+        r.record(Mode::Translate, speech(1.0), Instant::now(), 1).await;
+        r.settle(1).await;
+        assert_eq!(live.connects.load(Ordering::SeqCst), 1);
+        assert_eq!(r.provider.stt_calls.load(Ordering::SeqCst), 0, "no batch request");
+        // The fake text model answers "Привет." to anything: the text went through it.
+        assert_eq!(*r.out.0.lock().unwrap(), vec!["Привет.".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn unfinished_cleanup_uses_routes() {
+        let (mut r, _) = live_rig(FakeLive::default());
+        r.shared.settings.lock().unwrap().cleanup = true;
+        let t0 = Instant::now();
+        r.orch.handle(Input::Hotkey(HotkeyEvent::Down(Mode::Dictation)), t0).await;
+        r.audio.captures.lock().unwrap().push_back(speech(1.0));
+        r.orch.handle(Input::Hotkey(HotkeyEvent::Up(Mode::Dictation)), t0 + Duration::from_secs(1)).await;
+        r.orch.handle(Input::LiveDone(1, Box::new(LiveOutcome::Unfinished { raw: "сырой текст".into(), requests: 1 })), Instant::now()).await;
+        r.settle(1).await;
+        assert_eq!(*r.out.0.lock().unwrap(), vec!["Привет.".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn unfinished_cleanup_fails_gives_raw_degraded() {
+        let (mut r, _) = live_rig(FakeLive::default());
+        r.shared.settings.lock().unwrap().cleanup = true;
+        let mut p = FakeProvider::new(Ok("x".into()), Ok("x".into()));
+        p.text_fail = true;
+        r.orch.set_provider_factory(Arc::new(FakeFactory(Arc::new(p))));
+        let t0 = Instant::now();
+        r.orch.handle(Input::Hotkey(HotkeyEvent::Down(Mode::Dictation)), t0).await;
+        r.audio.captures.lock().unwrap().push_back(speech(1.0));
+        r.orch.handle(Input::Hotkey(HotkeyEvent::Up(Mode::Dictation)), t0 + Duration::from_secs(1)).await;
+        r.orch.handle(Input::LiveDone(1, Box::new(LiveOutcome::Unfinished { raw: "сырой текст".into(), requests: 1 })), Instant::now()).await;
+        r.settle(1).await;
+        assert_eq!(*r.out.0.lock().unwrap(), vec!["сырой текст".to_string()]);
+        let h = r.shared.history.lock().unwrap();
+        assert_eq!(h.entries().front().map(|e| e.status.clone()), Some(EntryStatus::Degraded));
+    }
+
+    #[tokio::test]
+    async fn empty_live_is_nothing_heard() {
+        let (mut r, live) = live_rig(FakeLive { after_end: vec![LiveEvent::TurnComplete], ..Default::default() });
+        let silence = Captured { samples: vec![0.0; 16_000], rate: 16_000, channels: 1 };
+        r.record(Mode::Dictation, silence, Instant::now(), 1).await;
+        r.settle(1).await;
+        assert!(r.out.0.lock().unwrap().is_empty());
+        assert_eq!(r.overlay.last_error().as_deref(), Some("nothing_heard"));
+        assert_eq!(live.connects.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn esc_cancels_live() {
+        let (mut r, live) = live_rig(heard("Не нужно."));
+        r.orch.handle(Input::Hotkey(HotkeyEvent::Down(Mode::Dictation)), Instant::now()).await;
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        r.orch.handle(Input::Hotkey(HotkeyEvent::Escape), Instant::now()).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(live.connects.load(Ordering::SeqCst), 1);
+        assert!(r.out.0.lock().unwrap().is_empty());
+        assert_eq!(drafts(&r).last(), Some(&None));
+        assert_eq!(r.overlay.0.lock().unwrap().last(), Some(&OverlayState::Cancelled));
+    }
+
+    #[tokio::test]
+    async fn groq_stays_batch() {
+        let (mut r, live) = live_rig(heard("x"));
+        r.shared.settings.lock().unwrap().provider = ProviderKind::Groq;
+        r.secrets.set(ProviderKind::Groq, "groq-key").unwrap();
+        r.record(Mode::Dictation, speech(1.0), Instant::now(), 1).await;
+        r.settle(1).await;
+        assert_eq!(live.connects.load(Ordering::SeqCst), 0);
+        assert_eq!(*r.out.0.lock().unwrap(), vec!["пакетный".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn draft_cleared_on_every_end() {
+        let (mut r, live) = live_rig(FakeLive { fail: Some(ProviderError::Server(503)), ..Default::default() });
+        r.record(Mode::Dictation, speech(1.0), Instant::now(), 1).await;
+        r.settle(1).await;
+        assert_eq!(live.connects.load(Ordering::SeqCst), 1);
+        assert_eq!(drafts(&r).last(), Some(&None));
+    }
+
+    #[test]
+    fn timeout_is_slow_provider() {
+        assert!(matches!(error_state(&ProviderError::Timeout, ProviderKind::Gemini), OverlayState::Error { message_key, .. } if message_key == "slow_provider"));
+        assert!(matches!(error_state(&ProviderError::Network, ProviderKind::Gemini), OverlayState::Error { message_key, .. } if message_key == "network"));
+    }
+
+    #[test]
+    fn location_error_is_region_blocked() {
+        let e = ProviderError::BadResponse("User location is not supported for the API use.".into());
+        assert!(matches!(error_state(&e, ProviderKind::Gemini), OverlayState::Error { message_key, .. } if message_key == "region_blocked"));
     }
 }

@@ -24,6 +24,8 @@
   "errors.rate_limited": "Лимит {provider} исчерпан, сбросится через {n} мин",
   "errors.rate_limited_later": "Лимит {provider} исчерпан, попробуй позже",
   "errors.service_down": "Сервис {provider} недоступен",
+  "errors.slow_provider": "Gemini отвечает слишком долго",
+  "errors.region_blocked": "Gemini недоступен в твоём регионе — нужен VPN",
   "errors.hotkeys_unavailable": "Клавиши ещё не работают — нужен доступ Accessibility",
   "errors.timeout": "Время вышло — попробуй ещё раз",
   "errors.not_assignable": "Подойдёт правый модификатор (⌥ ⌘ ⌃ ⇧), Fn, Caps Lock или F-клавиша",
