@@ -4,11 +4,11 @@ Free, open-source voice-to-text for macOS (Windows later): hold a hotkey, speak,
 
 **Start of every session:** read `docs/superpowers/HANDOFF.md` — current status, decisions made along the way, deferred issues, and how to begin the next plan. The spec is `docs/superpowers/specs/2026-10-06-utter-design.md`; plans live in `docs/superpowers/plans/`.
 
-## Current focus (2026-11-05) — when the user says «продолжаем работу над utter»
+## Current focus (2026-11-06) — when the user says «продолжаем работу над utter»
 
-1. Read `docs/superpowers/HANDOFF.md` («С чего начать следующую сессию» and «Диктовка на лету — ход выполнения»), the spec `docs/superpowers/specs/2026-11-04-live-dictation-design.md`, the plan `docs/superpowers/plans/2026-11-04-live-dictation.md` and its ledger `.superpowers/sdd/2026-11-04-live-dictation/progress.md` (execution: Native, `executing-plans`).
-2. Tasks 0–4 are done. **Task 5 is blocked on macOS not enabling the «Utter» input source** (a stale entry of the 2026-11-04 prototype at the same path); next step per HANDOFF: a fresh bundle id and file name for the input method. Then Tasks 6–8.
-3. Plan 2 Task 13 is paused half-way — finish it after the live-dictation plan.
+1. Read `docs/superpowers/HANDOFF.md` («С чего начать следующую сессию», «Черновик в острове»), the spec `docs/superpowers/specs/2026-11-06-live-draft-island-design.md`, the plan `docs/superpowers/plans/2026-11-06-live-draft-island.md` and its ledger `.superpowers/sdd/2026-11-06-live-draft-island/progress.md` (execution: Native, `executing-plans`).
+2. Tasks 1–5 are done; **Task 6 is the live check with the user** (they dictate): first remove the old «Utter» input source with them, then dictations, budgets, docs. Then the final whole-branch review.
+3. Plan 2 Task 13 is paused half-way — finish it after this plan.
 
 ## Working with the user
 
@@ -40,7 +40,7 @@ open src-tauri/target/release/bundle/macos/Utter.app
 - The built-in browser pane does not run `requestAnimationFrame` while hidden — it cannot judge animations; use Vitest (jsdom) for motion logic and the real app for feel.
 - Every rebuild makes macOS ask for Keychain access (self-signed cdhash; user decided to keep it until a Developer ID in Plan 3): warn the user, wait until `SecurityAgent` disappears, then `open Utter.app` again to show the settings window.
 - Never kill processes by a loose pattern (`pkill -f …` once closed every app on the user's Mac): only `pkill -x utter` / `killall UtterIM`; any system process only with the user's OK.
-- Text Input Sources: a process caches the source list at its first TIS query, so register an input method before listing (or in a fresh process); `TISEnableInputSource` may return 0 without enabling.
+- Text Input Sources: a process caches the source list at its first TIS query; `TISEnableInputSource`/`TISDisableInputSource` return 0 without effect for third-party input methods on macOS 15.
 - `#[ignore]` tests touch the real Keychain, microphone, or network with the user's API key — run them only with the user's consent.
 
 ## Architecture notes that are easy to get wrong
@@ -54,7 +54,8 @@ open src-tauri/target/release/bundle/macos/Utter.app
 - Motion cannot interpolate between transform strings with different function lists (e.g. `scaleX() scaleY()` → `none` animates to scale 0): keep one template (`overlay/drop/islandMotion.ts`). This includes `transitionEnd: { transform: "none" }` — the next animation then starts from scale 0 (the island "vanished" on fold-back).
 - The top ~32 pt of the screen under the MacBook camera notch are not pixels: nothing in the island may be drawn there (the Drop sits lower, arcs are limited to ±30°, clouds are in the island's left wing).
 - Gemini Live (`gemini-3.5-transcribe-live`, WebSocket `BidiGenerateContent`): send `setup` first and audio only after `setupComplete` (buffer before); interim text arrives in `serverContent.interimInputTranscription`, finals in `serverContent.inputTranscription`; `SMART` mode cleans fillers but once wrote «по продам» for «по продажам»; `VERBATIM` is exact. Without the user's VPN Google answers «User location is not supported».
-- Drafts in other apps' fields go through Utter's input method (InputMethodKit, marked text): `InputMethodConnectionName` must be `<bundle id>_Connection` or fields never connect; after `TISSelectInputSource` the field connects only on its next key event — post F19 (the IM swallows it); reinstalling the IM breaks connections until the next real keystroke. Chromium/Electron apps (Notion, Claude, Slack) and Telegram Desktop ignore marked-text attributes (colour, italic, background) — the underline stays the app's own (blue in Notion/Claude). Electron apps don't report caret bounds over Accessibility (only the field frame, after setting `AXManualAccessibility`).
+- The live draft is shown in the island (420 × 206 window), not in the app's field: an input method worked (fields connected in 11–16 ms) but macOS 15 enables third-party input methods only by the user's hand and lists them in the language switcher (rejected by the user 2026-11-06). Removing an *enabled* input method's bundle leaves a stale entry that keeps mapping its path to the old id — the user must remove it in Settings first.
+- Dev builds: `<app data>/debug-draft.txt` with a phrase plays recording → draft window → processing → done on the real island (for `screencapture -l` checks without a dictation).
 - macOS on-device speech recognition (`SFSpeechRecognizer`, Russian supported) fails with «Siri and Dictation are disabled» unless system Dictation is on — rejected for Utter.
 - Synthetic key presses from a helper process do not reach Utter's hotkey tap: any live test that needs a dictation needs the user's hands. Each rebuild of a helper app re-asks Keychain access (cdhash); Accessibility survives if it is signed with "Utter Dev" and keeps its bundle id; apps in `/private/tmp` cannot be added to Accessibility — put helpers in `~/Applications`.
 - The Drop's per-frame logic is a pure model (`overlay/drop/dropModel.ts`) driving SVG attributes via refs — no React re-render per frame.
