@@ -1,5 +1,7 @@
 # Диктовка на лету — план реализации
 
+> **2026-11-06:** задачи 0–3 выполнены; задачи 4–8 (способ ввода, черновик в поле) заменены планом `2026-11-06-live-draft-island.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** диктовка работает всегда (запасные модели с подстраховкой), а с провайдером Gemini черновик появляется прямо в поле во время речи (предварительный текст через собственный способ ввода Utter) и утверждается чистовиком через ≤ 0,8 с после отпускания; при любом сбое — нынешний пакетный путь.
