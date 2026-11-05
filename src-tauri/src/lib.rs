@@ -63,10 +63,6 @@ fn init_core(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let lang = sys_locale::get_locale();
     let settings = settings::load(&data_dir.join("settings.json"), lang.as_deref());
     app::tray::build(app.handle(), &settings)?;
-    // The input method is not installed any more: macOS lists it among the user's layouts
-    // (an extra press on every language switch). The live draft moves to the island (2026-11-05).
-    let draft_field: Arc<dyn output::ime::DraftField> = Arc::new(output::ime::NoDraftField);
-    app.manage(output::ime::DraftFieldState(draft_field));
     let shared = Arc::new(Shared::new(settings.clone(), data_dir));
     shared.remove_orphan_audio();
 

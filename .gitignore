@@ -23,9 +23,6 @@ dist-ssr
 *.sln
 *.sw?
 
-# Input method build output
-macos/UtterIM/build/
-
 # Rust
 src-tauri/target
 src-tauri/gen/schemas

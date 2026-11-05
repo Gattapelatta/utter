@@ -43,12 +43,7 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ],
-    "macOS": {
-      "files": {
-        "Resources/UtterLive.app": "../macos/UtterIM/build/UtterLive.app"
-      }
-    }
+    ]
   },
   "plugins": {
     "updater": {

@@ -1,7 +1,6 @@
 //! Puts text into the focused app: clipboard first, then a paste or typed keystrokes.
 
 pub mod clipboard;
-pub mod ime;
 #[cfg(target_os = "macos")]
 pub mod macos;
 pub mod spacing;
