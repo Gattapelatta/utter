@@ -96,6 +96,8 @@ pub trait UiSink: Send + Sync {
 
 pub trait OverlaySink: Send + Sync {
     fn show(&self, s: &OverlayState);
+    /// The live draft for the island's window; `None` removes it.
+    fn draft(&self, _parts: Option<&crate::live::draft::DraftParts>) {}
 }
 
 pub trait Deliverer: Send + Sync {

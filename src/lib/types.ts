@@ -45,6 +45,9 @@ export type OverlayState =
   | { kind: "error"; message_key: string; action: string | null; minutes: number | null; provider: string | null }
   | { kind: "cancelled" };
 
+/** The live draft in the island's window: recognised pieces and the piece still being revised. */
+export type DraftParts = { settled: string; interim: string };
+
 export type AppStatus = "idle" | "recording" | "processing";
 
 export type TrialOutcome =

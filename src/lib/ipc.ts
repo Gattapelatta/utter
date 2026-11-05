@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { FreeLimits, HistoryEntry, KeyId, Mode, OverlayState, PermissionsStatus, ProviderKind, Settings, TrialOutcome, UpdateState, UsageDay } from "./types";
+import type { DraftParts, FreeLimits, HistoryEntry, KeyId, Mode, OverlayState, PermissionsStatus, ProviderKind, Settings, TrialOutcome, UpdateState, UsageDay } from "./types";
 
 export const ipc = {
   getSettings: () => invoke<Settings>("get_settings"),
@@ -44,6 +44,8 @@ export const events = {
     listen<number>("overlay://level", (e) => cb(e.payload)),
   overlayScreen: (cb: (s: { notch: { width: number; height: number } | null }) => void): Promise<UnlistenFn> =>
     listen<{ notch: { width: number; height: number } | null }>("overlay://screen", (e) => cb(e.payload)),
+  overlayDraft: (cb: (d: DraftParts | null) => void): Promise<UnlistenFn> =>
+    listen<DraftParts | null>("overlay://draft", (e) => cb(e.payload)),
   overlayRest: (cb: (r: { shown: boolean }) => void): Promise<UnlistenFn> =>
     listen<{ shown: boolean }>("overlay://rest", (e) => cb(e.payload)),
   update: (cb: (s: UpdateState) => void): Promise<UnlistenFn> => listen<UpdateState>("ui://update", (e) => cb(e.payload)),

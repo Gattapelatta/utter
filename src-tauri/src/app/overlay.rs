@@ -54,6 +54,10 @@ pub struct TauriOverlay {
 }
 
 impl OverlaySink for TauriOverlay {
+    fn draft(&self, parts: Option<&crate::live::draft::DraftParts>) {
+        self.emit_draft(parts);
+    }
+
     fn show(&self, s: &OverlayState) {
         let gen = match self.gate.lock() {
             Ok(mut g) => g.on_state(),
@@ -94,6 +98,12 @@ impl OverlaySink for TauriOverlay {
                 }
             });
         });
+    }
+}
+
+impl TauriOverlay {
+    fn emit_draft(&self, parts: Option<&crate::live::draft::DraftParts>) {
+        let _ = self.app.emit_to(LABEL, "overlay://draft", parts);
     }
 }
 

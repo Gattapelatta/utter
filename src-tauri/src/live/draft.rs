@@ -2,6 +2,15 @@
 
 use std::time::{Duration, Instant};
 
+use serde::Serialize;
+
+/// What the island shows: recognised pieces (white) and the piece still being revised (grey).
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct DraftParts {
+    pub settled: String,
+    pub interim: String,
+}
+
 /// The draft never swaps a piece's draft for its final text mid-speech (the field would
 /// "rewrite itself"); finals are used only for the committed text.
 #[derive(Default)]
@@ -30,6 +39,10 @@ impl DraftComposer {
 
     pub fn draft(&self) -> String {
         join(self.frozen.iter().map(String::as_str).chain(std::iter::once(self.current.as_str())))
+    }
+
+    pub fn parts(&self) -> DraftParts {
+        DraftParts { settled: join(self.frozen.iter().map(String::as_str)), interim: self.current.trim().to_string() }
     }
 
     /// Final pieces, plus the last draft when its final never came (§4.3).
@@ -65,6 +78,27 @@ impl DraftThrottle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parts_split_settled_and_interim() {
+        let mut c = DraftComposer::default();
+        c.on_interim("а б");
+        c.on_segment("А б.");
+        c.on_interim("в");
+        assert_eq!(c.parts(), DraftParts { settled: "а б".into(), interim: "в".into() });
+        assert_eq!(c.draft(), "а б в");
+    }
+
+    #[test]
+    fn parts_empty_by_default() {
+        assert_eq!(DraftComposer::default().parts(), DraftParts::default());
+    }
+
+    #[test]
+    fn draft_parts_serialize() {
+        let v = serde_json::to_value(DraftParts { settled: "x".into(), interim: "y".into() }).unwrap();
+        assert_eq!(v, serde_json::json!({"settled": "x", "interim": "y"}));
+    }
 
     #[test]
     fn draft_grows_with_interims() {
