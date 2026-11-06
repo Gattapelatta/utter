@@ -16,6 +16,9 @@ use crate::providers::{ProviderError, TextModel};
 
 /// After release, the final pieces may take this long (spec 2026-11-04 §4.3).
 pub const FINAL_WAIT: Duration = Duration::from_millis(1_500);
+/// Google sends the last final piece ~0.4 s after the stream ends but no `turnComplete`
+/// (measured 2026-11-06): once a final piece leaves nothing unheard, finish this soon after.
+pub const SETTLE_AFTER_FINAL: Duration = Duration::from_millis(150);
 
 /// What turns the verbatim pieces into the text that is pasted.
 pub enum Finisher {
@@ -152,10 +155,13 @@ async fn run(
     };
     let mut failed: Option<String> = None;
     let mut first_interim = true;
+    let mut settle_at: Option<Instant> = None;
     let mut tick = tokio::time::interval(Duration::from_millis(100));
     let show = |composer: &DraftComposer, throttle: &mut DraftThrottle| {
-        if throttle.due(Instant::now().into_std(), &composer.draft()) {
-            draft(Some(composer.parts()));
+        let parts = composer.parts();
+        // A word turning white is a change too, even when the text is the same.
+        if throttle.due(Instant::now().into_std(), &format!("{}\n{}", parts.settled, parts.interim)) {
+            draft(Some(parts));
         }
     };
 
@@ -169,12 +175,16 @@ async fn run(
                         tracing::info!(interim_ms = t0.elapsed().as_millis() as u64, "timing: live first interim_ms");
                     }
                     composer.on_interim(&t);
+                    settle_at = None;
                     show(&composer, &mut throttle);
                 }
                 Some(LiveEvent::Segment(t)) => {
                     composer.on_segment(&t);
                     if let Some(tr) = translator.as_mut() {
                         tr.push(t, Instant::now().into_std());
+                    }
+                    if released_at.is_some() && composer.parts().interim.is_empty() {
+                        settle_at = Some(Instant::now() + SETTLE_AFTER_FINAL);
                     }
                     show(&composer, &mut throttle);
                 }
@@ -199,6 +209,7 @@ async fn run(
                 }
                 Some(Cmd::Cancel) | None => return LiveOutcome::Cancelled,
             },
+            _ = tokio::time::sleep_until(settle_at.unwrap_or_else(Instant::now)), if settle_at.is_some() => break,
             _ = tick.tick() => {
                 show(&composer, &mut throttle);
                 if let Some(tr) = translator.as_mut() {
@@ -373,6 +384,39 @@ mod tests {
         for w in shown.windows(2) {
             assert!(w[1].0 - w[0].0 >= Duration::from_millis(100), "at most every 100 ms");
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn final_piece_after_release_ends_without_turn_complete() {
+        // Google sends the last final piece ~0.4 s after the stream ends, but no turnComplete.
+        let c = FakeConnector::ok();
+        let r = start(c.clone(), Finisher::Plain);
+        let s = c.server().await;
+        say(&s, LiveEvent::Interim("привет мир".into()));
+        settle().await;
+        r.handle.release();
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        let t = Instant::now();
+        say(&s, LiveEvent::Segment("Привет, мир.".into()));
+        let out = r.outcome.await.unwrap();
+        assert_eq!(out, LiveOutcome::Final { text: "Привет, мир.".into(), raw: "Привет, мир.".into(), requests: 0 });
+        assert!(t.elapsed() <= SETTLE_AFTER_FINAL + Duration::from_millis(20), "{:?}", t.elapsed());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn new_draft_after_final_piece_keeps_waiting() {
+        let c = FakeConnector::ok();
+        let r = start(c.clone(), Finisher::Plain);
+        let s = c.server().await;
+        r.handle.release();
+        settle().await;
+        say(&s, LiveEvent::Segment("Первое.".into()));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        say(&s, LiveEvent::Interim("второе".into()));
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        say(&s, LiveEvent::Segment("Второе.".into()));
+        let LiveOutcome::Final { text, .. } = r.outcome.await.unwrap() else { panic!() };
+        assert_eq!(text, "Первое. Второе.");
     }
 
     #[tokio::test(start_paused = true)]

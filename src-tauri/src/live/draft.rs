@@ -19,6 +19,13 @@ pub struct DraftComposer {
     frozen: Vec<String>,
     segments: Vec<String>,
     current: String,
+    /// Leading words of `current` that the last update did not change (shown white).
+    stable: usize,
+}
+
+/// Words compared without case and punctuation: "привет" and "Привет," are the same word.
+fn norm_words(text: &str) -> Vec<String> {
+    text.split_whitespace().map(|w| w.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()).collect()
 }
 
 fn join<'a>(parts: impl Iterator<Item = &'a str>) -> String {
@@ -26,12 +33,18 @@ fn join<'a>(parts: impl Iterator<Item = &'a str>) -> String {
 }
 
 impl DraftComposer {
+    /// Google sends the whole current piece as one interim until a pause, so a word turns white
+    /// once an update leaves it unchanged; the last word, still being heard, stays grey.
     pub fn on_interim(&mut self, text: &str) {
+        let (old, new) = (norm_words(&self.current), norm_words(text));
+        let common = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
+        self.stable = common.min(new.len().saturating_sub(1));
         self.current = text.to_string();
     }
 
     pub fn on_segment(&mut self, text: &str) {
         let draft = std::mem::take(&mut self.current);
+        self.stable = 0;
         // A piece that never had a draft shows its final text.
         self.frozen.push(if draft.trim().is_empty() { text.to_string() } else { draft });
         self.segments.push(text.to_string());
@@ -42,7 +55,12 @@ impl DraftComposer {
     }
 
     pub fn parts(&self) -> DraftParts {
-        DraftParts { settled: join(self.frozen.iter().map(String::as_str)), interim: self.current.trim().to_string() }
+        let words: Vec<&str> = self.current.split_whitespace().collect();
+        let (heard, hearing) = words.split_at(self.stable.min(words.len()));
+        DraftParts {
+            settled: join(self.frozen.iter().map(String::as_str).chain(heard.iter().copied())),
+            interim: hearing.join(" "),
+        }
     }
 
     /// Final pieces, plus the last draft when its final never came (§4.3).
@@ -87,6 +105,36 @@ mod tests {
         c.on_interim("в");
         assert_eq!(c.parts(), DraftParts { settled: "а б".into(), interim: "в".into() });
         assert_eq!(c.draft(), "а б в");
+    }
+
+    #[test]
+    fn interim_words_settle_once_unchanged() {
+        // Google sends the whole current piece as one interim until a pause or release.
+        let mut c = DraftComposer::default();
+        c.on_interim("привет");
+        assert_eq!(c.parts(), DraftParts { settled: "".into(), interim: "привет".into() });
+        c.on_interim("привет слушай я");
+        assert_eq!(c.parts(), DraftParts { settled: "привет".into(), interim: "слушай я".into() });
+        c.on_interim("Привет, слушай, я посмотрела");
+        assert_eq!(c.parts(), DraftParts { settled: "Привет, слушай, я".into(), interim: "посмотрела".into() });
+    }
+
+    #[test]
+    fn revised_word_goes_back_to_grey() {
+        let mut c = DraftComposer::default();
+        c.on_interim("отчёт по продам");
+        c.on_interim("отчёт по продам за");
+        assert_eq!(c.parts().settled, "отчёт по продам");
+        c.on_interim("отчёт по продажам за сентябрь");
+        assert_eq!(c.parts(), DraftParts { settled: "отчёт по".into(), interim: "продажам за сентябрь".into() });
+    }
+
+    #[test]
+    fn the_last_word_stays_grey() {
+        let mut c = DraftComposer::default();
+        c.on_interim("привет мир");
+        c.on_interim("привет мир");
+        assert_eq!(c.parts(), DraftParts { settled: "привет".into(), interim: "мир".into() });
     }
 
     #[test]
