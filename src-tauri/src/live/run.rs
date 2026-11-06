@@ -19,6 +19,9 @@ pub const FINAL_WAIT: Duration = Duration::from_millis(1_500);
 /// Google sends the last final piece ~0.4 s after the stream ends but no `turnComplete`
 /// (measured 2026-11-06): once a final piece leaves nothing unheard, finish this soon after.
 pub const SETTLE_AFTER_FINAL: Duration = Duration::from_millis(150);
+/// Released after a pause: everything heard is final already and Google sends nothing more.
+/// Late words would show as a draft within about one update (~0.5 s).
+pub const QUIET_AT_RELEASE: Duration = Duration::from_millis(500);
 
 /// What turns the verbatim pieces into the text that is pasted.
 pub enum Finisher {
@@ -155,7 +158,7 @@ async fn run(
     };
     let mut failed: Option<String> = None;
     let mut first_interim = true;
-    let mut settle_at: Option<Instant> = None;
+    let mut settle_at: Option<Instant> = released_at.map(|r| r + QUIET_AT_RELEASE);
     let mut tick = tokio::time::interval(Duration::from_millis(100));
     let show = |composer: &DraftComposer, throttle: &mut DraftThrottle| {
         let parts = composer.parts();
@@ -205,7 +208,11 @@ async fn run(
                     }
                     send(&session, chunker.flush().into_iter().collect());
                     session.finish();
-                    released_at = Some(Instant::now());
+                    let now = Instant::now();
+                    released_at = Some(now);
+                    if composer.parts().interim.is_empty() {
+                        settle_at = Some(now + QUIET_AT_RELEASE);
+                    }
                 }
                 Some(Cmd::Cancel) | None => return LiveOutcome::Cancelled,
             },
@@ -401,6 +408,38 @@ mod tests {
         let out = r.outcome.await.unwrap();
         assert_eq!(out, LiveOutcome::Final { text: "Привет, мир.".into(), raw: "Привет, мир.".into(), requests: 0 });
         assert!(t.elapsed() <= SETTLE_AFTER_FINAL + Duration::from_millis(20), "{:?}", t.elapsed());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn nothing_pending_at_release_ends_soon() {
+        // A pause before letting go: Google finalised everything already and sends nothing more.
+        let c = FakeConnector::ok();
+        let r = start(c.clone(), Finisher::Plain);
+        let s = c.server().await;
+        say(&s, LiveEvent::Interim("всё сказано".into()));
+        say(&s, LiveEvent::Segment("Всё сказано.".into()));
+        settle().await;
+        let t = Instant::now();
+        r.handle.release();
+        let LiveOutcome::Final { text, .. } = r.outcome.await.unwrap() else { panic!() };
+        assert_eq!(text, "Всё сказано.");
+        assert!(t.elapsed() <= QUIET_AT_RELEASE + Duration::from_millis(20), "{:?}", t.elapsed());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn late_words_after_quiet_release_still_arrive() {
+        let c = FakeConnector::ok();
+        let r = start(c.clone(), Finisher::Plain);
+        let s = c.server().await;
+        say(&s, LiveEvent::Segment("Начало.".into()));
+        settle().await;
+        r.handle.release();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        say(&s, LiveEvent::Interim("и конец".into()));
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        say(&s, LiveEvent::Segment("И конец.".into()));
+        let LiveOutcome::Final { text, .. } = r.outcome.await.unwrap() else { panic!() };
+        assert_eq!(text, "Начало. И конец.");
     }
 
     #[tokio::test(start_paused = true)]

@@ -35,6 +35,14 @@ describe("DraftPanel", () => {
     expect(view(container).style.display).not.toBe("flex");
   });
 
+  it("without a draft it lays out hidden italic sample text (font ready before the window opens)", () => {
+    const { container } = render(<DraftPanel draft={null} shown={false} />);
+    const field = container.querySelector("[data-draft-panel]") as HTMLElement;
+    expect(field.hasAttribute("data-shown")).toBe(false);
+    expect(view(container).textContent).not.toBe("");
+    expect(container.querySelector("[data-settled]")).toBeNull();
+  });
+
   it("long_draft_keeps_last_line_visible", () => {
     vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(5400);
     vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(108);

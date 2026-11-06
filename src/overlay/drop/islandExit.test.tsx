@@ -83,11 +83,16 @@ describe("draft window", () => {
     const { container, rerender } = render(at(rec, null));
     await wait(50);
     expect(viewOf(container)).toBe("open");
-    expect(container.querySelector("[data-draft-panel]")).toBeNull();
+    const panel = () => container.querySelector("[data-draft-panel]");
+    // Laid out ahead of time, hidden: building it while the island grew cost a frame.
+    expect(panel()).not.toBeNull();
+    expect(panel()!.hasAttribute("data-shown")).toBe(false);
+    expect(container.querySelector("[data-settled]")).toBeNull();
     rerender(at(rec, draft));
     await wait(50);
     expect(viewOf(container)).toBe("window");
-    expect(container.querySelector("[data-draft-panel]")).not.toBeNull();
+    expect(panel()!.hasAttribute("data-shown")).toBe(true);
+    expect(container.querySelector("[data-settled]")?.textContent).toBe("Привет, слушай");
     rerender(at(proc, draft));
     expect(viewOf(container)).toBe("window");
     expect(container.querySelector("[data-timer]")?.textContent).toBe("0:07");
@@ -123,6 +128,7 @@ describe("draft window", () => {
     rerender(at(rec, null));
     await wait(50);
     expect(viewOf(container)).toBe("open");
-    expect(container.querySelector("[data-draft-panel]")).toBeNull();
+    expect(container.querySelector("[data-draft-panel]")?.hasAttribute("data-shown")).toBe(false);
+    expect(container.querySelector("[data-settled]")).toBeNull();
   });
 });

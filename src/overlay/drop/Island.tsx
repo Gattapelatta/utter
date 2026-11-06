@@ -126,7 +126,11 @@ export function Island({ state, level, now, view = "open", notch = null, cancell
       {/* The field is cut by the island's own shape: while the window shrinks back into the island,
           a fading field must not hang below it. */}
       <motion.div data-draft-clip className="island-shape-clip" initial={at("folded").shape} animate={at(view).shape} exit={at("folded").shape}>
-        <AnimatePresence>{view === "window" && draft && <DraftPanel key="draft" draft={draft} />}</AnimatePresence>
+        <AnimatePresence>
+          {(view === "window" || state.kind === "recording") && (
+            <DraftPanel key="draft" draft={view === "window" ? draft : null} shown={view === "window"} />
+          )}
+        </AnimatePresence>
       </motion.div>
       <div className="island-row">
         <motion.div data-drop-place initial={at("folded").drop} animate={at(view).drop} exit={at("folded").drop}>
