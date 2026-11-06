@@ -6,6 +6,7 @@ import type { Notch } from "./drop/islandMotion";
 import { events, ipc } from "../lib/ipc";
 import { useApp } from "../lib/store";
 import type { DraftParts, OverlayState } from "../lib/types";
+import { visibleDraft, type TaggedDraft } from "./visibleDraft";
 import "./overlay.css";
 
 function Overlay() {
@@ -13,7 +14,10 @@ function Overlay() {
   const [rest, setRest] = useState(false);
   const [level, setLevel] = useState(0);
   const [notch, setNotch] = useState<Notch>(null);
-  const [draft, setDraft] = useState<DraftParts | null>(null);
+  const [draft, setDraft] = useState<TaggedDraft | null>(null);
+  // The recording on screen, for tagging drafts as they arrive.
+  const recordingStart = useRef<number | null>(null);
+  if (state.kind === "recording") recordingStart.current = state.started_at_ms;
   const visible = state.kind !== "hidden" && state.kind !== "cancelled";
   const now = useClock(visible);
 
@@ -24,7 +28,7 @@ function Overlay() {
     // Speech RMS rarely exceeds ~0.3; scale so normal speech reaches ~1.
     const un2 = events.overlayLevel((l) => setLevel(Math.min(1, Math.sqrt(l) * 2.2)));
     const un3 = events.overlayRest((r) => setRest(r.shown));
-    const un4 = events.overlayDraft((d) => setDraft(d));
+    const un4 = events.overlayDraft((d) => setDraft(d ? { parts: d, start: recordingStart.current } : null));
     // Events sent before these listeners existed are lost: ask for the ears again.
     Promise.all([un0, un3]).then(() => ipc.overlayReady().catch(() => {}));
     // Diagnostics: whether WebKit treats the page as visible when the pill is shown.
@@ -59,8 +63,10 @@ function Overlay() {
 
   return (
     <>
-      <Stage state={state} rest={rest} notch={notch} level={level} now={now} onClick={onClick} draft={draft} />
-      {import.meta.env.DEV && <DevStates onState={setState} onLevel={setLevel} onNotch={setNotch} onRest={setRest} onDraft={setDraft} />}
+      <Stage state={state} rest={rest} notch={notch} level={level} now={now} onClick={onClick} draft={visibleDraft(state, draft)} />
+      {import.meta.env.DEV && (
+        <DevStates onState={setState} onLevel={setLevel} onNotch={setNotch} onRest={setRest} onDraft={(d) => setDraft(d ? { parts: d, start: recordingStart.current } : null)} />
+      )}
     </>
   );
 }

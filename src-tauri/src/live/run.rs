@@ -2,6 +2,7 @@
 //! in the island, and on release produce the final text — cleaned or translated piece by piece —
 //! or tell the orchestrator to take the batch path.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -57,9 +58,15 @@ enum Cmd {
 /// Controls a running live dictation; dropping it cancels.
 pub struct LiveHandle {
     tx: mpsc::UnboundedSender<Cmd>,
+    failed: Arc<AtomicBool>,
 }
 
 impl LiveHandle {
+    /// The connection failed or dropped: this dictation will end in `Fallback`, so the
+    /// orchestrator can take the batch path (pieces) while the user is still speaking.
+    pub fn failed(&self) -> bool {
+        self.failed.load(Ordering::SeqCst)
+    }
     /// Interleaved samples recorded since the last call.
     pub fn audio(&self, interleaved: &[f32]) {
         if !interleaved.is_empty() {
@@ -92,8 +99,20 @@ pub fn spawn(
     done: impl FnOnce(LiveOutcome) + Send + 'static,
 ) -> LiveHandle {
     let (tx, rx) = mpsc::unbounded_channel();
+    let failed = Arc::new(AtomicBool::new(false));
+    let flag = failed.clone();
     tokio::spawn(async move {
-        let outcome = run(req, connector, draft.as_ref(), rx).await;
+        // A bug in one dictation must end in the batch path, never in a stalled queue.
+        let (d, f) = (draft.clone(), flag.clone());
+        let work = tokio::spawn(async move { run(req, connector, d.as_ref(), rx, &f).await });
+        let outcome = match work.await {
+            Ok(o) => o,
+            Err(e) => {
+                tracing::error!("live dictation crashed: {e}");
+                flag.store(true, Ordering::SeqCst);
+                LiveOutcome::Fallback { reason: "crashed".into(), error: None }
+            }
+        };
         if outcome == LiveOutcome::Cancelled {
             draft(None);
         }
@@ -102,7 +121,7 @@ pub fn spawn(
         }
         done(outcome);
     });
-    LiveHandle { tx }
+    LiveHandle { tx, failed }
 }
 
 fn send(session: &LiveSession, chunks: Vec<Vec<i16>>) {
@@ -116,6 +135,7 @@ async fn run(
     connector: Arc<dyn LiveConnector>,
     draft: &(dyn Fn(Option<DraftParts>) + Send + Sync),
     mut rx: mpsc::UnboundedReceiver<Cmd>,
+    failed_flag: &AtomicBool,
 ) -> LiveOutcome {
     let t0 = Instant::now();
     let mut chunker = Chunker::new(req.rate, req.channels);
@@ -130,6 +150,7 @@ async fn run(
             r = &mut connect => match r {
                 Ok(s) => break s,
                 Err(e) => {
+                    failed_flag.store(true, Ordering::SeqCst);
                     wait_for_end(&mut rx, released).await;
                     return LiveOutcome::Fallback { reason: e.to_string(), error: Some(e) };
                 }
@@ -193,8 +214,14 @@ async fn run(
                 }
                 Some(LiveEvent::TurnComplete) if released_at.is_some() => break,
                 Some(LiveEvent::TurnComplete) => {}
-                Some(LiveEvent::Error(e)) => failed = Some(e),
-                None => failed = Some("closed".into()),
+                Some(LiveEvent::Error(e)) => {
+                    failed_flag.store(true, Ordering::SeqCst);
+                    failed = Some(e);
+                }
+                None => {
+                    failed_flag.store(true, Ordering::SeqCst);
+                    failed = Some("closed".into());
+                }
             },
             cmd = rx.recv(), if released_at.is_none() => match cmd {
                 Some(Cmd::Audio(a)) => {
@@ -365,6 +392,22 @@ mod tests {
 
     async fn settle() {
         tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+
+    struct PanicConnector;
+    #[async_trait::async_trait]
+    impl LiveConnector for PanicConnector {
+        async fn connect(&self, _: LiveConfig) -> Result<LiveSession, ProviderError> {
+            panic!("simulated bug in a live dictation");
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn crash_in_runner_falls_back() {
+        let r = start(Arc::new(PanicConnector), Finisher::Plain);
+        r.handle.release();
+        let out = r.outcome.await.unwrap();
+        assert!(matches!(&out, LiveOutcome::Fallback { reason, .. } if reason == "crashed"), "{out:?}");
     }
 
     #[tokio::test(start_paused = true)]
