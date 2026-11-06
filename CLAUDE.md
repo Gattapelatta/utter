@@ -6,8 +6,8 @@ Free, open-source voice-to-text for macOS (Windows later): hold a hotkey, speak,
 
 ## Current focus (2026-11-07) — when the user says «продолжаем работу над utter»
 
-1. Read `docs/superpowers/HANDOFF.md` («С чего начать следующую сессию», «Черновик в острове»).
-2. The live-draft plan (`docs/superpowers/plans/2026-11-06-live-draft-island.md`) is implemented and checked live; next is the final whole-branch review by a fresh reviewer (see the plan's ledger `.superpowers/sdd/2026-11-06-live-draft-island/progress.md`), then Plan 2 Task 13, then merging to `main` with the user's OK.
+1. Read `docs/superpowers/HANDOFF.md` («С чего начать следующую сессию»).
+2. The live draft in the island is done, checked live and through the final review (decisions: `docs/superpowers/plans/2026-11-07-live-dictation-decisions.md`). Next: finish Plan 2 Task 13 (`docs/superpowers/plans/2026-10-07-utter-plan-2-premium-ui.md`), then `finishing-a-development-branch` — merge to `main` only with the user's OK.
 
 ## Working with the user
 
