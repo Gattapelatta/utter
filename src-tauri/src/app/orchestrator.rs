@@ -320,6 +320,8 @@ pub struct Orchestrator {
     /// The live dictation whose drafts may reach the island; a released one may still be
     /// sending its last pieces when the next recording starts.
     draft_owner: Arc<std::sync::atomic::AtomicU64>,
+    /// Job id → live dictation, for jobs that showed a draft window.
+    live_ids: std::collections::HashMap<u64, u64>,
     live_jobs: std::collections::HashMap<u64, LiveJob>,
 }
 
@@ -401,6 +403,7 @@ impl Orchestrator {
             live: None,
             live_seq: 0,
             draft_owner: Default::default(),
+            live_ids: Default::default(),
             live_jobs: Default::default(),
         }
     }
@@ -470,8 +473,8 @@ impl Orchestrator {
                     // Approximation: the next job's wait is measured from now.
                     self.processing_since = now_ms();
                 }
-                for (_, r) in self.queue.push(id, *result) {
-                    self.finish(r).await;
+                for (id, r) in self.queue.push(id, *result) {
+                    self.finish(r, id).await;
                 }
             }
             Input::LiveDone(seq, outcome) => self.live_done(seq, *outcome),
@@ -712,11 +715,12 @@ impl Orchestrator {
         }
     }
 
-    /// The live path: Gemini, nothing else in the queue (insertion order), no paragraphs (they
-    /// split the whole text by meaning), and a recorder that reports its format.
+    /// The live path: Gemini, no paragraphs (they split the whole text by meaning), and a recorder
+    /// that reports its format. A busy queue is fine: the job id is taken at release, so the
+    /// ordered queue keeps the insertion order (user's decision 2026-11-07).
     fn start_live(&mut self, mode: Mode, s: &Settings) -> Option<LiveRec> {
         let connector = self.deps.live.clone()?;
-        if s.provider != ProviderKind::Gemini || self.in_flight > 0 || s.paragraphs {
+        if s.provider != ProviderKind::Gemini || s.paragraphs {
             return None;
         }
         let c = self.deps.audio.peek(0)?;
@@ -775,6 +779,7 @@ impl Orchestrator {
         }
         self.in_flight += 1;
         self.show(self.processing_state());
+        self.live_ids.insert(id, l.seq);
         let job = LiveJob { id, mode, captured: Arc::new(captured), submitted: Instant::now(), created_at_ms: now_ms(), _handle: l.handle };
         self.live_jobs.insert(l.seq, job);
         if let Some((state, visible)) = deferred {
@@ -827,6 +832,7 @@ impl Orchestrator {
     }
 
     fn submit(&mut self, mode: Mode) {
+        let mut window = None;
         if let Some(l) = self.live.take() {
             if !l.handle.failed() {
                 return self.submit_live(l, mode);
@@ -834,6 +840,7 @@ impl Orchestrator {
             // The live connection failed while speaking: the batch path with its pieces; the
             // window keeps what came until that text is pasted (`finish` clears it).
             l.handle.cancel();
+            window = Some(l.seq);
         }
         let deferred = self.end_recording();
         let captured = self.deps.audio.stop().unwrap_or_default();
@@ -850,7 +857,10 @@ impl Orchestrator {
             Some(Split { pieces, rest })
         };
         self.drop_pieces();
-        self.spawn_job(mode, AudioInput::Captured(captured), None, split);
+        let id = self.spawn_job(mode, AudioInput::Captured(captured), None, split);
+        if let Some(seq) = window {
+            self.live_ids.insert(id, seq);
+        }
         if let Some((state, visible)) = deferred {
             self.show_result(state, visible);
         }
@@ -866,13 +876,14 @@ impl Orchestrator {
         self.spawn_job(entry.mode, AudioInput::Wav { bytes, secs }, Some(history_id), None);
     }
 
-    fn spawn_job(&mut self, mode: Mode, audio_in: AudioInput, history_id: Option<u64>, split: Option<Split>) {
+    fn spawn_job(&mut self, mode: Mode, audio_in: AudioInput, history_id: Option<u64>, split: Option<Split>) -> u64 {
         let id = self.ids.next();
         if self.in_flight == 0 {
             self.processing_since = now_ms();
         }
         self.in_flight += 1;
         self.run_job(id, mode, audio_in, history_id, split);
+        id
     }
 
     /// Processes a recording under a job id already counted in `in_flight`.
@@ -968,7 +979,7 @@ impl Orchestrator {
         });
     }
 
-    async fn finish(&mut self, r: JobResult) {
+    async fn finish(&mut self, r: JobResult, id: u64) {
         let s = self.shared.settings();
         let today = chrono::Local::now().date_naive();
         let stt_called = r.audio_secs > 0.0;
@@ -1076,8 +1087,14 @@ impl Orchestrator {
             }
         }
         self.show_result(overlay, visible);
-        // The draft window (if any) leaves together with the result (spec 2026-11-06 §3.1).
-        self.deps.overlay.draft(None);
+        // The draft window leaves together with its own result (spec 2026-11-06 §3.1) — not when
+        // an earlier job finishes while the next dictation shows its window.
+        let seq = self.live_ids.remove(&id);
+        let owner = self.draft_owner.load(Ordering::SeqCst);
+        if owner == 0 || Some(owner) == seq {
+            self.deps.overlay.draft(None);
+            self.draft_owner.store(0, Ordering::SeqCst);
+        }
     }
 
     /// History ids are unique across restarts: milliseconds since epoch, bumped on collision.
@@ -2171,7 +2188,8 @@ mod tests {
         r.orch.handle(Input::Hotkey(HotkeyEvent::Down(Mode::Dictation)), t0 + Duration::from_secs(2)).await;
         let from = drafts(&r).len();
         tokio::time::sleep(Duration::from_millis(600)).await;
-        let late: Vec<_> = drafts(&r)[from..].iter().filter(|d| d.is_some()).cloned().collect();
+        // B goes live too (with its own "первая" from the same fake); A's late words must not show.
+        let late: Vec<_> = drafts(&r)[from..].iter().flatten().filter(|d| d.settled.contains("поздно") || d.interim.contains("поздно")).cloned().collect();
         assert!(late.is_empty(), "A's draft reached B's island: {late:?}");
     }
 
@@ -2199,13 +2217,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn live_waits_for_empty_queue() {
-        let (mut r, live) = live_rig(heard("Первая."));
-        r.record(Mode::Dictation, speech(1.0), Instant::now(), 1).await;
-        r.record(Mode::Dictation, speech(1.0), Instant::now(), 1).await;
+    async fn second_dictation_goes_live_while_first_is_processed() {
+        // The user's decision 2026-11-07: the window shows for a dictation started while the
+        // previous one is still processed; the ordered queue keeps the insertion order.
+        let (mut r, live) = live_rig(heard("Текст."));
+        let t0 = Instant::now();
+        r.record(Mode::Dictation, speech(1.0), t0, 1).await;
+        r.record(Mode::Dictation, speech(1.0), t0 + Duration::from_secs(2), 1).await;
         r.settle(2).await;
-        assert_eq!(live.connects.load(Ordering::SeqCst), 1, "the second recording took the batch path");
-        assert_eq!(*r.out.0.lock().unwrap(), vec!["Первая.".to_string(), "пакетный".to_string()]);
+        assert_eq!(live.connects.load(Ordering::SeqCst), 2, "both dictations went live");
+        assert_eq!(*r.out.0.lock().unwrap(), vec!["Текст.".to_string(), "Текст.".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn finishing_previous_job_keeps_current_window() {
+        // A is released and still waiting for its final piece when B starts with its own window.
+        let (mut r, _) = live_rig(FakeLive {
+            script: vec![LiveEvent::Interim("слова".into())],
+            after_end: vec![LiveEvent::Segment("Слова.".into())],
+            after_end_delay: Duration::from_millis(200),
+            ..Default::default()
+        });
+        let t0 = Instant::now();
+        r.record(Mode::Dictation, speech(1.0), t0, 1).await;
+        r.audio.captures.lock().unwrap().push_back(speech(1.0));
+        r.orch.handle(Input::Hotkey(HotkeyEvent::Down(Mode::Dictation)), t0 + Duration::from_secs(2)).await;
+        let from = drafts(&r).len();
+        r.settle(1).await; // A is pasted while B is still recording
+        assert_eq!(*r.out.0.lock().unwrap(), vec!["Слова.".to_string()]);
+        let during_b = drafts(&r)[from..].to_vec();
+        assert!(during_b.iter().any(Option::is_some), "B shows its own draft");
+        assert!(!during_b.contains(&None), "finishing A must not close B's window: {during_b:?}");
+        r.orch.handle(Input::Hotkey(HotkeyEvent::Up(Mode::Dictation)), t0 + Duration::from_secs(4)).await;
+        r.settle(1).await;
+        assert_eq!(drafts(&r).last(), Some(&None), "B's window closes when B is pasted");
     }
 
     #[tokio::test]
