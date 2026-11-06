@@ -70,6 +70,8 @@ body,
 .island-slot {
   position: relative;
   transform-origin: 0% 50%;
+  /* Its own layer from the start: the timer's fade-in began mid-growth and cost a frame. */
+  will-change: opacity, transform;
   width: 48px;
   height: 21px;
   display: flex;

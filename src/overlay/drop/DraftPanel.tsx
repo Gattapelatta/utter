@@ -37,6 +37,8 @@ export function DraftPanel({ draft, shown = true }: { draft: DraftParts | null; 
         border: "1px solid #3A3A3D",
         borderRadius: "14px",
         transformOrigin: "50% 0%",
+        // Its own layer from the start: promoting it when the fade began cost a frame (video).
+        willChange: "opacity, transform",
       }}
     >
       <div

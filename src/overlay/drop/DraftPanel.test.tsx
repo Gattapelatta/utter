@@ -26,6 +26,7 @@ describe("DraftPanel", () => {
     expect(field.style.border).toBe("1px solid rgb(58, 58, 61)");
     expect(field.style.borderRadius).toBe("14px");
     expect(field.style.height).toBe("128px");
+    expect(field.style.willChange).toBe("opacity, transform");
     expect(field.outerHTML).not.toContain("mask");
   });
 
