@@ -280,6 +280,11 @@ fn updates_text(l: &TrayLabels, offer: Option<&str>) -> String {
     }
 }
 
+/// What Utter is doing now (recording, processing, idle) — the tray keeps the latest status.
+pub fn current_status(app: &AppHandle) -> AppStatus {
+    app.try_state::<TrayHandles>().and_then(|h| h.gen.lock().ok().map(|g| g.1)).unwrap_or(AppStatus::Idle)
+}
+
 /// Called by the updater when an update is found (or no longer offered).
 pub fn set_update(app: &AppHandle, version: Option<&str>) {
     let Some(h) = app.try_state::<TrayHandles>() else { return };

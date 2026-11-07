@@ -69,6 +69,14 @@ describe("About", () => {
     expect(await screen.findByText("Доступна версия 0.3.0")).toBeTruthy();
   });
 
+  it("says the update waits for the dictation to end", async () => {
+    // Review m4 (Plan 2): Utter no longer restarts mid-dictation; the row says why it waits.
+    render(<About />);
+    await screen.findByText("Проверить обновления");
+    push({ kind: "waiting_for_idle" });
+    expect(screen.getByText("Установлю после диктовки")).toBeTruthy();
+  });
+
   it("shows a calm message when the check fails", async () => {
     render(<About />);
     await screen.findByText("Проверить обновления");

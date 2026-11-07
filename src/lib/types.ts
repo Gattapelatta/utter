@@ -113,5 +113,6 @@ export type UpdateState =
   | { kind: "up_to_date" }
   | { kind: "available"; version: string; notes: string | null }
   | { kind: "downloading"; percent: number }
+  | { kind: "waiting_for_idle" }
   | { kind: "ready" }
   | { kind: "failed" };

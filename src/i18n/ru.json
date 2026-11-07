@@ -138,6 +138,7 @@
   "about.available": "Доступна версия {version}",
   "about.install": "Установить и перезапустить",
   "about.downloading": "Загрузка… {n}%",
+  "about.update_waiting": "Установлю после диктовки",
   "about.ready": "Перезапускаю…",
   "about.update_failed": "Не удалось проверить обновления",
   "onboarding.welcome_title": "Говори — Utter напишет",

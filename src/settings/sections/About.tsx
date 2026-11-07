@@ -96,6 +96,8 @@ function updateText(u: UpdateState, t: ReturnType<typeof useT>): string | undefi
       return t("about.available", { version: u.version });
     case "downloading":
       return t("about.downloading", { n: u.percent });
+    case "waiting_for_idle":
+      return t("about.update_waiting");
     case "ready":
       return t("about.ready");
     case "failed":
