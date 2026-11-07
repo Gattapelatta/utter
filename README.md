@@ -1,13 +1,13 @@
-<p align="center"><img src="src-tauri/icons/128x128@2x.png" width="96" alt="Иконка Utter"></p>
+<img align="left" width="400" src="docs/media/island-ru.webp" alt="Капля вырастает из чёлки, показывает слова, пока ты говоришь, и вставляет текст">
 
-<h1 align="center">Utter</h1>
+<h1><img src="src-tauri/icons/128x128@2x.png" width="40" alt="Иконка Utter"> Utter</h1>
 
-<p align="center"><b>Зажми клавишу, говори — и текст появится там, где стоит курсор.</b><br>
+<p><b>Зажми клавишу, говори — и текст появится там, где стоит курсор.</b><br>
 Бесплатно. Свой ключ. Без наших серверов.</p>
 
-<p align="center"><a href="https://github.com/Gattapelatta/utter/releases/latest"><b>Скачать для Mac</b></a> · <a href="README.en.md">English</a></p>
+<p><a href="https://github.com/Gattapelatta/utter/releases/latest"><img src="docs/media/download-ru.svg" width="186" alt="Скачать для Mac"></a>&nbsp;&nbsp; <a href="README.en.md">English</a></p>
 
-<p align="center"><img src="docs/media/island-ru.webp" width="660" alt="Капля вырастает из чёлки, показывает слова, пока ты говоришь, и вставляет текст"></p>
+<br clear="left">
 
 ## Что умеет
 
