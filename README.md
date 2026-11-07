@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/media/hero-ru.png" width="830" alt="Utter: Капля у чёлки слушает, показывает слова, пока ты говоришь, и вставляет текст. Зажми клавишу, говори — и текст появится там, где курсор"></p>
+<p align="center"><img src="docs/media/hero-ru.png" width="830" alt="Utter: Капля у чёлки слушает, показывает слова, пока ты говоришь, и вставляет текст"></p>
 
 <p align="center"><a href="https://github.com/Gattapelatta/utter/releases/latest"><img src="docs/media/download-ru.svg" width="186" alt="Скачать для Mac"></a></p>
 

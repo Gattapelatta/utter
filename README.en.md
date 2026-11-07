@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/media/hero-en.png" width="830" alt="Utter: the Drop by the notch listens, shows the words as you speak, and pastes the text. Hold a key, speak, and the text appears at your cursor"></p>
+<p align="center"><img src="docs/media/hero-en.png" width="830" alt="Utter: the Drop by the notch listens, shows the words as you speak, and pastes the text"></p>
 
 <p align="center"><a href="https://github.com/Gattapelatta/utter/releases/latest"><img src="docs/media/download-en.svg" width="194" alt="Download for Mac"></a></p>
 

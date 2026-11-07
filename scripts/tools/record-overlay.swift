@@ -2,7 +2,7 @@
 // drawn backdrop: a dark screen, a menu bar and the camera notch. Nothing else on the screen is
 // captured. Optionally writes a file when recording starts (e.g. the dev build's debug-draft.txt).
 // Usage: swift scripts/tools/record-overlay.swift <out.gif | frames-dir> <seconds> [--scale 1] [--fps 60]
-//        [--notch 179x32] [--start-file <path> <text>]
+//        [--notch 179x32] [--start-file <path> <text>] [--no-backdrop]
 import AppKit
 import CoreImage
 import ImageIO
@@ -20,6 +20,9 @@ let scale = Double(take("--scale", 1)?.first ?? "") ?? 1
 let fps = Double(take("--fps", 1)?.first ?? "") ?? 60
 let notchArg = (take("--notch", 1)?.first ?? "179x32").split(separator: "x").compactMap { Double($0) }
 let startFile = take("--start-file", 2)
+// Transparent frames (no drawn screen, menu bar or notch), for hero.swift.
+let noBackdrop = args.contains("--no-backdrop")
+args.removeAll { $0 == "--no-backdrop" }
 guard args.count == 2, let seconds = Double(args[1]) else {
     FileHandle.standardError.write("usage: record-overlay <out.gif> <seconds> [--scale x] [--fps n] [--notch WxH] [--start-file path text]\n".data(using: .utf8)!)
     exit(2)
@@ -105,7 +108,7 @@ for (i, (img, t)) in frames.images.enumerated() {
     guard let c = CGContext(data: nil, width: W, height: H, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
                             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { continue }
     c.interpolationQuality = .high
-    backdrop(c)
+    if !noBackdrop { backdrop(c) }
     c.draw(img, in: CGRect(x: 0, y: 0, width: W, height: H))
     guard let composed = c.makeImage() else { continue }
     if let gif {
