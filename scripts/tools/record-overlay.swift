@@ -1,7 +1,7 @@
 // Records only Utter's overlay window (ScreenCaptureKit) into a looping GIF for the README, over a
 // drawn backdrop: a dark screen, a menu bar and the camera notch. Nothing else on the screen is
 // captured. Optionally writes a file when recording starts (e.g. the dev build's debug-draft.txt).
-// Usage: swift scripts/tools/record-overlay.swift <out.gif | frames-dir> <seconds> [--scale 1] [--fps 30]
+// Usage: swift scripts/tools/record-overlay.swift <out.gif | frames-dir> <seconds> [--scale 1] [--fps 60]
 //        [--notch 179x32] [--start-file <path> <text>]
 import AppKit
 import CoreImage
@@ -17,7 +17,7 @@ func take(_ name: String, _ n: Int) -> [String]? {
     return v
 }
 let scale = Double(take("--scale", 1)?.first ?? "") ?? 1
-let fps = Double(take("--fps", 1)?.first ?? "") ?? 30
+let fps = Double(take("--fps", 1)?.first ?? "") ?? 60
 let notchArg = (take("--notch", 1)?.first ?? "179x32").split(separator: "x").compactMap { Double($0) }
 let startFile = take("--start-file", 2)
 guard args.count == 2, let seconds = Double(args[1]) else {
@@ -100,7 +100,8 @@ if asGif {
 var delays: [String] = []
 for (i, (img, t)) in frames.images.enumerated() {
     let next = i + 1 < frames.images.count ? frames.images[i + 1].1 : t + 1.5 // hold the last frame
-    let delay = max(0.02, next - t)
+    // A GIF can't show a frame shorter than 20 ms; the frames folder keeps real timing (60 fps = 16.7 ms).
+    let delay = asGif ? max(0.02, next - t) : next - t
     guard let c = CGContext(data: nil, width: W, height: H, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
                             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { continue }
     c.interpolationQuality = .high
@@ -114,7 +115,7 @@ for (i, (img, t)) in frames.images.enumerated() {
         guard let d = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else { exit(1) }
         CGImageDestinationAddImage(d, composed, nil)
         guard CGImageDestinationFinalize(d) else { exit(1) }
-        delays.append(String(format: "%.4f", delay))
+        delays.append(String(format: "%.5f", delay))
     }
 }
 if let gif { guard CGImageDestinationFinalize(gif) else { exit(1) } }
