@@ -29,3 +29,6 @@ src-tauri/gen/schemas
 
 # Superpowers scratch
 .superpowers/
+
+# Release files (scripts/release.sh)
+release-out

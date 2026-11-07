@@ -138,6 +138,7 @@
   "about.available": "Version {version} is available",
   "about.install": "Install and restart",
   "about.downloading": "Downloading… {n}%",
+  "about.update_waiting": "Will install after dictation",
   "about.ready": "Restarting…",
   "about.update_failed": "Couldn't check for updates",
   "onboarding.welcome_title": "Speak — Utter writes",

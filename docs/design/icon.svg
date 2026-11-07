@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Utter app icon, variant A (chosen by the user 2026-11-07): the Drop from src/overlay/drop/Drop.tsx
+       (BODY, open eyes at EYES) on a macOS icon plate — 824 pt on a 1024 grid, corner radius 185. -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#0A0A0A"/>
+  <g transform="translate(162 148) scale(7)">
+    <path d="M50 14 C74 14 87 36 87 58 C87 77 71 90 50 90 C29 90 13 77 13 58 C13 36 26 14 50 14Z" fill="#FFFFFF"/>
+    <path d="M30.40 55.00 C30.40 39.67 45.60 39.67 45.60 55.00 C45.60 70.33 30.40 70.33 30.40 55.00Z" fill="#000000"/>
+    <path d="M54.40 55.00 C54.40 39.67 69.60 39.67 69.60 55.00 C69.60 70.33 54.40 70.33 54.40 55.00Z" fill="#000000"/>
+  </g>
+</svg>

@@ -17,6 +17,8 @@ pub enum UpdateState {
     UpToDate,
     Available { version: String, notes: Option<String> },
     Downloading { percent: u8 },
+    /// Downloaded; Utter restarts once no dictation is recorded or processed.
+    WaitingForIdle,
     Ready,
     Failed,
 }
@@ -45,7 +47,7 @@ pub fn percent(downloaded: u64, total: Option<u64>) -> u8 {
 
 /// A new check may start unless one is running or an update is being installed.
 pub fn can_check(s: &UpdateState) -> bool {
-    !matches!(s, UpdateState::Checking | UpdateState::Downloading { .. } | UpdateState::Ready)
+    !matches!(s, UpdateState::Checking | UpdateState::Downloading { .. } | UpdateState::WaitingForIdle | UpdateState::Ready)
 }
 
 /// The version the tray offers to update to, if any.
@@ -124,7 +126,23 @@ pub async fn check(app: AppHandle) {
     publish(&app, next);
 }
 
-/// Downloads and installs the found update with progress, then restarts Utter.
+/// Returns once Utter is idle on two polls in a row: no recording, nothing being processed
+/// (a moment of idle between release and processing does not count).
+pub async fn wait_until_idle(status: impl Fn() -> super::orchestrator::AppStatus, poll: Duration) {
+    use super::orchestrator::AppStatus;
+    let mut idle_before = false;
+    loop {
+        let idle = status() == AppStatus::Idle;
+        if idle && idle_before {
+            return;
+        }
+        idle_before = idle;
+        tokio::time::sleep(poll).await;
+    }
+}
+
+/// Downloads the found update with progress, waits until no dictation is running (review m4:
+/// a restart mid-dictation lost the text), then installs it and restarts Utter.
 pub async fn install(app: AppHandle) {
     let Some(u) = app.try_state::<Updates>() else { return };
     let Some(update) = u.found.lock().ok().and_then(|mut f| f.take()) else { return };
@@ -132,8 +150,8 @@ pub async fn install(app: AppHandle) {
     let mut got: u64 = 0;
     let mut shown = 0u8;
     let progress_app = app.clone();
-    let result = update
-        .download_and_install(
+    let bytes = update
+        .download(
             |chunk, total| {
                 got += chunk as u64;
                 let p = percent(got, total);
@@ -145,7 +163,22 @@ pub async fn install(app: AppHandle) {
             || {},
         )
         .await;
-    match result {
+    let bytes = match bytes {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!("update download failed: {e}");
+            publish(&app, UpdateState::Failed);
+            return;
+        }
+    };
+    let status_app = app.clone();
+    let status = move || super::tray::current_status(&status_app);
+    if status() != super::orchestrator::AppStatus::Idle {
+        publish(&app, UpdateState::WaitingForIdle);
+        tracing::info!("update downloaded; waiting until no dictation is running");
+    }
+    wait_until_idle(status, Duration::from_millis(250)).await;
+    match update.install(bytes) {
         Ok(()) => {
             publish(&app, UpdateState::Ready);
             tracing::info!(version = %update.version, "update installed, restarting");
@@ -176,6 +209,57 @@ pub fn spawn(app: AppHandle) {
 mod tests {
     use super::*;
     use std::time::{Duration, SystemTime};
+    use crate::app::orchestrator::AppStatus;
+    use std::sync::Arc;
+
+    /// A status that follows a timeline: (seconds from start, status), on the paused clock.
+    fn timeline(steps: &'static [(f64, AppStatus)]) -> impl Fn() -> AppStatus {
+        let t0 = tokio::time::Instant::now();
+        move || {
+            let s = t0.elapsed().as_secs_f64();
+            steps.iter().rev().find(|(at, _)| s >= *at).map(|(_, st)| *st).unwrap_or(AppStatus::Idle)
+        }
+    }
+
+    // Review m4 (Plan 2): "Install" restarted Utter at once, even mid-dictation — the text was lost.
+    #[tokio::test(start_paused = true)]
+    async fn restart_waits_until_recording_and_processing_are_over() {
+        let status = timeline(&[(0.0, AppStatus::Recording), (1.0, AppStatus::Processing), (2.0, AppStatus::Idle)]);
+        let t0 = tokio::time::Instant::now();
+        wait_until_idle(status, Duration::from_millis(250)).await;
+        let waited = t0.elapsed();
+        assert!(waited >= Duration::from_secs(2) && waited <= Duration::from_millis(2_500), "{waited:?}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn idle_between_release_and_processing_does_not_count() {
+        let status = timeline(&[(0.0, AppStatus::Recording), (1.0, AppStatus::Idle), (1.1, AppStatus::Processing), (2.0, AppStatus::Idle)]);
+        let t0 = tokio::time::Instant::now();
+        wait_until_idle(status, Duration::from_millis(250)).await;
+        assert!(t0.elapsed() >= Duration::from_secs(2), "{:?}", t0.elapsed());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn idle_at_once_returns_after_one_poll() {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let c = calls.clone();
+        let t0 = tokio::time::Instant::now();
+        wait_until_idle(
+            move || {
+                c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                AppStatus::Idle
+            },
+            Duration::from_millis(250),
+        )
+        .await;
+        assert!(t0.elapsed() <= Duration::from_millis(250));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn no_new_check_while_an_update_waits_to_install() {
+        assert!(!can_check(&UpdateState::WaitingForIdle));
+    }
 
     const H: Duration = Duration::from_secs(3600);
 
