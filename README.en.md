@@ -4,50 +4,60 @@
 
 <p align="center"><a href="https://github.com/Gattapelatta/utter/releases/latest"><img src="docs/media/download-en.svg" width="311" alt="Download for Mac · macOS 13+"></a></p>
 
+## What is it
+
+Utter is free dictation for your Mac. Hold a key, talk, let go — and the text is right where your cursor was. Telegram, Notes, Slack, your browser, your code — anywhere.
+
+It also translates: speak in your own language and get English pasted instead. Proper, natural English — business or casual, your call.
+
 ## What it does
 
-- **Dictation.** Hold <kbd>Right ⌥</kbd>, speak in any language, let go: clean text lands in the app you're typing in — Notes, Slack, Telegram, your browser, your code editor.
-- **Translation.** Hold <kbd>Right ⌘</kbd> and speak in your own language: the English translation is pasted instead, in a business or a casual style.
-- **Live draft.** The words appear under the camera notch while you speak; the clean text follows a moment after you let go.
-- **Cleanup.** "Um", "uh" and repeats go away, punctuation is added. The meaning is never changed.
-- **The Drop.** A small character lives by the notch and shows what Utter is doing: listening, thinking, done.
+- **Dictation.** Hold <kbd>Right ⌥</kbd>, talk in any language, let go — done. The text comes out clean, no "um"s and "uh"s.
+- **Translation to English.** Same thing, just with <kbd>Right ⌘</kbd>. Speak your language, get English. Business or casual style, you pick.
+- **You see what it hears.** While you talk, the words show up right under the notch. Let go of the key and a moment later the clean version is pasted.
+- **Cleans up, doesn't rewrite.** It drops the "um"s, "uh"s and repeats and adds the commas and periods. The meaning stays yours. Always.
+- **The Drop.** A tiny character living by the notch. One look and you know what's going on: listening, thinking, or all done.
 
-Both keys can be changed in Settings. A long recording is processed while you are still speaking, so it is ready soon after you stop.
+You can change both keys in Settings. And yes, you can talk for a long time: Utter works on the recording while you're still speaking, so the text is ready almost as soon as you stop.
 
-## Install
+## How to install
 
-1. Download `Utter_…_universal.dmg` from the [latest release](https://github.com/Gattapelatta/utter/releases/latest), open it and drag **Utter** into **Applications**.
-2. Open Utter. macOS will stop it the first time, because Utter isn't signed with a paid Apple certificate yet. Open **System Settings → Privacy & Security**, scroll down to **Security** and click **Open Anyway**, then **Open**. You only do this once.
-3. Utter walks you through the rest: microphone access, Accessibility access (so it can paste), and a free Gemini key — get one at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and copy it; Utter picks it up from the clipboard.
+1. Grab `Utter_…_universal.dmg` from the [latest release](https://github.com/Gattapelatta/utter/releases/latest), open it and drag **Utter** into **Applications**.
+2. Open it. The first time, macOS won't let it in — that's expected: Utter doesn't have a paid Apple signature yet. Go to **System Settings → Privacy & Security**, scroll down to **Security** and click **Open Anyway**, then **Open**. You only do this once.
+3. From there Utter walks you through it: microphone access, Accessibility (so it can paste), and a free Gemini key. Get the key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and just copy it — Utter picks it up from the clipboard.
 
-Utter updates itself: when a new version is out, **About → Install** (or the menu bar icon) installs it after your current dictation.
+Utter updates itself too. When a new version is out, click **About → Install** (or use the menu bar icon). It installs as soon as you finish dictating — nothing gets cut off mid-sentence.
 
-Requires macOS 13 or later on Apple Silicon or Intel.
+Works on macOS 13 and newer, on any Mac — Apple Silicon or Intel.
 
-## Privacy
+## What about privacy?
 
-- Your voice goes straight from your Mac to the speech service you chose (Google Gemini by default, or Groq, or OpenAI) with **your own key**. Utter has no servers.
-- The key is kept in the macOS Keychain. History stays on your Mac and can be turned off.
-- On Gemini's free tier Google may use requests to improve its products; on a paid tier it doesn't. See [Google's terms](https://ai.google.dev/gemini-api/terms).
+- Your voice goes straight from your Mac to the speech service you picked: Google Gemini by default, or Groq, or OpenAI. And it goes **with your own key**. Utter has no servers of its own. None.
+- The key lives in the macOS Keychain. Your dictation history stays on your Mac, and you can turn it off.
+- Heads-up: on Gemini's free tier Google may use requests to improve its products. On a paid tier it doesn't. More in [Google's terms](https://ai.google.dev/gemini-api/terms).
 
-## Questions
+## FAQ
 
-**Is it really free?** Utter is. Gemini's free tier is enough for everyday dictation (several hundred requests a day across Utter's models); Groq has a free tier too. OpenAI is pay-as-you-go — it is not a ChatGPT subscription.
+**Is it really free?**<br>
+Utter is, completely. Gemini's free tier is plenty for everyday dictation — several hundred requests a day. Groq has a free tier too. OpenAI is pay-as-you-go, and it's not the same thing as a ChatGPT subscription.
 
-**Gemini says my location isn't supported.** Gemini isn't available in every country. A VPN to a supported country works, or choose Groq or OpenAI in Settings → Provider.
+**Gemini says my location isn't supported.**<br>
+Yeah, Gemini isn't available everywhere. Turn on a VPN to a country where it works — or just switch to Groq or OpenAI in **Settings → Provider**.
 
-**After an update macOS asks for Keychain access.** Click **Always Allow**. This happens once per update because Utter is signed with its own certificate, not a paid Apple one. Your microphone and Accessibility permissions stay.
+**After an update my Mac asks for Keychain access.**<br>
+Click **Always Allow**. It happens once after each update, because Utter is signed with my own signature, not a paid Apple one. Your microphone and Accessibility permissions stay put.
 
-**Does it work on Intel Macs?** Utter is built for both Apple Silicon and Intel. It has been tested on Apple Silicon with macOS 15; Intel hasn't been tested yet — please open an issue if something is off.
+**Does it work on Intel Macs?**<br>
+It should: Utter is built for both Apple Silicon and Intel. But I've only tested it on Apple Silicon with macOS 15 — I don't have an Intel Mac. If something's off, let me know in [Issues](https://github.com/Gattapelatta/utter/issues).
 
-## Roadmap
+## What's next
 
-- Windows version.
-- A paid Apple signature, so the first launch needs no extra step.
+- A Windows version.
+- A paid Apple signature, so the first launch doesn't send you into Settings.
 
-## Contributing
+## Want to help?
 
-Bug reports and ideas are welcome in [Issues](https://github.com/Gattapelatta/utter/issues). Utter is a [Tauri 2](https://tauri.app) app: Rust in `src-tauri`, React in `src`.
+Found a bug or have an idea — drop it in [Issues](https://github.com/Gattapelatta/utter/issues), I'd love to hear it. And if you want to dig into the code: Utter is built with [Tauri 2](https://tauri.app), the Rust side lives in `src-tauri`, the React UI in `src`.
 
 ```bash
 pnpm install
@@ -58,4 +68,4 @@ pnpm tauri dev
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) — take it and use it.
