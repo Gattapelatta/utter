@@ -54,6 +54,7 @@ It should: Utter is built for both Apple Silicon and Intel. But I've only tested
 
 - A Windows version.
 - A paid Apple signature, so the first launch doesn't send you into Settings.
+- **The Drop for AI agents.** You know how it goes: you give Claude or ChatGPT a task, switch to another window — and forget about it, or just don't know when it's done. I want the Drop to keep an eye on the agent and tell you when the task is finished. You'll be able to hook up ChatGPT or Claude, your pick.
 
 ## Want to help?
 
