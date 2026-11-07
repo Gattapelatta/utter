@@ -17,8 +17,9 @@ pub const TRANSLATE_EVERY: Duration = Duration::from_secs(4);
 /// A request without an answer this long is dropped; its pieces go with the next one.
 pub const TRANSLATE_TIMEOUT: Duration = Duration::from_secs(3);
 /// At the end a request still unanswered this long after it was sent is also sent to the backup
-/// model, and the first answer wins. Live check 2026-11-07: the cleanup model answered in
-/// 0.6–0.8 s or in 2–3 s, at random, so half the dictations waited 2–3 s before the paste.
+/// model, and as long again later once more to the main one; the first answer wins. Live check
+/// 2026-11-07: the cleanup model answered in 0.6–0.8 s or in 2–3 s at random (half the
+/// dictations waited 2–3 s), and now and then a request hung while a fresh one took 0.7 s.
 pub const BACKUP_AFTER: Duration = Duration::from_secs(1);
 
 type Reply = Result<String, ProviderError>;
@@ -34,7 +35,7 @@ struct InFlight {
 
 pub struct SegmentTranslator {
     provider: Arc<dyn TextModel>,
-    /// Races a slow or failed request at the end (`BACKUP_AFTER`).
+    /// Races a slow or failed request at the end (`BACKUP_AFTER`), then the main model again.
     backup: Option<Arc<dyn TextModel>>,
     system: String,
     segments: Vec<String>,
@@ -95,56 +96,51 @@ impl SegmentTranslator {
         InFlight { pieces, started: now, sent: tokio::time::Instant::now(), task, reply }
     }
 
-    /// The answer for one request: from it, or from the backup model sent once the request is
-    /// `BACKUP_AFTER` old or has failed — whichever answers first.
+    /// The answer for one request. Unanswered `BACKUP_AFTER` after it was sent, it also goes to
+    /// the backup model, and `BACKUP_AFTER` later once more to the main one (a single request
+    /// stalls, not the model); a failure moves to the next attempt at once. First answer wins.
     async fn settle(&mut self, f: InFlight, deadline: tokio::time::Instant) -> Reply {
         let InFlight { pieces, sent, task, reply, .. } = f;
-        let mut main = Some((task, reply));
-        let mut backup: Option<(tokio::task::JoinHandle<()>, oneshot::Receiver<Reply>)> = None;
-        let mut can_back_up = self.backup.is_some();
-        let mut last_err = ProviderError::Timeout;
+        let mut ladder: Vec<Arc<dyn TextModel>> = match &self.backup {
+            Some(b) => vec![self.provider.clone(), b.clone()],
+            None => Vec::new(),
+        };
+        let mut tasks = vec![task];
+        let mut replies = tokio::task::JoinSet::new();
         let crashed = || ProviderError::BadResponse("translation task crashed".into());
-        loop {
-            if main.is_none() && backup.is_none() && !can_back_up {
-                return Err(last_err);
+        replies.spawn(async move { reply.await.unwrap_or_else(|_| Err(crashed())) });
+        let mut next_at = sent + BACKUP_AFTER;
+        let mut last_err = ProviderError::Timeout;
+        let outcome = loop {
+            if replies.is_empty() && ladder.is_empty() {
+                break Err(last_err);
             }
-            let start_backup_at = if main.is_none() { tokio::time::Instant::now() } else { sent + BACKUP_AFTER };
+            let at = if replies.is_empty() { tokio::time::Instant::now() } else { next_at };
             tokio::select! {
-                r = async { (&mut main.as_mut().unwrap().1).await }, if main.is_some() => {
-                    let (task, _) = main.take().unwrap();
-                    drop(task);
-                    match r.unwrap_or_else(|_| Err(crashed())) {
-                        Ok(text) => {
-                            if let Some((t, _)) = backup.take() { t.abort(); }
-                            return Ok(text);
+                Some(r) = replies.join_next(), if !replies.is_empty() => match r.unwrap_or_else(|_| Err(crashed())) {
+                    Ok(text) => {
+                        if tasks.len() > 1 {
+                            tracing::info!(attempts = tasks.len(), after_ms = sent.elapsed().as_millis() as u64, "timing: live text answered after a retry");
                         }
-                        Err(e) => last_err = e,
+                        break Ok(text);
                     }
+                    Err(e) => last_err = e,
+                },
+                _ = tokio::time::sleep_until(at), if !ladder.is_empty() => {
+                    let model = ladder.pop().expect("checked");
+                    tracing::info!(attempt = tasks.len() + 1, waited_ms = sent.elapsed().as_millis() as u64, "timing: live text sent again");
+                    let (task, reply) = self.send(model, &pieces);
+                    tasks.push(task);
+                    replies.spawn(async move { reply.await.unwrap_or_else(|_| Err(crashed())) });
+                    next_at = next_at.max(tokio::time::Instant::now()) + BACKUP_AFTER;
                 }
-                r = async { (&mut backup.as_mut().unwrap().1).await }, if backup.is_some() => {
-                    backup = None;
-                    match r.unwrap_or_else(|_| Err(crashed())) {
-                        Ok(text) => {
-                            if let Some((t, _)) = main.take() { t.abort(); }
-                            tracing::info!(after_ms = sent.elapsed().as_millis() as u64, "timing: live text answered by the backup model");
-                            return Ok(text);
-                        }
-                        Err(e) => last_err = e,
-                    }
-                }
-                _ = tokio::time::sleep_until(start_backup_at), if can_back_up => {
-                    can_back_up = false;
-                    let model = self.backup.clone().expect("checked");
-                    tracing::info!(waited_ms = sent.elapsed().as_millis() as u64, "timing: live text sent to the backup model");
-                    backup = Some(self.send(model, &pieces));
-                }
-                _ = tokio::time::sleep_until(deadline) => {
-                    if let Some((t, _)) = main.take() { t.abort(); }
-                    if let Some((t, _)) = backup.take() { t.abort(); }
-                    return Err(ProviderError::Timeout);
-                }
+                _ = tokio::time::sleep_until(deadline) => break Err(ProviderError::Timeout),
             }
+        };
+        for t in tasks {
+            t.abort();
         }
+        outcome
     }
 
     /// Collects a finished request, drops a stuck one, starts the next batch when allowed.
@@ -346,6 +342,22 @@ mod tests {
         assert_eq!(started.elapsed(), BACKUP_AFTER + Duration::from_millis(300));
         assert_eq!(backup.inputs(), vec!["фраза".to_string()]);
         assert_eq!(requests, 2);
+    }
+
+    // Live check 2026-11-07 (after the backup): twice both requests hung past 2 s while a fresh
+    // request to the main model answered in 0.7 s — a single request stalls, not the model.
+    #[tokio::test(start_paused = true)]
+    async fn two_stalled_requests_are_raced_by_a_fresh_one_to_the_main_model() {
+        let main = FakeTranslator::with_delays(&[10_000, 300]);
+        let backup = FakeTranslator::tagged("B:", &[10_000]);
+        let mut t = SegmentTranslator::new(main.clone(), "sys".into()).with_backup(backup.clone());
+        t.push("фраза".into(), Instant::now());
+        let started = tokio::time::Instant::now();
+        let (text, requests) = t.finish().await.unwrap();
+        assert_eq!(text, "EN[фраза]");
+        assert_eq!(started.elapsed(), 2 * BACKUP_AFTER + Duration::from_millis(300));
+        assert_eq!(main.inputs().len(), 2);
+        assert_eq!(requests, 3);
     }
 
     #[tokio::test(start_paused = true)]
