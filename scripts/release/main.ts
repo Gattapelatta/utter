@@ -7,7 +7,8 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { parseCodesign, parseLipo } from "./inspect.ts";
+import { archiveProblems, listTarGz } from "./archive.ts";
+import { parseCodesign, parseLeaf, parseLipo } from "./inspect.ts";
 import { assetUrl, buildLatestJson } from "./latest.ts";
 import { verifyMinisign } from "./minisign.ts";
 import { preflight, type Facts } from "./preflight.ts";
@@ -22,6 +23,9 @@ const FILES = {
 export const IDENTITY = "Utter Dev";
 export const BUNDLE_ID = "app.utter.desktop";
 export const ARCHIVE = "Utter.app.tar.gz";
+/** The "Utter Dev" certificate users' permissions are tied to (designated requirement). A new
+ *  certificate under the same name would silently break Accessibility for everyone (review I1). */
+export const LEAF = "543970408eaaf9e3c062c11084bc7b9accb9e61b";
 
 function run(cmd: string, args: string[], opts: { stderr?: boolean } = {}): string {
   try {
@@ -36,6 +40,15 @@ function run(cmd: string, args: string[], opts: { stderr?: boolean } = {}): stri
 /** `codesign -dvv` prints its details (Authority only from -vv) to stderr. */
 function codesignDetails(app: string): string {
   return execFileSync("sh", ["-c", 'codesign -dvv "$0" 2>&1', app], { encoding: "utf8" });
+}
+
+function ok(cmd: string, args: string[]): boolean {
+  try {
+    execFileSync(cmd, args, { cwd: ROOT, stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function currentVersion(): string {
@@ -59,11 +72,17 @@ function facts(next: string, allowBranch: boolean): Facts {
     identity: run("security", ["find-identity", "-p", "codesigning"]).includes(`"${IDENTITY}"`),
     updaterKey: existsSync(join(homedir(), ".tauri/utter.key")),
     targets: run("rustup", ["target", "list", "--installed"]).split("\n").map((s) => s.trim()).filter(Boolean),
+    ghAuth: ok("gh", ["auth", "status"]),
   };
 }
 
 function verify(app: string, archive: string, sigPath: string): string[] {
   const problems: string[] = [];
+  // The installed Utter unpacks the archive itself: read it without macOS tar (review C1).
+  problems.push(...archiveProblems(listTarGz(readFileSync(archive))));
+  if (!ok("codesign", ["--verify", "--deep", "--strict", app])) problems.push("Подпись приложения повреждена (codesign --verify не проходит).");
+  const leaf = parseLeaf(execFileSync("sh", ["-c", 'codesign -d -r- "$0" 2>&1', app], { encoding: "utf8" }));
+  if (leaf !== LEAF) problems.push(`Подписано другим сертификатом (${leaf ?? "нет"}), а не тем «${IDENTITY}», к которому привязаны разрешения у людей.`);
   const cs = parseCodesign(codesignDetails(app));
   if (cs.authority !== IDENTITY) problems.push(`Приложение подписано «${cs.authority ?? "без сертификата"}», а нужно «${IDENTITY}».`);
   if (cs.identifier !== BUNDLE_ID) problems.push(`Идентификатор подписи «${cs.identifier}», а нужен ${BUNDLE_ID}.`);
@@ -108,7 +127,7 @@ function main(argv: string[]): number {
       const [app, archive, sig] = args;
       const problems = verify(app, archive, sig);
       for (const p of problems) console.error(`✗ ${p}`);
-      if (!problems.length) console.log(`✓ ${app}: «${IDENTITY}», ${BUNDLE_ID}, x86_64 + arm64, подпись обновления верна`);
+      if (!problems.length) console.log(`✓ ${app}: «${IDENTITY}» (тот же сертификат), ${BUNDLE_ID}, x86_64 + arm64, подпись цела; архив чистый, подпись обновления верна`);
       return problems.length ? 1 : 0;
     }
     default:

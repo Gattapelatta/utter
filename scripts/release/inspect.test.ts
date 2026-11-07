@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseCodesign, parseLipo } from "./inspect";
+import { parseCodesign, parseLipo, parseLeaf } from "./inspect";
 
 const signed = `Executable=/tmp/Utter.app/Contents/MacOS/utter
 Identifier=app.utter.desktop
@@ -26,5 +26,15 @@ describe("inspect", () => {
 
   it("parseLipo lists architectures", () => {
     expect(parseLipo("x86_64 arm64\n")).toEqual(["x86_64", "arm64"]);
+  });
+
+  // Final review I1: a re-created "Utter Dev" certificate has the same name but another leaf;
+  // every user's Accessibility permission would silently stop matching.
+  it("parseLeaf reads the certificate the requirement is pinned to", () => {
+    const out = `Executable=/x/Utter.app/Contents/MacOS/utter
+designated => identifier "app.utter.desktop" and certificate leaf = H"543970408eaaf9e3c062c11084bc7b9accb9e61b"
+`;
+    expect(parseLeaf(out)).toBe("543970408eaaf9e3c062c11084bc7b9accb9e61b");
+    expect(parseLeaf('designated => cdhash H"abc"')).toBeNull();
   });
 });

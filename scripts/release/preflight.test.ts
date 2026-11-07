@@ -14,6 +14,7 @@ const ok: Facts = {
   identity: true,
   updaterKey: true,
   targets: ["aarch64-apple-darwin", "x86_64-apple-darwin"],
+  ghAuth: true,
 };
 
 describe("preflight", () => {
@@ -22,10 +23,19 @@ describe("preflight", () => {
   });
 
   it("preflight refuses an existing tag, local or remote", () => {
-    expect(preflight({ ...ok, tagLocal: true }).join("\n")).toMatch(/v0\.2\.0/);
-    const remote = preflight({ ...ok, tagRemote: true }).join("\n");
-    expect(remote).toMatch(/v0\.2\.0/);
-    expect(remote).toMatch(/gh release upload/);
+    // Final review I2: the hints must lead somewhere — a local-only tag is removed; on GitHub a
+    // missing release is created and a draft is completed and made public.
+    const local = preflight({ ...ok, tagLocal: true }).join("\n");
+    expect(local).toMatch(/v0\.2\.0/);
+    expect(local).toMatch(/git tag -d v0\.2\.0/);
+    const remote = preflight({ ...ok, tagLocal: true, tagRemote: true }).join("\n");
+    expect(remote).toMatch(/gh release create v0\.2\.0/);
+    expect(remote).toMatch(/gh release edit v0\.2\.0 --draft=false/);
+    expect(remote).not.toMatch(/git tag -d/);
+  });
+
+  it("a GitHub login is checked before anything is built", () => {
+    expect(preflight({ ...ok, ghAuth: false }).join("\n")).toMatch(/gh auth login/);
   });
 
   it("preflight lists every problem in plain words", () => {
@@ -39,8 +49,9 @@ describe("preflight", () => {
       identity: false,
       updaterKey: false,
       targets: ["aarch64-apple-darwin"],
+      ghAuth: false,
     });
-    expect(all).toHaveLength(8);
+    expect(all).toHaveLength(9);
     for (const line of all) expect(line.length).toBeGreaterThan(10);
     expect(all.join("\n")).toMatch(/x86_64-apple-darwin/);
     expect(all.join("\n")).toMatch(/docs\/releases\/0\.1\.0\.md/);

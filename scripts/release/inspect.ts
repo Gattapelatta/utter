@@ -9,3 +9,8 @@ export function parseCodesign(out: string): { authority: string | null; identifi
 export function parseLipo(out: string): string[] {
   return out.trim().split(/\s+/).filter(Boolean);
 }
+
+/** The certificate leaf hash in `codesign -d -r-` output — what users' permissions are tied to. */
+export function parseLeaf(out: string): string | null {
+  return /certificate leaf = H"([0-9a-f]+)"/.exec(out)?.[1] ?? null;
+}
