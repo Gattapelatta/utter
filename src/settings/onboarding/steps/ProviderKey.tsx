@@ -29,6 +29,8 @@ export function ProviderKey({
   const [manual, setManual] = useState(false);
   const [draft, setDraft] = useState("");
   const tried = useRef<string | null>(null);
+  /** Why the last key failed: anything but a rejected key is worth a new check later. */
+  const failure = useRef<string | null>(null);
   const live = useRef(true);
   useEffect(
     () => () => {
@@ -38,9 +40,12 @@ export function ProviderKey({
   );
 
   const tryKey = useCallback(
-    async (key: string) => {
-      if (tried.current === key) return;
+    async (key: string, again = false) => {
+      // The same key again only when asked to (the user came back, or pressed "check again")
+      // and only if it was not rejected: no VPN, rate limits and outages pass (review 2026-11-07).
+      if (tried.current === key && !(again && failure.current !== null && failure.current !== "bad_key")) return;
       tried.current = key;
+      failure.current = null;
       setError(null);
       setChecking(true);
       try {
@@ -48,7 +53,11 @@ export function ProviderKey({
         await ipc.verifyKey(provider);
         if (live.current) onVerified(true);
       } catch (e) {
-        if (live.current) setError(String(e));
+        const why = String(e);
+        failure.current = why;
+        // A rejected key is not kept: after a restart it would pass for a working one.
+        if (why === "bad_key") await ipc.setApiKey(provider, "").catch(() => {});
+        if (live.current) setError(why);
       } finally {
         if (live.current) setChecking(false);
       }
@@ -58,19 +67,21 @@ export function ProviderKey({
 
   useEffect(() => {
     if (ok) return;
-    const look = () => {
+    const look = (again: boolean) => {
       ipc
         .clipboardKey(provider)
         .then((k) => {
-          if (k) tryKey(k);
+          if (k) tryKey(k, again);
         })
         .catch(() => {});
     };
-    look();
-    window.addEventListener("focus", look);
-    const id = setInterval(look, POLL_MS);
+    // Coming back to the window checks a key that failed for another reason again; the poll does not.
+    const back = () => look(true);
+    look(false);
+    window.addEventListener("focus", back);
+    const id = setInterval(() => look(false), POLL_MS);
     return () => {
-      window.removeEventListener("focus", look);
+      window.removeEventListener("focus", back);
       clearInterval(id);
     };
   }, [ok, provider, tryKey]);
@@ -104,6 +115,11 @@ export function ProviderKey({
           <span className="flex items-center gap-1.5 text-text">
             <WarningCircle data-accent size={16} className="text-danger" aria-hidden />
             {t(`errors.${error}`, { provider: "Gemini", n: 0 })}
+            {error !== "bad_key" && tried.current && (
+              <Button variant="ghost" onClick={() => tried.current && tryKey(tried.current, true)}>
+                {t("onboarding.key_retry")}
+              </Button>
+            )}
             {error === "network" && (
               <Button variant="ghost" onClick={() => onVerified(false)}>
                 {t("onboarding.continue_unverified")}

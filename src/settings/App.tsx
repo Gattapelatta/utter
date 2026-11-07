@@ -35,13 +35,18 @@ function revealApp() {
   if (section) setTimeout(() => revealPage(section), 120);
 }
 
-/** Every section opens with the cascade (reveal.ts) — before its first paint. */
+/**
+ * Every section opens with the cascade (reveal.ts) — before its first paint. Only when it mounts
+ * (each route mounts its own): after onboarding the section is already there and `revealApp`
+ * cascades it after the menu — running it again here replayed the title (review 2026-11-07).
+ */
 function Reveal({ enabled, children }: { enabled: boolean; children: ReactNode }) {
   const box = useRef<HTMLDivElement>(null);
+  const enabledAtMount = useRef(enabled);
   useLayoutEffect(() => {
     const section = box.current?.querySelector("section");
-    if (enabled && section) revealPage(section);
-  }, [enabled]);
+    if (enabledAtMount.current && section) revealPage(section);
+  }, []);
   return (
     <div ref={box} className="h-full">
       {children}

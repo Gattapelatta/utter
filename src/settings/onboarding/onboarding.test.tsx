@@ -15,7 +15,7 @@ const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>): Promis
   if (cmd === "permissions_status") return { ...perms };
   if (cmd === "api_key_mask") return mask;
   if (cmd === "clipboard_key") return clipboard;
-  if (cmd === "set_api_key") mask = "AIza••••";
+  if (cmd === "set_api_key") mask = (args as { key: string }).key ? "AIza••••" : null;
   if (cmd === "verify_key") return verify();
   if (cmd === "save_settings") useApp.setState({ settings: (args as { settings: Settings }).settings });
   return undefined;
@@ -203,6 +203,49 @@ describe("onboarding flow", () => {
     expect(calls("verify_key")).toHaveLength(1);
     expect(screen.getByText("Ключ подходит")).toBeTruthy();
     expect(next().disabled).toBe(false);
+  });
+
+  it("a key that failed for another reason is checked again when the user comes back", async () => {
+    // Review 2026-11-07: without the VPN Google answers "location not supported" (service_down);
+    // after turning the VPN on the same key in the clipboard was never checked again.
+    await mount();
+    clipboard = `AIza${"b".repeat(35)}`;
+    verify = () => Promise.reject("service_down");
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    await wait(30);
+    expect(screen.getByText(/недоступен/)).toBeTruthy();
+    await wait(1_700); // the clipboard poll does not hammer a failing service
+    expect(calls("verify_key")).toHaveLength(1);
+    verify = async () => {};
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    await wait(30);
+    expect(calls("verify_key")).toHaveLength(2);
+    expect(screen.getByText("Ключ подходит")).toBeTruthy();
+    expect(next().disabled).toBe(false);
+  });
+
+  it("a failed check can be retried by hand", async () => {
+    await mount();
+    clipboard = `AIza${"c".repeat(35)}`;
+    verify = () => Promise.reject("rate_limited");
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    await wait(30);
+    verify = async () => {};
+    await act(async () => fireEvent.click(screen.getByText("Проверить снова")));
+    await wait(30);
+    expect(screen.getByText("Ключ подходит")).toBeTruthy();
+  });
+
+  it("a rejected key is not kept, so a restart does not take it for a working one", async () => {
+    // Review 2026-11-07: the key was saved before the check; after a restart a rejected key
+    // counted as verified and the trial dictation failed.
+    await mount();
+    clipboard = `AIza${"d".repeat(35)}`;
+    verify = () => Promise.reject("bad_key");
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    await wait(30);
+    expect(screen.getByText(/Ключ не подходит/)).toBeTruthy();
+    expect(mask).toBeNull();
   });
 
   it("step text appears only after the drop settles", async () => {
