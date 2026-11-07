@@ -1,7 +1,7 @@
 // Records only Utter's overlay window (ScreenCaptureKit) into a looping GIF for the README, over a
 // drawn backdrop: a dark screen, a menu bar and the camera notch. Nothing else on the screen is
 // captured. Optionally writes a file when recording starts (e.g. the dev build's debug-draft.txt).
-// Usage: swift scripts/tools/record-overlay.swift <out.gif> <seconds> [--scale 0.75] [--fps 30]
+// Usage: swift scripts/tools/record-overlay.swift <out.gif | frames-dir> <seconds> [--scale 1] [--fps 30]
 //        [--notch 179x32] [--start-file <path> <text>]
 import AppKit
 import CoreImage
@@ -16,7 +16,7 @@ func take(_ name: String, _ n: Int) -> [String]? {
     args.removeSubrange(i...(i + n))
     return v
 }
-let scale = Double(take("--scale", 1)?.first ?? "") ?? 0.75
+let scale = Double(take("--scale", 1)?.first ?? "") ?? 1
 let fps = Double(take("--fps", 1)?.first ?? "") ?? 30
 let notchArg = (take("--notch", 1)?.first ?? "179x32").split(separator: "x").compactMap { Double($0) }
 let startFile = take("--start-file", 2)
@@ -84,19 +84,39 @@ func backdrop(_ c: CGContext) {
     c.addPath(p)
     c.fillPath()
 }
+// <out>.gif → a GIF; any other path → a folder of PNG frames + delays.txt (seconds per frame),
+// for an encoder that keeps every colour (e.g. scripts/tools/frames2webp).
 let out = URL(fileURLWithPath: args[0])
-guard let dest = CGImageDestinationCreateWithURL(out as CFURL, UTType.gif.identifier as CFString, frames.images.count, nil) else { exit(1) }
-CGImageDestinationSetProperties(dest, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]] as CFDictionary)
+let asGif = out.pathExtension.lowercased() == "gif"
+var gif: CGImageDestination?
+if asGif {
+    gif = CGImageDestinationCreateWithURL(out as CFURL, UTType.gif.identifier as CFString, frames.images.count, nil)
+    guard let gif else { exit(1) }
+    CGImageDestinationSetProperties(gif, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]] as CFDictionary)
+} else {
+    try? FileManager.default.removeItem(at: out)
+    try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+}
+var delays: [String] = []
 for (i, (img, t)) in frames.images.enumerated() {
     let next = i + 1 < frames.images.count ? frames.images[i + 1].1 : t + 1.5 // hold the last frame
     let delay = max(0.02, next - t)
-    guard let c = CGContext(data: nil, width: W, height: H, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+    guard let c = CGContext(data: nil, width: W, height: H, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
                             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { continue }
     c.interpolationQuality = .high
     backdrop(c)
     c.draw(img, in: CGRect(x: 0, y: 0, width: W, height: H))
     guard let composed = c.makeImage() else { continue }
-    CGImageDestinationAddImage(dest, composed, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: delay, kCGImagePropertyGIFUnclampedDelayTime: delay]] as CFDictionary)
+    if let gif {
+        CGImageDestinationAddImage(gif, composed, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: delay, kCGImagePropertyGIFUnclampedDelayTime: delay]] as CFDictionary)
+    } else {
+        let url = out.appendingPathComponent(String(format: "frame_%04d.png", delays.count))
+        guard let d = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else { exit(1) }
+        CGImageDestinationAddImage(d, composed, nil)
+        guard CGImageDestinationFinalize(d) else { exit(1) }
+        delays.append(String(format: "%.4f", delay))
+    }
 }
-guard CGImageDestinationFinalize(dest) else { exit(1) }
+if let gif { guard CGImageDestinationFinalize(gif) else { exit(1) } }
+else { try delays.joined(separator: "\n").write(to: out.appendingPathComponent("delays.txt"), atomically: true, encoding: .utf8) }
 print("\(frames.images.count) frames, \(W)×\(H) → \(out.path)")

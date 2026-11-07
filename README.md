@@ -1,66 +1,66 @@
-<p align="center"><img src="src-tauri/icons/128x128@2x.png" width="96" alt="Utter icon"></p>
+<p align="center"><img src="src-tauri/icons/128x128@2x.png" width="96" alt="Иконка Utter"></p>
 
 <h1 align="center">Utter</h1>
 
-<p align="center"><b>Hold a key, speak, and the text appears where your cursor is.</b><br>
-Free. Your own key. No servers.</p>
+<p align="center"><b>Зажми клавишу, говори — и текст появится там, где стоит курсор.</b><br>
+Бесплатно. Свой ключ. Без наших серверов.</p>
 
-<p align="center"><a href="https://github.com/Gattapelatta/utter/releases/latest"><b>Download for Mac</b></a> · <a href="README.ru.md">Русский</a></p>
+<p align="center"><a href="https://github.com/Gattapelatta/utter/releases/latest"><b>Скачать для Mac</b></a> · <a href="README.en.md">English</a></p>
 
-<p align="center"><img src="docs/media/island-en.gif" width="660" alt="The Drop grows out of the notch, shows the words as you speak, and pastes the text"></p>
+<p align="center"><img src="docs/media/island-ru.webp" width="660" alt="Капля вырастает из чёлки, показывает слова, пока ты говоришь, и вставляет текст"></p>
 
-## What it does
+## Что умеет
 
-- **Dictation.** Hold <kbd>Right ⌥</kbd>, speak in any language, let go: clean text lands in the app you're typing in — Notes, Slack, Telegram, your browser, your code editor.
-- **Translation.** Hold <kbd>Right ⌘</kbd> and speak in your own language: the English translation is pasted instead, in a business or a casual style.
-- **Live draft.** The words appear under the camera notch while you speak; the clean text follows a moment after you let go.
-- **Cleanup.** "Um", "uh" and repeats go away, punctuation is added. The meaning is never changed.
-- **The Drop.** A small character lives by the notch and shows what Utter is doing: listening, thinking, done.
+- **Диктовка.** Зажми <kbd>правый ⌥</kbd>, говори на любом языке, отпусти — чистый текст появится в приложении, где ты пишешь: Заметки, Slack, Telegram, браузер, редактор кода.
+- **Перевод.** Зажми <kbd>правый ⌘</kbd> и говори на своём языке — вставится перевод на английский, в деловом или разговорном стиле.
+- **Черновик на лету.** Слова видны под вырезом камеры, пока ты говоришь; чистовой текст — через мгновение после того, как отпустишь клавишу.
+- **Чистка.** «Э-э», «ну» и повторы убираются, знаки препинания расставляются. Смысл не меняется никогда.
+- **Капля.** Маленький персонаж живёт у чёлки и показывает, что делает Utter: слушает, думает, готово.
 
-Both keys can be changed in Settings. A long recording is processed while you are still speaking, so it is ready soon after you stop.
+Обе клавиши можно поменять в настройках. Длинная запись обрабатывается, пока ты ещё говоришь, — текст готов вскоре после того, как замолчишь.
 
-## Install
+## Установка
 
-1. Download `Utter_…_universal.dmg` from the [latest release](https://github.com/Gattapelatta/utter/releases/latest), open it and drag **Utter** into **Applications**.
-2. Open Utter. macOS will stop it the first time, because Utter isn't signed with a paid Apple certificate yet. Open **System Settings → Privacy & Security**, scroll down to **Security** and click **Open Anyway**, then **Open**. You only do this once.
-3. Utter walks you through the rest: microphone access, Accessibility access (so it can paste), and a free Gemini key — get one at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and copy it; Utter picks it up from the clipboard.
+1. Скачай `Utter_…_universal.dmg` из [последнего выпуска](https://github.com/Gattapelatta/utter/releases/latest), открой его и перетащи **Utter** в **Программы**.
+2. Открой Utter. В первый раз macOS его остановит: Utter пока не подписан платным сертификатом Apple. Открой **Системные настройки → Конфиденциальность и безопасность**, прокрути вниз до раздела **Безопасность** и нажми **Всё равно открыть**, затем **Открыть**. Это нужно сделать один раз.
+3. Дальше Utter сам проведёт по шагам: доступ к микрофону, «Универсальный доступ» (чтобы вставлять текст) и бесплатный ключ Gemini — получи его на [aistudio.google.com/apikey](https://aistudio.google.com/apikey) и скопируй: Utter заберёт его из буфера обмена.
 
-Utter updates itself: when a new version is out, **About → Install** (or the menu bar icon) installs it after your current dictation.
+Utter обновляется сам: когда выходит новая версия, **О приложении → Установить** (или значок в строке меню) — и она встанет после текущей диктовки.
 
-Requires macOS 13 or later on Apple Silicon or Intel.
+Нужна macOS 13 или новее, Mac на Apple Silicon или Intel.
 
-## Privacy
+## Приватность
 
-- Your voice goes straight from your Mac to the speech service you chose (Google Gemini by default, or Groq, or OpenAI) with **your own key**. Utter has no servers.
-- The key is kept in the macOS Keychain. History stays on your Mac and can be turned off.
-- On Gemini's free tier Google may use requests to improve its products; on a paid tier it doesn't. See [Google's terms](https://ai.google.dev/gemini-api/terms).
+- Голос идёт прямо с твоего Mac в выбранный сервис распознавания (по умолчанию Google Gemini, ещё Groq или OpenAI) — **по твоему ключу**. Серверов у Utter нет.
+- Ключ хранится в Связке ключей macOS. История остаётся на твоём Mac, её можно выключить.
+- На бесплатном тарифе Gemini Google может использовать запросы для улучшения своих продуктов, на платном — нет. Подробнее — в [условиях Google](https://ai.google.dev/gemini-api/terms).
 
-## Questions
+## Вопросы
 
-**Is it really free?** Utter is. Gemini's free tier is enough for everyday dictation (several hundred requests a day across Utter's models); Groq has a free tier too. OpenAI is pay-as-you-go — it is not a ChatGPT subscription.
+**Это правда бесплатно?** Utter — да. Бесплатного тарифа Gemini хватает на обычную диктовку (несколько сотен запросов в день на моделях Utter); у Groq тоже есть бесплатный тариф. OpenAI — оплата по факту, это не подписка ChatGPT.
 
-**Gemini says my location isn't supported.** Gemini isn't available in every country. A VPN to a supported country works, or choose Groq or OpenAI in Settings → Provider.
+**Gemini пишет, что мой регион не поддерживается.** Gemini доступен не во всех странах. Помогает VPN в поддерживаемую страну — или выбери Groq либо OpenAI в Настройках → Провайдер.
 
-**After an update macOS asks for Keychain access.** Click **Always Allow**. This happens once per update because Utter is signed with its own certificate, not a paid Apple one. Your microphone and Accessibility permissions stay.
+**После обновления macOS спрашивает доступ к Связке ключей.** Нажми **Разрешать всегда**. Так бывает один раз после каждого обновления, потому что Utter подписан своим сертификатом, а не платным от Apple. Разрешения на микрофон и «Универсальный доступ» сохраняются.
 
-**Does it work on Intel Macs?** Utter is built for both Apple Silicon and Intel. It has been tested on Apple Silicon with macOS 15; Intel hasn't been tested yet — please open an issue if something is off.
+**Работает ли на Mac с Intel?** Utter собран и для Apple Silicon, и для Intel. Проверен на Apple Silicon с macOS 15; на Intel ещё не проверялся — если что-то не так, напиши в Issues.
 
-## Roadmap
+## Планы
 
-- Windows version.
-- A paid Apple signature, so the first launch needs no extra step.
+- Версия для Windows.
+- Платная подпись Apple — чтобы при первом запуске не нужен был лишний шаг.
 
-## Contributing
+## Как помочь
 
-Bug reports and ideas are welcome in [Issues](https://github.com/Gattapelatta/utter/issues). Utter is a [Tauri 2](https://tauri.app) app: Rust in `src-tauri`, React in `src`.
+Ошибки и идеи — в [Issues](https://github.com/Gattapelatta/utter/issues). Utter — приложение на [Tauri 2](https://tauri.app): Rust в `src-tauri`, React в `src`.
 
 ```bash
 pnpm install
-pnpm test                                          # UI tests
+pnpm test                                          # тесты интерфейса
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 pnpm tauri dev
 ```
 
-## License
+## Лицензия
 
 [MIT](LICENSE)
