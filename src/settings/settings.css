@@ -1,0 +1,139 @@
+@import "../styles/app.css";
+
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  user-select: none;
+  cursor: default;
+}
+/* Light theme: a white character on #FAFAF9 disappears, so it inverts (§4.3). */
+[data-theme="light"] {
+  --drop-body: #0a0a0a;
+  --drop-eye: #fff;
+}
+
+/* §5.4: buttons press in at 120 ms; colours change over 150 ms. Never `transition: all`. */
+.btn {
+  transition: scale 120ms cubic-bezier(0.23, 1, 0.32, 1), background-color 150ms ease, color 150ms ease, opacity 150ms ease;
+}
+.btn:active:not(:disabled) {
+  scale: 0.97;
+}
+.switch {
+  transition: background-color 150ms ease;
+}
+.switch-knob {
+  transition: transform 200ms cubic-bezier(0.23, 1, 0.32, 1), background-color 150ms ease;
+}
+.segment-off {
+  transition: color 150ms ease;
+}
+@media (hover: hover) and (pointer: fine) {
+  .segment-off:hover,
+  .nav-item:hover {
+    color: var(--text);
+  }
+}
+.nav-item {
+  transition: color 150ms ease;
+}
+.style-card {
+  transition: border-color 150ms ease, scale 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.style-card:active {
+  scale: 0.99;
+}
+.radio-dot {
+  transition: opacity 150ms ease, transform 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.link {
+  transition: color 150ms ease;
+}
+@media (hover: hover) and (pointer: fine) {
+  .link:hover {
+    color: var(--text);
+  }
+}
+/* After onboarding, until the Drop has landed on the logo (App.tsx revealApp). */
+[data-intro="wait"] [data-intro-item],
+[data-intro="wait"] main {
+  opacity: 0;
+}
+.dot {
+  transition: width 300ms cubic-bezier(0.22, 1, 0.36, 1), background-color 300ms ease;
+}
+.demo {
+  transition: opacity 250ms ease;
+}
+.spin {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.keycap {
+  box-shadow: 0 2px 0 var(--border-strong);
+  transition: transform 80ms ease-out, box-shadow 80ms ease-out;
+}
+.keycap[data-pressed] {
+  transform: translateY(2px);
+  box-shadow: 0 0 0 var(--border-strong);
+}
+.bar-fill {
+  transition: transform 300ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.row + .row {
+  border-top-width: 1px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .switch-knob,
+  .bar-fill,
+  .style-card {
+  transition: border-color 150ms ease, scale 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.style-card:active {
+  scale: 0.99;
+}
+.radio-dot {
+  transition: opacity 150ms ease, transform 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.link {
+  transition: color 150ms ease;
+}
+@media (hover: hover) and (pointer: fine) {
+  .link:hover {
+    color: var(--text);
+  }
+}
+/* After onboarding, until the Drop has landed on the logo (App.tsx revealApp). */
+[data-intro="wait"] [data-intro-item],
+[data-intro="wait"] main {
+  opacity: 0;
+}
+.dot {
+  transition: width 300ms cubic-bezier(0.22, 1, 0.36, 1), background-color 300ms ease;
+}
+.demo {
+  transition: opacity 250ms ease;
+}
+.spin {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.keycap {
+    transition-property: background-color, box-shadow;
+  }
+}

@@ -2,12 +2,13 @@ mod client;
 pub mod defaults;
 mod error;
 mod gemini;
+pub mod gemini_live;
 #[cfg(test)]
 mod bench;
 
 pub use client::{parse_reset, request_timeout, OpenAiCompatible};
 pub use error::ProviderError;
-pub use gemini::{gemini_language_code, GeminiClient};
+pub use gemini::{gemini_language_code, http_client as gemini_http_client, GeminiClient};
 
 use crate::settings::ProviderKind;
 

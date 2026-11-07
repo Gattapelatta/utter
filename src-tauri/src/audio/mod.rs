@@ -1,4 +1,5 @@
 pub mod dsp;
+pub mod segment;
 
 /// Raw capture straight from the input device (interleaved).
 #[derive(Clone, Debug, Default)]
@@ -20,6 +21,12 @@ pub fn prepare(c: Captured) -> Option<Prepared> {
     let mut mono = dsp::downmix(&c.samples, c.channels);
     dsp::high_pass(&mut mono, c.rate, 80.0);
     let speech = dsp::resample(&mono, c.rate, dsp::TARGET_RATE);
+    let stats = dsp::voice_stats(&speech, dsp::TARGET_RATE);
+    let heard = dsp::has_speech(stats);
+    tracing::info!(voiced_ms = stats.voiced_ms, peak_rms = stats.peak_rms, heard, "audio: voice check");
+    if !heard {
+        return None;
+    }
     let range = dsp::voiced_range(&speech, dsp::TARGET_RATE)?;
     let mut voiced = speech[range].to_vec();
     dsp::normalize_peak(&mut voiced, -1.0);
@@ -41,6 +48,16 @@ mod tests {
         }));
         mono.extend(vec![0.0f32; rate as usize]);
         mono.iter().flat_map(|x| [*x, *x]).collect()
+    }
+
+    #[test]
+    fn prepare_ignores_a_lone_click() {
+        let rate = 48_000;
+        let mut mono = vec![0.0f32; rate as usize];
+        mono.extend((0..rate as usize / 25).map(|i| 0.5 * (2.0 * std::f32::consts::PI * 220.0 * i as f32 / rate as f32).sin()));
+        mono.extend(vec![0.0f32; rate as usize]);
+        let c = Captured { samples: mono, rate, channels: 1 };
+        assert!(prepare(c).is_none(), "a 40 ms click must not be sent as speech");
     }
 
     #[test]

@@ -57,6 +57,11 @@ impl Router {
         self.capture = Some(tx);
     }
 
+    /// Ends a capture nobody is waiting for any more (timeout, window closed).
+    pub fn cancel_capture(&mut self) {
+        self.capture = None;
+    }
+
     fn mode_of(&self, key: &KeyId) -> Option<Mode> {
         if *key == self.bindings.dictation {
             Some(Mode::Dictation)
@@ -152,6 +157,15 @@ mod tests {
 
     fn router() -> Router {
         Router::new(Hotkeys { dictation: KeyId::RightAlt, translate: KeyId::RightMeta })
+    }
+
+    #[test]
+    fn cancel_capture_restores_routing() {
+        let mut r = router();
+        let (tx, _rx) = oneshot::channel();
+        r.begin_capture(tx);
+        r.cancel_capture();
+        assert_eq!(r.route(KeyId::RightAlt, true, false), Some(HotkeyEvent::Down(D)));
     }
 
     #[test]

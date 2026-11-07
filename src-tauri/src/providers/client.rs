@@ -177,6 +177,8 @@ fn retry_after(headers: &HeaderMap) -> Option<Duration> {
 }
 
 pub(super) fn map_reqwest(e: reqwest::Error) -> ProviderError {
+    // The key travels in a header, never in the URL, so the error text is safe to log.
+    tracing::warn!("http error: {e:?}");
     if e.is_timeout() {
         ProviderError::Timeout
     } else if e.is_decode() || e.is_body() {

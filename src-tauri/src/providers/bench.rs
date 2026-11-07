@@ -191,3 +191,204 @@ async fn pipeline_direct_live() {
     let out = crate::pipeline::run(Mode::Dictation, wav, 9.9, &opts, &client, &client).await;
     println!("Dictation without cleanup (transcribe model): {} ms → {:?}", t.elapsed().as_millis(), out.map(|o| o.text));
 }
+
+#[tokio::test]
+#[ignore = "live: each backup route once with the user's key"]
+async fn routes_live() {
+    use crate::pipeline::routes::Route;
+    use crate::providers::{defaults, GeminiClient};
+    let key = KeychainStore::new().get(ProviderKind::Gemini).expect("Gemini key in Keychain");
+    let wav = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests-data/phrase-ru.wav")).unwrap();
+    for (mode, style) in [(Mode::Dictation, TranslateStyle::Business), (Mode::Translate, TranslateStyle::Business)] {
+        let opts = PipelineOptions { language: Some("ru".into()), cleanup: true, paragraphs: false, style };
+        for (i, route) in defaults::GEMINI_ROUTES.iter().enumerate() {
+            let client = GeminiClient::new(defaults::route_config(ProviderKind::Gemini, key.clone(), *route));
+            client.prewarm().await;
+            let t = Instant::now();
+            let out = match route {
+                Route::Direct { .. } => crate::pipeline::run_audio_only(mode, wav.clone(), 9.9, &opts, &client).await,
+                Route::TwoStep { .. } => crate::pipeline::run(mode, wav.clone(), 9.9, &opts, &client, &client).await,
+            };
+            println!("{mode:?} route {i} {route:?}: {} ms → {:?}", t.elapsed().as_millis(), out.map(|o| (o.text, o.degraded)));
+        }
+    }
+}
+
+/// Run: UTTER_LIVE_MODEL=<model> cargo test --lib -- --ignored live_phrase_latency --nocapture
+#[tokio::test]
+#[ignore = "live: Live API streaming with the user's key"]
+async fn live_phrase_latency() {
+    use crate::live::pcm::Chunker;
+    use crate::providers::defaults;
+    use crate::providers::gemini_live::{connect, LiveConfig, LiveEvent, TranscribeMode};
+    let key = KeychainStore::new().get(ProviderKind::Gemini).expect("Gemini key in Keychain");
+    let model = std::env::var("UTTER_LIVE_MODEL").unwrap_or_else(|_| defaults::GEMINI_LIVE_MODEL.into());
+    let mut reader = hound::WavReader::open(concat!(env!("CARGO_MANIFEST_DIR"), "/tests-data/phrase-ru.wav")).unwrap();
+    let spec = reader.spec();
+    let samples: Vec<f32> = reader.samples::<i16>().map(|s| s.unwrap() as f32 / i16::MAX as f32).collect();
+    let mut chunker = Chunker::new(spec.sample_rate, spec.channels);
+    let step = spec.sample_rate as usize * spec.channels as usize / 10;
+    for mode in [TranscribeMode::Verbatim, TranscribeMode::Smart] {
+        let t0 = Instant::now();
+        let cfg = LiveConfig { url: defaults::GEMINI_LIVE_URL.into(), key: key.clone(), model: model.clone(), mode, language: Some("ru".into()) };
+        let mut s = match connect(cfg).await {
+            Ok(s) => s,
+            Err(e) => return println!("{model}: connect failed: {e}"),
+        };
+        println!("{model} {mode:?}: socket open {} ms", t0.elapsed().as_millis());
+        let audio = s.audio.clone();
+        let feeder = tokio::spawn({
+            let samples = samples.clone();
+            let mut chunker = std::mem::replace(&mut chunker, Chunker::new(spec.sample_rate, spec.channels));
+            async move {
+                for block in samples.chunks(step) {
+                    for c in chunker.push(block) {
+                        let _ = audio.send(c);
+                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                if let Some(c) = chunker.flush() {
+                    let _ = audio.send(c);
+                }
+                Instant::now()
+            }
+        });
+        let mut released: Option<Instant> = None;
+        let mut first_interim = None;
+        let mut segments = Vec::new();
+        let mut feeder = Some(feeder);
+        loop {
+            if let Some(f) = feeder.as_ref() {
+                if f.is_finished() {
+                    released = Some(feeder.take().unwrap().await.unwrap());
+                    s.finish();
+                }
+            }
+            let wait = if released.is_some() { Duration::from_secs(3) } else { Duration::from_millis(50) };
+            match tokio::time::timeout(wait, s.events.recv()).await {
+                Ok(Some(LiveEvent::Ready)) => println!("  ready {} ms", t0.elapsed().as_millis()),
+                Ok(Some(LiveEvent::Interim(t))) => {
+                    if first_interim.is_none() {
+                        first_interim = Some(t0.elapsed().as_millis());
+                        println!("  first interim {} ms: {t}", t0.elapsed().as_millis());
+                    }
+                }
+                Ok(Some(LiveEvent::Segment(t))) => {
+                    let after = released.map(|r| r.elapsed().as_millis() as i64).unwrap_or(-1);
+                    println!("  segment (release→ {after} ms): {t}");
+                    segments.push(t);
+                }
+                Ok(Some(LiveEvent::TurnComplete)) => println!("  turnComplete"),
+                Ok(Some(LiveEvent::Error(e))) => {
+                    println!("  error: {e}");
+                    break;
+                }
+                Ok(None) => break,
+                Err(_) if released.is_some() => break,
+                Err(_) => {}
+            }
+        }
+        println!("  final: {}", segments.join(" "));
+    }
+}
+
+#[tokio::test]
+#[ignore = "live: translation latency of candidate text models with the user's key"]
+async fn translate_models_latency() {
+    use crate::providers::{defaults, GeminiClient, TextModel};
+    let key = KeychainStore::new().get(ProviderKind::Gemini).expect("Gemini key in Keychain");
+    let opts = PipelineOptions { language: Some("ru".into()), cleanup: true, paragraphs: false, style: TranslateStyle::Business };
+    let system = system_prompt(Mode::Translate, &opts, 5.0).unwrap();
+    let phrases = [
+        "Привет, слушай, я посмотрела отчёт по продажам за сентябрь.",
+        "В целом всё хорошо, но давай завтра созвонимся.",
+        "Обсудим бюджет на рекламу и сроки запуска.",
+        "Пришли, пожалуйста, презентацию до пятницы.",
+        "Я думаю, что нам нужно нанять ещё одного дизайнера.",
+    ];
+    for model in ["gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash"] {
+        let mut cfg = defaults::config_for(ProviderKind::Gemini, key.clone());
+        cfg.text_model = model.into();
+        let client = GeminiClient::new(cfg);
+        client.prewarm().await;
+        let mut times = Vec::new();
+        for p in phrases {
+            let t = Instant::now();
+            match client.complete(&system, &user_message(p)).await {
+                Ok(c) => {
+                    times.push(t.elapsed().as_millis());
+                    println!("  {model} {} ms: {}", t.elapsed().as_millis(), c.text.trim());
+                }
+                Err(e) => println!("  {model} error after {} ms: {e:?}", t.elapsed().as_millis()),
+            }
+        }
+        times.sort();
+        println!("{model}: median {:?} ms of {} ok", times.get(times.len() / 2), times.len());
+    }
+}
+
+#[tokio::test]
+#[ignore = "live: raw 429 details and the model list with the user's key"]
+async fn quota_details() {
+    let key = KeychainStore::new().get(ProviderKind::Gemini).expect("Gemini key in Keychain");
+    let http = reqwest::Client::new();
+    let models: Value = http.get(format!("{BASE}/models?pageSize=200")).header("x-goog-api-key", &key).send().await.unwrap().json().await.unwrap();
+    for m in models["models"].as_array().into_iter().flatten() {
+        let name = m["name"].as_str().unwrap_or("");
+        if name.contains("flash") || name.contains("pro") || name.contains("transcribe") {
+            println!("model {name} methods={}", m["supportedGenerationMethods"]);
+        }
+    }
+    for model in ["gemini-3.6-flash", "gemini-3.8-flash"] {
+        let body = json!({"model": model, "input": "Say hi", "store": false, "generation_config": {"thinking_level": "low"}});
+        let r = http.post(format!("{BASE}/interactions")).header("x-goog-api-key", &key).json(&body).send().await.unwrap();
+        let status = r.status();
+        let v: Value = r.json().await.unwrap_or(Value::Null);
+        println!("{model}: HTTP {status}\n{}", serde_json::to_string_pretty(&v.get("error").cloned().unwrap_or(v.clone())).unwrap());
+    }
+}
+
+#[tokio::test]
+#[ignore = "live: candidate backup models — audio→text and text latency, limits from 429"]
+async fn backup_candidates() {
+    use crate::pipeline::audio_system_prompt;
+    let key = KeychainStore::new().get(ProviderKind::Gemini).expect("Gemini key in Keychain");
+    let bench = Bench { http: reqwest::Client::new(), key };
+    let _ = bench.http.get(format!("{BASE}/models")).header("x-goog-api-key", &bench.key).send().await;
+    let wav = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests-data/phrase-ru.wav")).unwrap();
+    let audio = json!({"type": "audio", "mime_type": "audio/wav", "data": base64::engine::general_purpose::STANDARD.encode(&wav)});
+    let opts = PipelineOptions { language: Some("ru".into()), cleanup: true, paragraphs: false, style: TranslateStyle::Business };
+    let audio_system = audio_system_prompt(Mode::Dictation, &opts, 9.9).unwrap();
+    let text_system = system_prompt(Mode::Translate, &opts, 5.0).unwrap();
+    let models = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-3-flash-preview"];
+    for model in models {
+        for level in [Some("minimal"), None] {
+            let audio_body = json!({"model": model, "system_instruction": audio_system, "store": false,
+                "input": [{"type": "text", "text": "Process the attached audio. The speaker most likely uses ru-RU."}, audio.clone()],
+                "generation_config": thinking(level)});
+            let (d, out) = bench.interact(audio_body).await;
+            let label = format!("{model} thinking={}", level.unwrap_or("default"));
+            match out {
+                Err(e) if e.contains("thinking") || e.contains("Thinking") => {
+                    println!("{label}: audio → {e}");
+                    continue;
+                }
+                Err(e) => {
+                    println!("{label}: audio ERROR after {} ms: {e}", d.as_millis());
+                    break;
+                }
+                Ok(t) => println!("{label}: audio {} ms → {}", d.as_millis(), t.trim()),
+            }
+            for _ in 0..2 {
+                let body = json!({"model": model, "system_instruction": text_system, "store": false,
+                    "input": user_message("Пришли, пожалуйста, презентацию до пятницы."), "generation_config": thinking(level)});
+                let (d, out) = bench.interact(body).await;
+                match out {
+                    Ok(t) => println!("{label}: text {} ms → {}", d.as_millis(), t.trim()),
+                    Err(e) => println!("{label}: text ERROR after {} ms: {e}", d.as_millis()),
+                }
+            }
+            break;
+        }
+    }
+}

@@ -26,7 +26,6 @@ export interface Settings {
   speech_language: string | null;
   cleanup: boolean;
   paragraphs: boolean;
-  sounds: boolean;
   autostart: boolean;
   theme: Theme;
   ui_language: UiLanguage;
@@ -35,14 +34,33 @@ export interface Settings {
   hotkeys: { dictation: KeyId; translate: KeyId };
   history_enabled: boolean;
   onboarding_done: boolean;
+  notch_drop: boolean;
 }
 
 export type OverlayState =
   | { kind: "hidden" }
   | { kind: "recording"; mode: Mode; style: TranslateStyle; started_at_ms: number; warn: boolean; pending: number }
   | { kind: "processing"; pending: number; since_ms: number }
-  | { kind: "done"; outcome: "pasted" | "typed" | "copied" | "failed"; degraded: boolean }
-  | { kind: "error"; message_key: string; action: string | null; minutes: number | null };
+  | { kind: "done"; outcome: "pasted" | "typed" | "copied" | "failed" | "shown"; degraded: boolean }
+  | { kind: "error"; message_key: string; action: string | null; minutes: number | null; provider: string | null }
+  | { kind: "cancelled" };
+
+/** The live draft in the island's window: recognised pieces and the piece still being revised. */
+export type DraftParts = { settled: string; interim: string };
+
+export type AppStatus = "idle" | "recording" | "processing";
+
+export type TrialOutcome =
+  | { kind: "text"; mode: Mode; text: string }
+  | { kind: "error"; message_key: string };
+
+/** Daily free-tier limits; fields match UsageDay. */
+export interface FreeLimits {
+  stt_requests: number | null;
+  audio_secs: number | null;
+  llm_requests: number | null;
+  llm_tokens: number | null;
+}
 
 export type EntryStatus =
   | { kind: "done" }
@@ -87,3 +105,13 @@ export function keyLabel(k: KeyId): string {
   };
   return names[k] ?? k;
 }
+
+/** The updater's state (Rust `app::updates::UpdateState`). */
+export type UpdateState =
+  | { kind: "idle" }
+  | { kind: "checking" }
+  | { kind: "up_to_date" }
+  | { kind: "available"; version: string; notes: string | null }
+  | { kind: "downloading"; percent: number }
+  | { kind: "ready" }
+  | { kind: "failed" };

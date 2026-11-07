@@ -13,19 +13,11 @@
     "macOSPrivateApi": true,
     "windows": [
       {
-        "label": "settings",
-        "url": "settings.html",
-        "title": "Utter",
-        "width": 900,
-        "height": 620,
-        "visible": false
-      },
-      {
         "label": "overlay",
         "url": "overlay.html",
         "title": "Utter Overlay",
-        "width": 360,
-        "height": 72,
+        "width": 440,
+        "height": 230,
         "transparent": true,
         "decorations": false,
         "alwaysOnTop": true,
@@ -33,11 +25,13 @@
         "visible": false,
         "focus": false,
         "shadow": false,
-        "resizable": false
+        "resizable": false,
+        "backgroundThrottling": "disabled"
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:",
+      "devCsp": null
     }
   },
   "bundle": {
@@ -50,5 +44,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQzNjBBOUIyNkNCQTJERkIKUldUN0xicHNzcWxnMDBXSzVkVkd4UGw1NGFkVWova2syMlhzeTJqUmRpQStGMjJPUHhuOGFzdmUK",
+      "endpoints": [
+        "https://github.com/Gattapelatta/utter/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

@@ -1,32 +1,134 @@
-//! The recording pill: a transparent, click-through window that never takes focus.
+//! The recording pill: a transparent, click-through, non-activating panel.
+
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewWindow};
 
 use super::orchestrator::{OverlaySink, OverlayState};
+use super::overlay_rest::{after_fold, on_pill_state, Presence};
 
-const LABEL: &str = "overlay";
-/// Distance from the bottom of the usable screen area, in points.
-const BOTTOM_MARGIN: f64 = 48.0;
+pub const LABEL: &str = "overlay";
+/// The window is ordered out only after the island has folded back into the notch
+/// (600 / 350 ms tween in `islandMotion.ts`, plus a margin for a late frame).
+pub const HIDE_AFTER: Duration = Duration::from_millis(800);
+const CANCEL_HIDE_AFTER: Duration = Duration::from_millis(500);
 
-pub struct TauriOverlay {
-    pub app: AppHandle,
+/// The camera cut-out of a MacBook display, in points.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+pub struct Notch {
+    pub width: f64,
+    pub height: f64,
 }
 
-impl OverlaySink for TauriOverlay {
-    fn show(&self, s: &OverlayState) {
-        let app = self.app.clone();
-        let s = s.clone();
-        let _ = self.app.run_on_main_thread(move || apply(&app, &s));
+/// The island hangs from the top edge of the screen, centred (§4.2).
+pub fn island_origin(screen_x: f64, screen_y: f64, screen_w: f64, window_w: f64) -> (f64, f64) {
+    (screen_x + (screen_w - window_w) / 2.0, screen_y)
+}
+
+/// An AppKit screen frame (origin bottom-left of the primary display, y up) in the top-left,
+/// y-down points of `CGDisplayBounds` and of the window position.
+pub fn top_left_frame(ns: super::overlay_rest::Rect, primary_h: f64) -> super::overlay_rest::Rect {
+    super::overlay_rest::Rect { x: ns.x, y: primary_h - (ns.y + ns.h), w: ns.w, h: ns.h }
+}
+
+/// Each overlay state gets a generation; a delayed hide only runs if no newer state came.
+#[derive(Default)]
+pub struct HideGate {
+    gen: u64,
+}
+
+impl HideGate {
+    pub fn on_state(&mut self) -> u64 {
+        self.gen += 1;
+        self.gen
+    }
+
+    pub fn still_current(&self, gen: u64) -> bool {
+        self.gen == gen
     }
 }
 
-fn apply(app: &AppHandle, s: &OverlayState) {
+/// When the last recording pill was requested, for the `overlay_painted` latency log.
+#[derive(Default)]
+pub struct OverlayTiming(pub Mutex<Option<Instant>>);
+
+pub struct TauriOverlay {
+    pub app: AppHandle,
+    pub gate: Arc<Mutex<HideGate>>,
+    pub presence: Arc<Mutex<Presence>>,
+}
+
+impl OverlaySink for TauriOverlay {
+    fn draft(&self, parts: Option<&crate::live::draft::DraftParts>) {
+        self.emit_draft(parts);
+    }
+
+    fn show(&self, s: &OverlayState) {
+        let gen = match self.gate.lock() {
+            Ok(mut g) => g.on_state(),
+            Err(_) => return,
+        };
+        let hidden = matches!(s, OverlayState::Hidden | OverlayState::Cancelled);
+        let fresh = self.presence.lock().map(|mut p| on_pill_state(&mut p, hidden)).unwrap_or(true);
+        if matches!(s, OverlayState::Recording { warn: false, .. }) {
+            if let Some(t) = self.app.try_state::<OverlayTiming>() {
+                if let Ok(mut t) = t.0.lock() {
+                    *t = Some(Instant::now());
+                }
+            }
+        }
+        let app = self.app.clone();
+        let state = s.clone();
+        let _ = self.app.run_on_main_thread(move || apply(&app, &state, fresh));
+        let delay = match s {
+            OverlayState::Hidden => HIDE_AFTER,
+            OverlayState::Cancelled => CANCEL_HIDE_AFTER,
+            _ => return,
+        };
+        let app = self.app.clone();
+        let gate = self.gate.clone();
+        let presence = self.presence.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(delay).await;
+            let a = app.clone();
+            // Decided on the main thread, in order with the watcher's `show_rest`.
+            let _ = app.run_on_main_thread(move || {
+                if !gate.lock().map(|g| g.still_current(gen)).unwrap_or(false) {
+                    return;
+                }
+                // With the ears shown the island folds into them and the window stays (§4.2a).
+                let gone = presence.lock().map(|mut p| after_fold(&mut p)).unwrap_or(true);
+                if gone {
+                    hide_window(&a);
+                }
+            });
+        });
+    }
+}
+
+impl TauriOverlay {
+    fn emit_draft(&self, parts: Option<&crate::live::draft::DraftParts>) {
+        let _ = self.app.emit_to(LABEL, "overlay://draft", parts);
+    }
+}
+
+/// `fresh`: the first state after idle — only then may the window follow the mouse to another display.
+fn apply(app: &AppHandle, s: &OverlayState, fresh: bool) {
     let Some(w) = app.get_webview_window(LABEL) else { return };
-    let _ = app.emit_to(LABEL, "overlay://state", s);
     match s {
-        OverlayState::Hidden => order_out(&w),
+        // The window stays up while the island folds away; see `TauriOverlay::show`.
+        OverlayState::Hidden | OverlayState::Cancelled => {
+            let _ = app.emit_to(LABEL, "overlay://state", s);
+            let _ = w.set_ignore_cursor_events(true);
+        }
         _ => {
-            place(app, &w);
+            // The notch size must reach the page before the state that makes the island grow.
+            // Mid-recording (limit warning, processing, result) the island never changes display.
+            if fresh {
+                place(app, &w);
+            }
+            let _ = app.emit_to(LABEL, "overlay://state", s);
             let clickable = matches!(s, OverlayState::Error { action: Some(_), .. });
             let _ = w.set_ignore_cursor_events(!clickable);
             order_front(&w);
@@ -34,20 +136,50 @@ fn apply(app: &AppHandle, s: &OverlayState) {
     }
 }
 
-/// Bottom-centre of the screen under the mouse.
+/// Shows the ears; `replace` first moves the window to the display under the mouse.
+/// Must run on the main thread.
+pub fn show_rest(app: &AppHandle, replace: bool) {
+    let Some(w) = app.get_webview_window(LABEL) else { return };
+    if replace {
+        place(app, &w);
+    }
+    let _ = app.emit_to(LABEL, "overlay://rest", serde_json::json!({ "shown": true }));
+    order_front(&w);
+}
+
+/// Orders the window out. Must run on the main thread.
+pub fn hide_window(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window(LABEL) {
+        order_out(&w);
+    }
+}
+
+/// Top-centre of the screen under the mouse; tells the page the notch size there.
+/// In points throughout: displays can have different scales (review 2026-11-07).
 fn place(app: &AppHandle, w: &WebviewWindow) {
-    let monitor = app
-        .cursor_position()
-        .ok()
-        .and_then(|p| app.monitor_from_point(p.x, p.y).ok().flatten())
-        .or_else(|| app.primary_monitor().ok().flatten());
+    #[cfg(target_os = "macos")]
+    {
+        let (Some(screen), Ok(size), Ok(scale)) = (super::overlay_rest::cursor_screen(), w.outer_size(), w.scale_factor()) else {
+            return place_by_monitor(app, w);
+        };
+        let (x, y) = island_origin(screen.x, screen.y, screen.w, size.width as f64 / scale);
+        let _ = w.set_position(tauri::LogicalPosition::new(x.round(), y.round()));
+        let notch = mac::notch(screen);
+        tracing::info!(x, y, ?notch, "overlay placed");
+        let _ = app.emit_to(LABEL, "overlay://screen", serde_json::json!({ "notch": notch }));
+    }
+    #[cfg(not(target_os = "macos"))]
+    place_by_monitor(app, w);
+}
+
+/// Without the display under the mouse: the primary monitor, no notch.
+fn place_by_monitor(app: &AppHandle, w: &WebviewWindow) {
+    let monitor = app.primary_monitor().ok().flatten();
     let (Some(m), Ok(size)) = (monitor, w.outer_size()) else { return };
-    let area = m.work_area();
-    let x = area.position.x + (area.size.width as i32 - size.width as i32) / 2;
-    let y = area.position.y + area.size.height as i32
-        - size.height as i32
-        - (BOTTOM_MARGIN * m.scale_factor()) as i32;
-    let _ = w.set_position(PhysicalPosition::new(x, y));
+    let (x, y) = island_origin(m.position().x as f64, m.position().y as f64, m.size().width as f64, size.width as f64);
+    let _ = w.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
+    tracing::info!(x, y, "overlay placed on the primary monitor");
+    let _ = app.emit_to(LABEL, "overlay://screen", serde_json::json!({ "notch": Option::<Notch>::None }));
 }
 
 #[cfg(target_os = "macos")]
@@ -55,6 +187,11 @@ mod mac {
     use objc2::msg_send;
     use objc2::runtime::AnyObject;
     use tauri::WebviewWindow;
+
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSScreen;
+
+    use super::Notch;
 
     const NS_POPUP_MENU_WINDOW_LEVEL: isize = 101;
     const CAN_JOIN_ALL_SPACES: usize = 1 << 0;
@@ -68,7 +205,35 @@ mod mac {
         unsafe { ptr.as_ref() }
     }
 
+    mod class {
+        tauri_nspanel::tauri_panel! {
+            panel!(OverlayPanel {
+                config: {
+                    can_become_key_window: false,
+                    can_become_main_window: false,
+                    is_floating_panel: true
+                }
+            })
+        }
+    }
+
+    /// Turns the window into a non-activating NSPanel, so clicking the pill never
+    /// activates Utter or steals focus from the app being typed into.
+    fn make_panel(w: &WebviewWindow) {
+        use tauri_nspanel::{StyleMask, WebviewWindowExt};
+        match w.to_panel::<class::OverlayPanel>() {
+            Ok(panel) => {
+                if let Err(e) = panel.add_style_mask(StyleMask::empty().nonactivating_panel().into()) {
+                    tracing::warn!("overlay panel style: {e:?}");
+                }
+            }
+            Err(e) => tracing::warn!("overlay stays a plain window: {e}"),
+        }
+    }
+
     pub fn configure(w: &WebviewWindow) {
+        make_panel(w);
+        // The panel is the same NSWindow object with a new class; configure it as before.
         let Some(win) = ns(w) else { return };
         let behavior = CAN_JOIN_ALL_SPACES | STATIONARY | IGNORES_CYCLE | FULL_SCREEN_AUXILIARY;
         unsafe {
@@ -77,6 +242,27 @@ mod mac {
             let _: () = msg_send![win, setHidesOnDeactivate: false];
             let _: () = msg_send![win, setIgnoresMouseEvents: true];
         }
+    }
+
+    /// The cut-out of the display with this frame (top-left points), if any.
+    /// Must run on the main thread.
+    pub fn notch(display: crate::app::overlay_rest::Rect) -> Option<Notch> {
+        use crate::app::overlay_rest::Rect;
+        let mtm = MainThreadMarker::new()?;
+        let screens = NSScreen::screens(mtm);
+        let primary_h = screens.iter().next()?.frame().size.height;
+        let screen = screens.iter().find(|s| {
+            let f = s.frame();
+            let r = super::top_left_frame(Rect { x: f.origin.x, y: f.origin.y, w: f.size.width, h: f.size.height }, primary_h);
+            (r.x - display.x).abs() < 1.0 && (r.y - display.y).abs() < 1.0
+        })?;
+        let top = screen.safeAreaInsets().top;
+        if top <= 0.0 {
+            return None;
+        }
+        let frame = screen.frame();
+        let width = frame.size.width - screen.auxiliaryTopLeftArea().size.width - screen.auxiliaryTopRightArea().size.width;
+        (width > 0.0).then_some(Notch { width, height: top })
     }
 
     /// Shows the window without activating Utter, so focus stays in the user's app.
@@ -118,4 +304,44 @@ pub fn configure(app: &AppHandle) {
     }
     #[cfg(not(target_os = "macos"))]
     let _ = app;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn island_origin_is_top_centre() {
+        assert_eq!(island_origin(0.0, 0.0, 1512.0, 440.0), (536.0, 0.0));
+    }
+
+    #[test]
+    fn island_origin_on_second_display() {
+        assert_eq!(island_origin(1512.0, -200.0, 1920.0, 440.0), (2252.0, -200.0));
+    }
+
+    // Review 2026-11-07: with a Retina MacBook and an external display the island was placed
+    // from pixels of the primary display's scale; everything is in points now, and the notch is
+    // read from the NSScreen whose frame is the display under the cursor.
+    #[test]
+    fn appkit_frame_of_a_display_in_top_left_points() {
+        use super::super::overlay_rest::Rect;
+        // Primary MacBook 1512 × 982 pt; an external 1920 × 1080 pt display above it, shifted right.
+        let external_ns = Rect { x: 300.0, y: 982.0, w: 1920.0, h: 1080.0 };
+        assert_eq!(top_left_frame(external_ns, 982.0), Rect { x: 300.0, y: -1080.0, w: 1920.0, h: 1080.0 });
+        let primary_ns = Rect { x: 0.0, y: 0.0, w: 1512.0, h: 982.0 };
+        assert_eq!(top_left_frame(primary_ns, 982.0), Rect { x: 0.0, y: 0.0, w: 1512.0, h: 982.0 });
+        // One to the right, bottoms aligned but shorter: its top is lower than the primary's.
+        let right_ns = Rect { x: 1512.0, y: 0.0, w: 1280.0, h: 800.0 };
+        assert_eq!(top_left_frame(right_ns, 982.0), Rect { x: 1512.0, y: 182.0, w: 1280.0, h: 800.0 });
+    }
+
+    #[test]
+    fn new_state_cancels_pending_hide() {
+        let mut gate = HideGate::default();
+        let hide = gate.on_state();
+        let recording = gate.on_state();
+        assert!(!gate.still_current(hide));
+        assert!(gate.still_current(recording));
+    }
 }

@@ -4,13 +4,40 @@ use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc::UnboundedSender;
 
-use super::orchestrator::{Deliverer, HotkeyControl, Input, PermissionCheck, Provider, ProviderFactory};
+use tauri::{AppHandle, Emitter};
+
+use super::orchestrator::{
+    Deliverer, HotkeyControl, Input, PermissionCheck, Provider, ProviderFactory, UiEvent, UiSink,
+};
 use crate::hotkey::{self, HotkeyHandle};
 use crate::output::{self, DeliveryOutcome};
 use crate::permissions::{self, PermStatus};
-use crate::providers::{defaults, GeminiClient, OpenAiCompatible, ProviderError};
+use crate::pipeline::routes::Route;
+use crate::providers::{defaults, gemini_http_client, GeminiClient, OpenAiCompatible, ProviderError};
 use crate::settings::{Hotkeys, InsertMethod, ProviderKind};
 use crate::types::KeyId;
+
+/// Sends orchestrator events to the settings window (when open).
+pub struct TauriUi {
+    pub app: AppHandle,
+}
+
+impl UiSink for TauriUi {
+    fn emit(&self, e: UiEvent) {
+        const WINDOW: &str = "settings";
+        let _ = match e {
+            UiEvent::Status(s) => {
+                super::tray::set_status(&self.app, s);
+                Ok(())
+            }
+            UiEvent::Hotkey { mode, down } => {
+                self.app.emit_to(WINDOW, "ui://hotkey", serde_json::json!({ "mode": mode, "down": down }))
+            }
+            UiEvent::Trial(o) => self.app.emit_to(WINDOW, "ui://trial", o),
+            UiEvent::HistoryChanged => self.app.emit_to(WINDOW, "ui://history", ()),
+        };
+    }
+}
 
 #[async_trait::async_trait]
 impl Provider for OpenAiCompatible {
@@ -35,15 +62,46 @@ impl Provider for GeminiClient {
     }
 }
 
-pub struct HttpProviders;
+/// Gemini clients share one connection pool, so a backup route starts on a warm connection.
+/// After sleep the pool is replaced: a connection can be silently dead after a VPN or network
+/// change, and every route would hang on it (review 2026-11-07; Plan 1: new client on wake).
+pub struct HttpProviders {
+    gemini_http: std::sync::Mutex<reqwest::Client>,
+}
+
+impl Default for HttpProviders {
+    fn default() -> Self {
+        Self { gemini_http: std::sync::Mutex::new(gemini_http_client()) }
+    }
+}
+
+impl HttpProviders {
+    fn gemini_http(&self) -> reqwest::Client {
+        self.gemini_http.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+}
 
 impl ProviderFactory for HttpProviders {
     fn make(&self, kind: ProviderKind, key: String) -> Arc<dyn Provider> {
         let cfg = defaults::config_for(kind, key);
         match kind {
-            ProviderKind::Gemini => Arc::new(GeminiClient::new(cfg)),
+            ProviderKind::Gemini => Arc::new(GeminiClient::with_client(cfg, self.gemini_http())),
             ProviderKind::Groq | ProviderKind::OpenAi => Arc::new(OpenAiCompatible::new(cfg)),
         }
+    }
+
+    fn make_route(&self, kind: ProviderKind, key: String, route: Route) -> Arc<dyn Provider> {
+        match kind {
+            ProviderKind::Gemini => {
+                Arc::new(GeminiClient::with_client(defaults::route_config(kind, key, route), self.gemini_http()))
+            }
+            ProviderKind::Groq | ProviderKind::OpenAi => self.make(kind, key),
+        }
+    }
+
+    fn reset(&self) {
+        let fresh = gemini_http_client();
+        *self.gemini_http.lock().unwrap_or_else(|e| e.into_inner()) = fresh;
     }
 }
 
@@ -113,6 +171,14 @@ impl HotkeyService {
 
     pub fn capture_next_key(&self) -> Option<tokio::sync::oneshot::Receiver<KeyId>> {
         self.handle.lock().ok()?.as_ref().map(|h| h.capture_next_key())
+    }
+
+    pub fn cancel_capture(&self) {
+        if let Ok(h) = self.handle.lock() {
+            if let Some(h) = h.as_ref() {
+                h.cancel_capture();
+            }
+        }
     }
 
     pub fn is_running(&self) -> bool {

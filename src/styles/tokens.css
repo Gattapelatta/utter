@@ -1,17 +1,54 @@
-/* Spec §5.1 — dark theme tokens (light theme arrives in Plan 2). */
-:root {
-  --bg: #0a0a0a;
+/* Spec §5.1 design tokens. Dark is the default theme; the pill always uses dark.
+   Contrast rule: text-secondary only on bg/surface; in the light theme accents are
+   fills and icons, never text colour. Accent text/icons carry `data-accent` so the UI
+   can go monochrome from this file alone. */
+:root,
+[data-theme="dark"] {
+  --bg: #0A0A0A;
   --surface: #141518;
-  --surface-raised: #1f2228;
+  --surface-raised: #1F2228;
   --border: rgba(255, 255, 255, 0.06);
   --border-strong: rgba(255, 255, 255, 0.12);
-  --text: #ffffff;
-  --text-secondary: #7d8187;
-  --accent-record: #4ad8ec;
-  --accent-translate: #9d79f7;
-  --accent-success: #2bb585;
-  --accent-danger: #f2555a;
-  --accent-warning: #f5b544;
-  --font: ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
-  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --text: #FFFFFF;
+  --text-secondary: #7D8187;
+  --accent-record: #4AD8EC;
+  --accent-translate: #9D79F7;
+  --accent-success: #2BB585;
+  --accent-danger: #F2555A;
+  --accent-warning: #F5B544;
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --bg: #FAFAF9;
+  --surface: #FFFFFF;
+  --surface-raised: #F2F2F0;
+  --border: rgba(0, 0, 0, 0.07);
+  --border-strong: rgba(0, 0, 0, 0.12);
+  --text: #0A0A0A;
+  --text-secondary: #5F636A;
+  --accent-record: #0E9FB5;
+  --accent-translate: #7448E8;
+  --accent-success: #1F8A65;
+  --accent-danger: #D93A40;
+  --accent-warning: #C98A12;
+  color-scheme: light;
+}
+
+:root {
+  --font: "Geist Variable", ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+  --mono: "Geist Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+/* Fallback theme crossfade where View Transitions are unavailable (the one allowed
+   colour transition in the app). */
+.theme-fade,
+.theme-fade * {
+  transition: background-color 250ms ease, color 250ms ease, border-color 250ms ease !important;
+}
+
+/* View Transitions crossfade duration for theme changes. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 250ms;
 }

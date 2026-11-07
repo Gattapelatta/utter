@@ -2,6 +2,12 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for Utter windows",
-  "windows": ["settings", "overlay"],
-  "permissions": ["core:default"]
+  "windows": [
+    "settings",
+    "overlay"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging"
+  ]
 }

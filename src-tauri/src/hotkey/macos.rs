@@ -191,6 +191,12 @@ pub(super) fn spawn_tap(
             run_loop.store(current.as_concrete_TypeRef() as usize, Ordering::SeqCst);
             let _ = ready_tx.send(Ok(()));
             CFRunLoop::run_current();
+            // Stopping the run loop alone leaves an enabled active tap that nobody
+            // services: every key press then waits on it, and after many sleep/wake
+            // restarts the keyboard stalls system-wide. Disable and remove it.
+            unsafe { CGEventTapEnable(tap.mach_port.as_concrete_TypeRef() as *const _, false) };
+            current.remove_source(&source, unsafe { kCFRunLoopCommonModes });
+            unsafe { core_foundation::mach_port::CFMachPortInvalidate(tap.mach_port.as_concrete_TypeRef()) };
             tracing::info!("hotkey listener stopped");
         })
         .map_err(|e| HotkeyError::Tap(e.to_string()))?;

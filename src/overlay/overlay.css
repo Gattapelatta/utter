@@ -1,0 +1,95 @@
+@import "../styles/app.css";
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+/* The island hangs from the top edge of the screen (spec §4.2). The window is larger
+   than the island so the rings and effects around the character are not clipped. */
+#root {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+/* The base every shape is cut from: the 420 × 206 draft window (spec 2026-11-06). The open
+   island's content keeps its 360 × 104 frame, centred at the top. */
+.island {
+  position: relative;
+  width: 420px;
+  height: 206px;
+}
+/* The black shape: notch, ears (§4.2a) or island, cut out of the island's box by clip-path.
+   Only the shape is clipped; the Drop's rings and effects may reach past it. */
+.island-shape {
+  position: absolute;
+  inset: 0;
+  background: #000;
+}
+.island-shape-clip {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.island[data-clickable] {
+  cursor: pointer;
+}
+
+/* Character and the right-hand block sit together, 44 px apart. Centred at 61 px, below
+   the island's middle: the top 32 px under the camera notch are not a screen (variant C,
+   approved 2026-10-08). */
+.island-row {
+  position: absolute;
+  top: 18px;
+  left: 30px;
+  width: 360px;
+  height: 86px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 44px;
+}
+
+.island-timer {
+  font-family: "Manrope Variable", "Manrope", sans-serif;
+  font-weight: 600;
+  font-size: 21px;
+  line-height: 1;
+  color: #e6e8ea;
+  font-variant-numeric: tabular-nums;
+  min-width: 48px;
+}
+
+/* Fixed-width slot right of the character (timer width). Longer messages start at the
+   slot's left edge and run towards the island's right edge, so nothing shifts. */
+.island-slot {
+  position: relative;
+  transform-origin: 0% 50%;
+  /* Its own layer from the start: the timer's fade-in began mid-growth and cost a frame. */
+  will-change: opacity, transform;
+  width: 48px;
+  height: 21px;
+  display: flex;
+  align-items: center;
+}
+
+.island-text {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 130px;
+  font-family: var(--font);
+  font-size: 12px;
+  line-height: 1.25;
+  color: #e6e8ea;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

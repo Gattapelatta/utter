@@ -100,6 +100,30 @@ pub fn rms(samples: &[f32]) -> f32 {
     (samples.iter().map(|x| x * x).sum::<f32>() / samples.len() as f32).sqrt()
 }
 
+/// Less voiced sound than this in a whole recording is a click, a breath or a bump — not
+/// speech (the shortest word is longer). Below it nothing is sent, so the model cannot
+/// invent text from noise.
+pub const MIN_VOICED_MS: u32 = 250;
+
+/// Loudness facts about a recording, for the log (tuning the speech gate on real data).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VoiceStats {
+    pub voiced_ms: u32,
+    pub peak_rms: f32,
+}
+
+pub fn voice_stats(samples: &[f32], rate: u32) -> VoiceStats {
+    let frame = (rate * FRAME_MS / 1000).max(1) as usize;
+    let levels: Vec<f32> = samples.chunks(frame).map(rms).collect();
+    let voiced = levels.iter().filter(|&&l| l > VOICE_RMS).count() as u32;
+    VoiceStats { voiced_ms: voiced * FRAME_MS, peak_rms: levels.iter().fold(0.0, |m, &l| m.max(l)) }
+}
+
+/// Whether the recording holds enough voiced sound to be speech (`MIN_VOICED_MS`).
+pub fn has_speech(stats: VoiceStats) -> bool {
+    stats.voiced_ms >= MIN_VOICED_MS
+}
+
 /// The span from the first to the last voiced frame, padded by `PAD_MS`.
 pub fn voiced_range(samples: &[f32], rate: u32) -> Option<Range<usize>> {
     let frame = (rate * FRAME_MS / 1000).max(1) as usize;
@@ -193,6 +217,28 @@ mod tests {
         let tail = &s[8_000..];
         let mean = tail.iter().sum::<f32>() / tail.len() as f32;
         assert!(mean.abs() < 0.01, "mean {mean}");
+    }
+
+    #[test]
+    fn a_click_or_a_breath_is_not_speech() {
+        let mut s = vec![0.0f32; 16_000];
+        s.extend(sine(16_000, 0.04, 0.5)); // 40 ms click
+        s.extend(vec![0.0f32; 16_000]);
+        let st = voice_stats(&s, 16_000);
+        assert!(st.voiced_ms <= 60, "{st:?}");
+        assert!(st.peak_rms > 0.3);
+        assert!(!has_speech(st));
+        assert!(!has_speech(voice_stats(&vec![0.0; 16_000], 16_000)));
+    }
+
+    #[test]
+    fn a_short_word_is_speech() {
+        let mut s = vec![0.0f32; 16_000];
+        s.extend(sine(16_000, 0.3, 0.1)); // "да": 300 ms
+        s.extend(vec![0.0f32; 16_000]);
+        let st = voice_stats(&s, 16_000);
+        assert!((st.voiced_ms as i64 - 300).abs() <= 40, "{st:?}");
+        assert!(has_speech(st));
     }
 
     #[test]
