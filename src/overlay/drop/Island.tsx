@@ -81,7 +81,8 @@ export function Island({ state, level, now, view = "open", notch = null, cancell
     right = frozenTimer;
   } else if (state.kind === "recording") {
     right = (
-      <span className="island-timer" data-warn={state.warn ? "" : undefined}>
+      // 30 s before the 10-minute limit (§3.3); the island is always black: the dark theme's amber.
+      <span className="island-timer" data-warn={state.warn ? "" : undefined} style={state.warn ? { color: "#F5B544" } : undefined}>
         <span data-timer>{formatTimer(now - state.started_at_ms)}</span>
         {state.pending > 0 && (
           <span data-pending className="absolute -top-2 -right-3.5 text-[11px] text-[#8a9097]">
@@ -94,6 +95,11 @@ export function Island({ state, level, now, view = "open", notch = null, cancell
     right = <span className="island-text">{t("pill.slow")}</span>;
   } else if (state.kind === "done" && state.outcome === "copied") {
     right = <span className="island-timer">⌘V</span>;
+  } else if (state.kind === "done" && state.outcome === "failed") {
+    right = <span className="island-text">{t("pill.failed")}</span>;
+  } else if (state.kind === "done" && state.degraded) {
+    // §8.3: the raw transcript went in — say so (a failed translation is still in Russian).
+    right = <span className="island-text">{t("pill.degraded")}</span>;
   } else if (state.kind === "error") {
     const key =
       state.message_key === "rate_limited" && state.minutes === null ? "errors.rate_limited_later" : `errors.${state.message_key}`;

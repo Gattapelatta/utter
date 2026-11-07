@@ -34,6 +34,27 @@ describe("Island", () => {
     expect(container.textContent).toContain("⌘V");
   });
 
+  it("tells when the text went in without cleanup and when it could not be copied", () => {
+    // Review 2026-11-07: §8.3 — lost in the pill → island rewrite; a failed translation pasted
+    // the raw Russian under a happy Drop.
+    const { container, rerender } = render(<Island state={{ kind: "done", outcome: "pasted", degraded: true }} level={0} now={0} />);
+    expect(container.textContent).toContain("Вставлено без обработки");
+    rerender(<Island state={{ kind: "done", outcome: "failed", degraded: false }} level={0} now={0} />);
+    expect(container.textContent).toContain("Не удалось скопировать");
+    rerender(<Island state={{ kind: "done", outcome: "pasted", degraded: false }} level={0} now={0} />);
+    expect(container.querySelector("[data-slot]")?.textContent).toBe("");
+  });
+
+  it("the timer turns amber 30 s before the 10-minute limit", () => {
+    // Review 2026-11-07: §3.3 — the island set data-warn but nothing styled it. The island is
+    // always black: the dark theme's amber, whatever the app's theme.
+    const warn: OverlayState = { kind: "recording", mode: "Dictation", style: "Business", started_at_ms: 0, warn: true, pending: 0 };
+    const { container, rerender } = render(<Island state={warn} level={0} now={0} />);
+    expect((container.querySelector(".island-timer") as HTMLElement).style.color).toBe("rgb(245, 181, 68)");
+    rerender(<Island state={rec()} level={0} now={0} />);
+    expect((container.querySelector(".island-timer") as HTMLElement).style.color).toBe("");
+  });
+
   it("keeps the right-hand slot in every state so the character never moves", () => {
     const states: OverlayState[] = [
       rec(),
