@@ -8,7 +8,7 @@ Result: ✅ inserted correctly · ⚠️ copied only (expected for the case) · 
 | Layout | Paste | Type | Date | Notes |
 |---|---|---|---|---|
 | EN | 5/5 ✅ | 5/5 ✅ | 2026-10-07 | two consecutive runs; latin, Cyrillic, emoji, multi-line, long text |
-| RU | | | | |
+| RU | 5/5 ✅ | 5/5 ✅ | 2026-11-07 | RussianWin selected via TIS for the run (ABC restored after); debug build; same five cases |
 
 ## Manual
 
