@@ -1,4 +1,4 @@
-<p align="right"><b>Русский</b> · <a href="README.en.md">English</a></p>
+<p align="right"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/lang/ru-current-dark.svg"><img src="docs/media/lang/ru-current-light.svg" width="86" height="22" alt="Русский ·"></picture><a href="README.en.md"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/lang/en-link-dark.svg"><img src="docs/media/lang/en-link-light.svg" width="47" height="22" alt="English"></picture></a></p>
 
 <p align="center"><img src="docs/media/hero-ru.png" width="830" alt="Utter: Капля у чёлки слушает, показывает слова, пока ты говоришь, и вставляет текст"></p>
 

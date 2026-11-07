@@ -1,4 +1,4 @@
-<p align="right"><a href="README.md">Русский</a> · <b>English</b></p>
+<p align="right"><a href="README.md"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/lang/ru-link-dark.svg"><img src="docs/media/lang/ru-link-light.svg" width="56" height="22" alt="Русский"></picture></a><picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/lang/en-current-dark.svg"><img src="docs/media/lang/en-current-light.svg" width="76" height="22" alt="· English"></picture></p>
 
 <p align="center"><img src="docs/media/hero-en.png" width="830" alt="Utter: the Drop by the notch listens, shows the words as you speak, and pastes the text"></p>
 
