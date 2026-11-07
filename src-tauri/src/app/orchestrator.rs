@@ -733,7 +733,10 @@ impl Orchestrator {
             Some(system) => {
                 let route = Route::Direct { model: defaults::GEMINI_TRANSLATE_MODEL };
                 let model: Arc<dyn TextModel> = self.deps.providers.make_route(s.provider, key.clone(), route);
-                Finisher::Text { model, system }
+                // The other Lite model (own quota) races a slow answer (live check 2026-11-07).
+                let backup = Route::Direct { model: defaults::GEMINI_BACKUP_LITE_MODEL };
+                let backup: Arc<dyn TextModel> = self.deps.providers.make_route(s.provider, key.clone(), backup);
+                Finisher::Text { model, system, backup: Some(backup) }
             }
         };
         let cfg = LiveConfig {
@@ -1383,6 +1386,9 @@ mod tests {
         text_fail: bool,
         /// The text model panics (a bug).
         text_panic: bool,
+        /// The text model's answer ("Привет." when unset) and how long it takes.
+        text_reply: Option<String>,
+        text_delay: Duration,
     }
     impl FakeProvider {
         fn new(slow: Result<String, ProviderError>, fast: Result<String, ProviderError>) -> Self {
@@ -1397,6 +1403,8 @@ mod tests {
                 direct_delay: Duration::ZERO,
                 text_fail: false,
                 text_panic: false,
+                text_reply: None,
+                text_delay: Duration::ZERO,
             }
         }
     }
@@ -1429,10 +1437,11 @@ mod tests {
     impl TextModel for FakeProvider {
         async fn complete(&self, _: &str, _: &str) -> Result<Completion, ProviderError> {
             assert!(!self.text_panic, "simulated bug in the text model");
+            tokio::time::sleep(self.text_delay).await;
             if self.text_fail {
                 return Err(ProviderError::Server(500));
             }
-            Ok(Completion { text: "Привет.".into(), total_tokens: 3 })
+            Ok(Completion { text: self.text_reply.clone().unwrap_or_else(|| "Привет.".into()), total_tokens: 3 })
         }
     }
     #[async_trait::async_trait]
@@ -1465,6 +1474,20 @@ mod tests {
                 let mut p = FakeProvider::new(Ok("x".into()), Ok("сырой".into()));
                 p.direct_reply = Some(reply.into());
                 p.direct_delay = delay;
+                Arc::new(p)
+            };
+            Arc::new(Self {
+                single: fake(Duration::ZERO, "Один маршрут."),
+                routes: routes.into_iter().map(|(d, r)| fake(d, r)).collect(),
+                made: Mutex::new(Vec::new()),
+            })
+        }
+        /// Text models (cleanup, translation) answering `reply` after `delay`, one per route.
+        fn texts(routes: Vec<(Duration, &str)>) -> Arc<Self> {
+            let fake = |delay: Duration, reply: &str| {
+                let mut p = FakeProvider::new(Ok("x".into()), Ok("сырой".into()));
+                p.text_reply = Some(reply.into());
+                p.text_delay = delay;
                 Arc::new(p)
             };
             Arc::new(Self {
@@ -2171,6 +2194,21 @@ mod tests {
         let d = drafts(&r);
         assert!(d.iter().any(Option::is_some), "the island showed the draft");
         assert_eq!(d.last(), Some(&None));
+    }
+
+    #[tokio::test]
+    async fn slow_live_cleanup_is_raced_by_the_backup_lite_model() {
+        // Live check 2026-11-07: the cleanup model answered in 0.6–0.8 s or in 2–3 s, at random.
+        let (mut r, _) = live_rig(heard("привет э-э мир"));
+        r.shared.settings.lock().unwrap().cleanup = true;
+        let f = RouteFactory::texts(vec![(Duration::from_millis(2_500), "Медленно."), (Duration::from_millis(50), "Быстро."), (Duration::ZERO, "c")]);
+        r.orch.set_provider_factory(f.clone());
+        let started = std::time::Instant::now();
+        r.record(Mode::Dictation, speech(1.0), Instant::now(), 1).await;
+        r.settle(1).await;
+        assert_eq!(*r.out.0.lock().unwrap(), vec!["Быстро.".to_string()]);
+        assert!(started.elapsed() < Duration::from_millis(2_300), "{:?}", started.elapsed());
+        assert!(f.made.lock().unwrap().contains(&Route::Direct { model: defaults::GEMINI_BACKUP_LITE_MODEL }));
     }
 
     #[tokio::test]

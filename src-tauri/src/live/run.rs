@@ -28,8 +28,9 @@ pub const QUIET_AT_RELEASE: Duration = Duration::from_millis(500);
 pub enum Finisher {
     /// Dictation without cleanup: the pieces as heard.
     Plain,
-    /// Cleanup or translation of the pieces while speaking (`SegmentTranslator`).
-    Text { model: Arc<dyn TextModel>, system: String },
+    /// Cleanup or translation of the pieces while speaking (`SegmentTranslator`); `backup`
+    /// races a slow or failed request at the end.
+    Text { model: Arc<dyn TextModel>, system: String, backup: Option<Arc<dyn TextModel>> },
 }
 
 pub struct LiveRequest {
@@ -175,7 +176,13 @@ async fn run(
     let mut throttle = DraftThrottle::default();
     let mut translator = match req.finisher {
         Finisher::Plain => None,
-        Finisher::Text { model, system } => Some(SegmentTranslator::new(model, system)),
+        Finisher::Text { model, system, backup } => {
+            let t = SegmentTranslator::new(model, system);
+            Some(match backup {
+                Some(b) => t.with_backup(b),
+                None => t,
+            })
+        }
     };
     let mut failed: Option<String> = None;
     let mut first_interim = true;
@@ -505,7 +512,7 @@ mod tests {
     async fn clean_dictation_runs_text_model() {
         let c = FakeConnector::ok();
         let model = FakeModel::new("X.", 100);
-        let r = start(c.clone(), Finisher::Text { model: model.clone(), system: "clean".into() });
+        let r = start(c.clone(), Finisher::Text { model: model.clone(), system: "clean".into(), backup: None });
         let s = c.server().await;
         say(&s, LiveEvent::Segment("x".into()));
         settle().await;
@@ -521,7 +528,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn translate_returns_model_answer() {
         let c = FakeConnector::ok();
-        let r = start(c.clone(), Finisher::Text { model: FakeModel::new("Hello.", 50), system: "translate".into() });
+        let r = start(c.clone(), Finisher::Text { model: FakeModel::new("Hello.", 50), system: "translate".into(), backup: None });
         let s = c.server().await;
         say(&s, LiveEvent::Segment("Привет.".into()));
         settle().await;
@@ -586,7 +593,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn text_model_timeout_is_unfinished() {
         let c = FakeConnector::ok();
-        let r = start(c.clone(), Finisher::Text { model: FakeModel::new("never", 10_000), system: "clean".into() });
+        let r = start(c.clone(), Finisher::Text { model: FakeModel::new("never", 10_000), system: "clean".into(), backup: None });
         let s = c.server().await;
         say(&s, LiveEvent::Segment("сырой текст".into()));
         settle().await;
@@ -603,7 +610,7 @@ mod tests {
     async fn cancel_sends_nothing() {
         let c = FakeConnector::ok();
         let model = FakeModel::new("x", 0);
-        let r = start(c.clone(), Finisher::Text { model: model.clone(), system: "clean".into() });
+        let r = start(c.clone(), Finisher::Text { model: model.clone(), system: "clean".into(), backup: None });
         let s = c.server().await;
         say(&s, LiveEvent::Interim("отмена".into()));
         settle().await;

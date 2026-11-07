@@ -16,18 +16,26 @@ use crate::providers::{ProviderError, TextModel};
 pub const TRANSLATE_EVERY: Duration = Duration::from_secs(4);
 /// A request without an answer this long is dropped; its pieces go with the next one.
 pub const TRANSLATE_TIMEOUT: Duration = Duration::from_secs(3);
+/// At the end a request still unanswered this long after it was sent is also sent to the backup
+/// model, and the first answer wins. Live check 2026-11-07: the cleanup model answered in
+/// 0.6–0.8 s or in 2–3 s, at random, so half the dictations waited 2–3 s before the paste.
+pub const BACKUP_AFTER: Duration = Duration::from_secs(1);
 
 type Reply = Result<String, ProviderError>;
 
 struct InFlight {
     pieces: Range<usize>,
     started: Instant,
+    /// When it was sent, on the runtime's clock (for the backup's start).
+    sent: tokio::time::Instant,
     task: tokio::task::JoinHandle<()>,
     reply: oneshot::Receiver<Reply>,
 }
 
 pub struct SegmentTranslator {
     provider: Arc<dyn TextModel>,
+    /// Races a slow or failed request at the end (`BACKUP_AFTER`).
+    backup: Option<Arc<dyn TextModel>>,
     system: String,
     segments: Vec<String>,
     /// Translations by the first piece they cover: (end of the range, text).
@@ -43,6 +51,7 @@ impl SegmentTranslator {
     pub fn new(provider: Arc<dyn TextModel>, system: String) -> Self {
         Self {
             provider,
+            backup: None,
             system,
             segments: Vec::new(),
             done: BTreeMap::new(),
@@ -51,6 +60,11 @@ impl SegmentTranslator {
             last_start: None,
             requests: 0,
         }
+    }
+
+    pub fn with_backup(mut self, backup: Arc<dyn TextModel>) -> Self {
+        self.backup = Some(backup);
+        self
     }
 
     pub fn push(&mut self, segment: String, now: Instant) {
@@ -63,17 +77,74 @@ impl SegmentTranslator {
         self.requests
     }
 
-    fn start(&mut self, pieces: Range<usize>, now: Instant) -> InFlight {
+    fn send(&mut self, model: Arc<dyn TextModel>, pieces: &Range<usize>) -> (tokio::task::JoinHandle<()>, oneshot::Receiver<Reply>) {
         let text = self.segments[pieces.clone()].iter().map(|s| s.trim()).collect::<Vec<_>>().join(" ");
         let (tx, reply) = oneshot::channel();
-        let (provider, system) = (self.provider.clone(), self.system.clone());
+        let system = self.system.clone();
         let task = tokio::spawn(async move {
-            let r = provider.complete(&system, &user_message(&text)).await.map(|c| postprocess(&c.text));
+            let r = model.complete(&system, &user_message(&text)).await.map(|c| postprocess(&c.text));
             let _ = tx.send(r);
         });
         self.requests += 1;
+        (task, reply)
+    }
+
+    fn start(&mut self, pieces: Range<usize>, now: Instant) -> InFlight {
+        let (task, reply) = self.send(self.provider.clone(), &pieces);
         self.last_start = Some(now);
-        InFlight { pieces, started: now, task, reply }
+        InFlight { pieces, started: now, sent: tokio::time::Instant::now(), task, reply }
+    }
+
+    /// The answer for one request: from it, or from the backup model sent once the request is
+    /// `BACKUP_AFTER` old or has failed — whichever answers first.
+    async fn settle(&mut self, f: InFlight, deadline: tokio::time::Instant) -> Reply {
+        let InFlight { pieces, sent, task, reply, .. } = f;
+        let mut main = Some((task, reply));
+        let mut backup: Option<(tokio::task::JoinHandle<()>, oneshot::Receiver<Reply>)> = None;
+        let mut can_back_up = self.backup.is_some();
+        let mut last_err = ProviderError::Timeout;
+        let crashed = || ProviderError::BadResponse("translation task crashed".into());
+        loop {
+            if main.is_none() && backup.is_none() && !can_back_up {
+                return Err(last_err);
+            }
+            let start_backup_at = if main.is_none() { tokio::time::Instant::now() } else { sent + BACKUP_AFTER };
+            tokio::select! {
+                r = async { (&mut main.as_mut().unwrap().1).await }, if main.is_some() => {
+                    let (task, _) = main.take().unwrap();
+                    drop(task);
+                    match r.unwrap_or_else(|_| Err(crashed())) {
+                        Ok(text) => {
+                            if let Some((t, _)) = backup.take() { t.abort(); }
+                            return Ok(text);
+                        }
+                        Err(e) => last_err = e,
+                    }
+                }
+                r = async { (&mut backup.as_mut().unwrap().1).await }, if backup.is_some() => {
+                    backup = None;
+                    match r.unwrap_or_else(|_| Err(crashed())) {
+                        Ok(text) => {
+                            if let Some((t, _)) = main.take() { t.abort(); }
+                            tracing::info!(after_ms = sent.elapsed().as_millis() as u64, "timing: live text answered by the backup model");
+                            return Ok(text);
+                        }
+                        Err(e) => last_err = e,
+                    }
+                }
+                _ = tokio::time::sleep_until(start_backup_at), if can_back_up => {
+                    can_back_up = false;
+                    let model = self.backup.clone().expect("checked");
+                    tracing::info!(waited_ms = sent.elapsed().as_millis() as u64, "timing: live text sent to the backup model");
+                    backup = Some(self.send(model, &pieces));
+                }
+                _ = tokio::time::sleep_until(deadline) => {
+                    if let Some((t, _)) = main.take() { t.abort(); }
+                    if let Some((t, _)) = backup.take() { t.abort(); }
+                    return Err(ProviderError::Timeout);
+                }
+            }
+        }
     }
 
     /// Collects a finished request, drops a stuck one, starts the next batch when allowed.
@@ -116,18 +187,9 @@ impl SegmentTranslator {
         }
         let deadline = tokio::time::Instant::now() + TRANSLATE_TIMEOUT;
         for f in waiting {
-            let reply = tokio::time::timeout_at(deadline, f.reply).await;
-            match reply {
-                Ok(Ok(Ok(text))) => {
-                    self.done.insert(f.pieces.start, (f.pieces.end, text));
-                }
-                Ok(Ok(Err(e))) => return Err(e),
-                Ok(Err(_)) => return Err(ProviderError::BadResponse("translation task crashed".into())),
-                Err(_) => {
-                    f.task.abort();
-                    return Err(ProviderError::Timeout);
-                }
-            }
+            let pieces = f.pieces.clone();
+            let text = self.settle(f, deadline).await?;
+            self.done.insert(pieces.start, (pieces.end, text));
         }
         let text = self.done.values().map(|(_, t)| t.trim()).filter(|t| !t.is_empty()).collect::<Vec<_>>().join(" ");
         Ok((text, self.requests))
@@ -146,10 +208,24 @@ mod tests {
     struct FakeTranslator {
         delays: Mutex<VecDeque<Duration>>,
         calls: Mutex<Vec<(tokio::time::Instant, String)>>,
+        /// Put before the reply, to tell the backup model's answers apart.
+        tag: &'static str,
+        /// Every request fails (after its delay).
+        fails: bool,
     }
     impl FakeTranslator {
         fn with_delays(d: &[u64]) -> Arc<Self> {
             let f = Self::default();
+            *f.delays.lock().unwrap() = d.iter().map(|&ms| Duration::from_millis(ms)).collect();
+            Arc::new(f)
+        }
+        fn tagged(tag: &'static str, d: &[u64]) -> Arc<Self> {
+            let f = Self { tag, ..Default::default() };
+            *f.delays.lock().unwrap() = d.iter().map(|&ms| Duration::from_millis(ms)).collect();
+            Arc::new(f)
+        }
+        fn failing(d: &[u64]) -> Arc<Self> {
+            let f = Self { fails: true, ..Default::default() };
             *f.delays.lock().unwrap() = d.iter().map(|&ms| Duration::from_millis(ms)).collect();
             Arc::new(f)
         }
@@ -164,7 +240,10 @@ mod tests {
             self.calls.lock().unwrap().push((tokio::time::Instant::now(), text.clone()));
             let delay = self.delays.lock().unwrap().pop_front().unwrap_or(Duration::from_millis(100));
             tokio::time::sleep(delay).await;
-            Ok(Completion { text: format!("EN[{text}]"), total_tokens: 1 })
+            if self.fails {
+                return Err(ProviderError::Server(503));
+            }
+            Ok(Completion { text: format!("{}EN[{text}]", self.tag), total_tokens: 1 })
         }
     }
 
@@ -251,6 +330,74 @@ mod tests {
         assert_eq!(text, "EN[первый второй]");
         assert_eq!(requests, 2);
         assert_eq!(fake.inputs(), vec!["первый".to_string(), "первый второй".to_string()]);
+    }
+
+    // Live check 2026-11-07: the cleanup model answered in 0.6–0.8 s or in 2–3 s, at random —
+    // half the dictations waited 2–3 s before the paste.
+    #[tokio::test(start_paused = true)]
+    async fn slow_reply_is_raced_by_the_backup_model() {
+        let main = FakeTranslator::with_delays(&[2_500]);
+        let backup = FakeTranslator::tagged("B:", &[300]);
+        let mut t = SegmentTranslator::new(main.clone(), "sys".into()).with_backup(backup.clone());
+        t.push("фраза".into(), Instant::now());
+        let started = tokio::time::Instant::now();
+        let (text, requests) = t.finish().await.unwrap();
+        assert_eq!(text, "B:EN[фраза]");
+        assert_eq!(started.elapsed(), BACKUP_AFTER + Duration::from_millis(300));
+        assert_eq!(backup.inputs(), vec!["фраза".to_string()]);
+        assert_eq!(requests, 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn quick_reply_needs_no_backup() {
+        let backup = FakeTranslator::tagged("B:", &[]);
+        let mut t = SegmentTranslator::new(FakeTranslator::with_delays(&[700]), "sys".into()).with_backup(backup.clone());
+        t.push("фраза".into(), Instant::now());
+        let (text, requests) = t.finish().await.unwrap();
+        assert_eq!(text, "EN[фраза]");
+        assert_eq!(requests, 1);
+        assert!(backup.inputs().is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn main_model_answering_first_wins_over_the_backup() {
+        let backup = FakeTranslator::tagged("B:", &[2_000]);
+        let mut t = SegmentTranslator::new(FakeTranslator::with_delays(&[1_400]), "sys".into()).with_backup(backup.clone());
+        t.push("фраза".into(), Instant::now());
+        let started = tokio::time::Instant::now();
+        let (text, _) = t.finish().await.unwrap();
+        assert_eq!(text, "EN[фраза]");
+        assert_eq!(started.elapsed(), Duration::from_millis(1_400));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_request_sent_while_speaking_gets_its_backup_at_once_when_already_late() {
+        let backup = FakeTranslator::tagged("B:", &[200]);
+        let mut t = SegmentTranslator::new(FakeTranslator::with_delays(&[10_000]), "sys".into()).with_backup(backup.clone());
+        t.push("первый".into(), Instant::now());
+        run_for(1_500).await;
+        let started = tokio::time::Instant::now();
+        let (text, _) = t.finish().await.unwrap();
+        assert_eq!(text, "B:EN[первый]");
+        assert_eq!(started.elapsed(), Duration::from_millis(200));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_request_goes_to_the_backup_at_once() {
+        let backup = FakeTranslator::tagged("B:", &[200]);
+        let mut t = SegmentTranslator::new(FakeTranslator::failing(&[100]), "sys".into()).with_backup(backup.clone());
+        t.push("фраза".into(), Instant::now());
+        let started = tokio::time::Instant::now();
+        let (text, _) = t.finish().await.unwrap();
+        assert_eq!(text, "B:EN[фраза]");
+        assert_eq!(started.elapsed(), Duration::from_millis(300));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn both_failing_is_an_error() {
+        let mut t = SegmentTranslator::new(FakeTranslator::failing(&[100]), "sys".into()).with_backup(FakeTranslator::failing(&[100]));
+        t.push("фраза".into(), Instant::now());
+        assert_eq!(t.finish().await, Err(ProviderError::Server(503)));
     }
 
     #[tokio::test]
