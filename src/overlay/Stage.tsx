@@ -2,6 +2,7 @@ import { useRef } from "react";
 import { AnimatePresence } from "motion/react";
 import { Island } from "./drop/Island";
 import type { Notch, View } from "./drop/islandMotion";
+import type { Level } from "./drop/Drop";
 import type { DraftParts, OverlayState } from "../lib/types";
 
 interface Props {
@@ -9,7 +10,7 @@ interface Props {
   /** The ears are shown while idle (§4.2a). */
   rest: boolean;
   notch: Notch;
-  level: number;
+  level: Level;
   now: number;
   onClick?: () => void;
   /** The live draft (spec 2026-11-06): the island opens into a window while there is one. */

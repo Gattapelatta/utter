@@ -68,6 +68,23 @@ describe("Island", () => {
     expect(stroke).toBe("rgb(74,216,236)");
   });
 
+  it("the Drop hears a voice level it reads each frame", async () => {
+    // The overlay hands the level over as a function so a level never redraws the island.
+    const loud = () => 1;
+    const rings = async (level: number | (() => number)) => {
+      const { container, unmount } = render(<Island state={rec()} level={level} now={0} />);
+      await act(() => new Promise((r) => setTimeout(r, 700)));
+      // How strongly the rings show: they swell with the voice.
+      const r = [...container.querySelectorAll("[data-ring]")].reduce((sum, e) => sum + Number(e.getAttribute("opacity")), 0);
+      unmount();
+      return r;
+    };
+    const heard = await rings(loud);
+    const silent = await rings(() => 0);
+    expect(heard).toBeGreaterThan(silent + 0.2);
+    expect(Math.abs(heard - (await rings(1)))).toBeLessThan(0.1);
+  });
+
   it("reduced motion keeps the character still", async () => {
     vi.stubGlobal("matchMedia", (q: string) => ({ matches: q.includes("reduce"), media: q, addEventListener() {}, removeEventListener() {} }));
     const { container } = render(<Island state={rec()} level={1} now={0} />);

@@ -6,10 +6,13 @@ import { eyePath } from "./eye";
 
 export type { Mood };
 
+/** The voice level 0..1, or where to read it each frame (the overlay: no React redraw per level). */
+export type Level = number | (() => number);
+
 interface Props {
   mood: Mood;
   /** Voice level 0..1 (already smoothed by the caller). */
-  level: number;
+  level: Level;
   translate: boolean;
   reduced: boolean;
   /** Width in px (the pill's 48 by default). */
@@ -167,7 +170,7 @@ export function Drop({ mood, level, translate, reduced, size = 48, follow = fals
         const r = root.getBoundingClientRect();
         gaze = gazeToward(pointer.current.x - (r.left + r.width / 2), pointer.current.y - (r.top + r.height * 0.55));
       }
-      const f = stepModel(model, { ...cur, gaze }, now);
+      const f = stepModel(model, { ...cur, gaze, level: typeof cur.level === "function" ? cur.level() : cur.level }, now);
       if (cur.frozen) {
         next(f, now);
         return;

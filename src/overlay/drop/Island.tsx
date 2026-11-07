@@ -3,7 +3,7 @@ import { AnimatePresence, motion, useIsPresent, usePresenceData } from "motion/r
 import { useT } from "../../i18n";
 import type { DraftParts, OverlayState } from "../../lib/types";
 import { DraftPanel } from "./DraftPanel";
-import { Drop, type Mood } from "./Drop";
+import { Drop, type Level, type Mood } from "./Drop";
 import { RestDrop } from "./RestDrop";
 import type { Gaze } from "./restMotion";
 import { contentTarget, dropTarget, shapeTarget, timerLeaveTarget, timerTarget, type Notch, type View } from "./islandMotion";
@@ -37,7 +37,7 @@ function prefersReducedMotion(): boolean {
 
 interface Props {
   state: OverlayState;
-  level: number;
+  level: Level;
   now: number;
   /** The open island, the ears at rest (§4.2a), or folded into the notch. */
   view?: View;
