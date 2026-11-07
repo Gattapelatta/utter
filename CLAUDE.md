@@ -7,7 +7,7 @@ Free, open-source voice-to-text for macOS (Windows later): hold a hotkey, speak,
 ## Current focus (2026-11-07) — when the user says «продолжаем работу над utter»
 
 1. Read `docs/superpowers/HANDOFF.md` («С чего начать следующую сессию»).
-2. Plan 2 is done and passed the final whole-branch review (`docs/superpowers/plans/2026-11-07-plan-2-final-review.md`). Next: `finishing-a-development-branch` — merge `feat/premium-ui` to `main` only with the user's OK. Then Plan 3 (Windows, CI/releases, README).
+2. Plans 1 and 2 are in `main` (Plan 2 merged 2026-11-07 after the final review, `docs/superpowers/plans/2026-11-07-plan-2-final-review.md`). Next: Plan 3 — not written yet (Windows, CI/releases, README, Developer ID signing, icon/brand): brainstorming → spec → writing-plans, on a new `feat/*` branch.
 
 ## Working with the user
 
