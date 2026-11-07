@@ -85,7 +85,7 @@ func backdrop(_ c: CGContext) {
     c.fillPath()
 }
 // <out>.gif → a GIF; any other path → a folder of PNG frames + delays.txt (seconds per frame),
-// for an encoder that keeps every colour (e.g. scripts/tools/frames2webp).
+// for an encoder that keeps every colour (e.g. scripts/tools/frames2anim.py).
 let out = URL(fileURLWithPath: args[0])
 let asGif = out.pathExtension.lowercased() == "gif"
 var gif: CGImageDestination?

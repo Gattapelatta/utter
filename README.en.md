@@ -1,13 +1,8 @@
-<img align="left" width="400" src="docs/media/island-en.webp" alt="The Drop grows out of the notch, shows the words as you speak, and pastes the text">
+<p align="center"><img src="docs/media/hero-en.png" width="830" alt="Utter: the Drop by the notch listens, shows the words as you speak, and pastes the text. Hold a key, speak, and the text appears at your cursor"></p>
 
-<h1><img src="src-tauri/icons/128x128@2x.png" width="40" alt="Utter icon"> Utter</h1>
+<p align="center"><a href="https://github.com/Gattapelatta/utter/releases/latest"><img src="docs/media/download-en.svg" width="194" alt="Download for Mac"></a></p>
 
-<p><b>Hold a key, speak, and the text appears where your cursor is.</b><br>
-Free. Your own key. No servers.</p>
-
-<p><a href="https://github.com/Gattapelatta/utter/releases/latest"><img src="docs/media/download-en.svg" width="194" alt="Download for Mac"></a>&nbsp;&nbsp; <a href="README.md">Русский</a></p>
-
-<br clear="left">
+<p align="center">macOS 13+ · <a href="README.md">Русский</a></p>
 
 ## What it does
 

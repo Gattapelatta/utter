@@ -1,13 +1,8 @@
-<img align="left" width="400" src="docs/media/island-ru.webp" alt="Капля вырастает из чёлки, показывает слова, пока ты говоришь, и вставляет текст">
+<p align="center"><img src="docs/media/hero-ru.png" width="830" alt="Utter: Капля у чёлки слушает, показывает слова, пока ты говоришь, и вставляет текст. Зажми клавишу, говори — и текст появится там, где курсор"></p>
 
-<h1><img src="src-tauri/icons/128x128@2x.png" width="40" alt="Иконка Utter"> Utter</h1>
+<p align="center"><a href="https://github.com/Gattapelatta/utter/releases/latest"><img src="docs/media/download-ru.svg" width="186" alt="Скачать для Mac"></a></p>
 
-<p><b>Зажми клавишу, говори — и текст появится там, где стоит курсор.</b><br>
-Бесплатно. Свой ключ. Без наших серверов.</p>
-
-<p><a href="https://github.com/Gattapelatta/utter/releases/latest"><img src="docs/media/download-ru.svg" width="186" alt="Скачать для Mac"></a>&nbsp;&nbsp; <a href="README.en.md">English</a></p>
-
-<br clear="left">
+<p align="center">macOS 13+ · <a href="README.en.md">English</a></p>
 
 ## Что умеет
 
