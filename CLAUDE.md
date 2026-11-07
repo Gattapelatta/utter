@@ -7,7 +7,7 @@ Free, open-source voice-to-text for macOS (Windows later): hold a hotkey, speak,
 ## Current focus (2026-11-07) — when the user says «продолжаем работу над utter»
 
 1. Read `docs/superpowers/HANDOFF.md` («С чего начать следующую сессию»).
-2. The live draft in the island is done, checked live and through the final review (decisions: `docs/superpowers/plans/2026-11-07-live-dictation-decisions.md`). Next: finish Plan 2 Task 13 (`docs/superpowers/plans/2026-10-07-utter-plan-2-premium-ui.md`), then `finishing-a-development-branch` — merge to `main` only with the user's OK.
+2. Plan 2 is done (all 13 tasks, checked live). Next: the final whole-branch review of `feat/premium-ui` by a fresh reviewer, one TDD fix pass, then `finishing-a-development-branch` — merge to `main` only with the user's OK. Then Plan 3 (Windows, CI/releases, README).
 
 ## Working with the user
 
