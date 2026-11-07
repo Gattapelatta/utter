@@ -26,6 +26,12 @@ pub fn island_origin(screen_x: f64, screen_y: f64, screen_w: f64, window_w: f64)
     (screen_x + (screen_w - window_w) / 2.0, screen_y)
 }
 
+/// An AppKit screen frame (origin bottom-left of the primary display, y up) in the top-left,
+/// y-down points of `CGDisplayBounds` and of the window position.
+pub fn top_left_frame(ns: super::overlay_rest::Rect, primary_h: f64) -> super::overlay_rest::Rect {
+    super::overlay_rest::Rect { x: ns.x, y: primary_h - (ns.y + ns.h), w: ns.w, h: ns.h }
+}
+
 /// Each overlay state gets a generation; a delayed hide only runs if no newer state came.
 #[derive(Default)]
 pub struct HideGate {
@@ -149,26 +155,31 @@ pub fn hide_window(app: &AppHandle) {
 }
 
 /// Top-centre of the screen under the mouse; tells the page the notch size there.
+/// In points throughout: displays can have different scales (review 2026-11-07).
 fn place(app: &AppHandle, w: &WebviewWindow) {
-    let monitor = app
-        .cursor_position()
-        .ok()
-        .and_then(|p| app.monitor_from_point(p.x, p.y).ok().flatten())
-        .or_else(|| app.primary_monitor().ok().flatten());
-    let (Some(m), Ok(size)) = (monitor, w.outer_size()) else { return };
-    let (x, y) = island_origin(
-        m.position().x as f64,
-        m.position().y as f64,
-        m.size().width as f64,
-        size.width as f64,
-    );
-    let _ = w.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
     #[cfg(target_os = "macos")]
-    let notch = mac::notch(m.position().x as f64, m.scale_factor());
+    {
+        let (Some(screen), Ok(size), Ok(scale)) = (super::overlay_rest::cursor_screen(), w.outer_size(), w.scale_factor()) else {
+            return place_by_monitor(app, w);
+        };
+        let (x, y) = island_origin(screen.x, screen.y, screen.w, size.width as f64 / scale);
+        let _ = w.set_position(tauri::LogicalPosition::new(x.round(), y.round()));
+        let notch = mac::notch(screen);
+        tracing::info!(x, y, ?notch, "overlay placed");
+        let _ = app.emit_to(LABEL, "overlay://screen", serde_json::json!({ "notch": notch }));
+    }
     #[cfg(not(target_os = "macos"))]
-    let notch: Option<Notch> = None;
-    tracing::info!(x, y, ?notch, "overlay placed");
-    let _ = app.emit_to(LABEL, "overlay://screen", serde_json::json!({ "notch": notch }));
+    place_by_monitor(app, w);
+}
+
+/// Without the display under the mouse: the primary monitor, no notch.
+fn place_by_monitor(app: &AppHandle, w: &WebviewWindow) {
+    let monitor = app.primary_monitor().ok().flatten();
+    let (Some(m), Ok(size)) = (monitor, w.outer_size()) else { return };
+    let (x, y) = island_origin(m.position().x as f64, m.position().y as f64, m.size().width as f64, size.width as f64);
+    let _ = w.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
+    tracing::info!(x, y, "overlay placed on the primary monitor");
+    let _ = app.emit_to(LABEL, "overlay://screen", serde_json::json!({ "notch": Option::<Notch>::None }));
 }
 
 #[cfg(target_os = "macos")]
@@ -233,12 +244,18 @@ mod mac {
         }
     }
 
-    /// The cut-out of the display whose left edge is at `x` (physical pixels), if any.
+    /// The cut-out of the display with this frame (top-left points), if any.
     /// Must run on the main thread.
-    pub fn notch(x: f64, scale: f64) -> Option<Notch> {
+    pub fn notch(display: crate::app::overlay_rest::Rect) -> Option<Notch> {
+        use crate::app::overlay_rest::Rect;
         let mtm = MainThreadMarker::new()?;
         let screens = NSScreen::screens(mtm);
-        let screen = screens.iter().find(|s| (s.frame().origin.x * scale - x).abs() < 2.0)?;
+        let primary_h = screens.iter().next()?.frame().size.height;
+        let screen = screens.iter().find(|s| {
+            let f = s.frame();
+            let r = super::top_left_frame(Rect { x: f.origin.x, y: f.origin.y, w: f.size.width, h: f.size.height }, primary_h);
+            (r.x - display.x).abs() < 1.0 && (r.y - display.y).abs() < 1.0
+        })?;
         let top = screen.safeAreaInsets().top;
         if top <= 0.0 {
             return None;
@@ -301,6 +318,22 @@ mod tests {
     #[test]
     fn island_origin_on_second_display() {
         assert_eq!(island_origin(1512.0, -200.0, 1920.0, 440.0), (2252.0, -200.0));
+    }
+
+    // Review 2026-11-07: with a Retina MacBook and an external display the island was placed
+    // from pixels of the primary display's scale; everything is in points now, and the notch is
+    // read from the NSScreen whose frame is the display under the cursor.
+    #[test]
+    fn appkit_frame_of_a_display_in_top_left_points() {
+        use super::super::overlay_rest::Rect;
+        // Primary MacBook 1512 × 982 pt; an external 1920 × 1080 pt display above it, shifted right.
+        let external_ns = Rect { x: 300.0, y: 982.0, w: 1920.0, h: 1080.0 };
+        assert_eq!(top_left_frame(external_ns, 982.0), Rect { x: 300.0, y: -1080.0, w: 1920.0, h: 1080.0 });
+        let primary_ns = Rect { x: 0.0, y: 0.0, w: 1512.0, h: 982.0 };
+        assert_eq!(top_left_frame(primary_ns, 982.0), Rect { x: 0.0, y: 0.0, w: 1512.0, h: 982.0 });
+        // One to the right, bottoms aligned but shorter: its top is lower than the primary's.
+        let right_ns = Rect { x: 1512.0, y: 0.0, w: 1280.0, h: 800.0 };
+        assert_eq!(top_left_frame(right_ns, 982.0), Rect { x: 1512.0, y: 182.0, w: 1280.0, h: 800.0 });
     }
 
     #[test]

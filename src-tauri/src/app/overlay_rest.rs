@@ -219,6 +219,12 @@ pub fn spawn_watcher(
     });
 }
 
+/// The frame (top-left points, global) of the display under the mouse.
+#[cfg(target_os = "macos")]
+pub fn cursor_screen() -> Option<Rect> {
+    mac::cursor_display().map(|(_, r)| r)
+}
+
 #[cfg(target_os = "macos")]
 mod mac {
     use core_foundation::base::{CFType, TCFType};
@@ -252,7 +258,7 @@ mod mac {
 
     /// The display under the mouse and its frame. A sleeping display is not "active", so the
     /// active list would be empty exactly when we need to see that the display sleeps.
-    fn cursor_display() -> Option<(u32, Rect)> {
+    pub(super) fn cursor_display() -> Option<(u32, Rect)> {
         let src = CGEventSource::new(CGEventSourceStateID::HIDSystemState).ok()?;
         let p = CGEvent::new(src).ok()?.location();
         let (mut id, mut n) = (0u32, 0u32);

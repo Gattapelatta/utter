@@ -23,6 +23,16 @@ pub const SETTLE_AFTER_FINAL: Duration = Duration::from_millis(150);
 /// Released after a pause: everything heard is final already and Google sends nothing more.
 /// Late words would show as a draft within about one update (~0.5 s).
 pub const QUIET_AT_RELEASE: Duration = Duration::from_millis(500);
+/// The quiet wait is only taken if the voice stopped at least this long before the release:
+/// words said right before letting go may have no draft yet, and their piece comes ~0.55 s
+/// after the stream ends (review 2026-11-07).
+pub const QUIET_TAIL: Duration = Duration::from_millis(700);
+/// Less voice than this in `QUIET_TAIL` is a click or a breath, not words.
+pub const TAIL_VOICE_MS: u32 = 120;
+/// No word back from the server this long while the user spoke at least `STALL_VOICE_MS`: the
+/// connection died without an error (review 2026-11-07); the recording takes the batch path.
+pub const STALL_AFTER: Duration = Duration::from_secs(3);
+pub const STALL_VOICE_MS: u32 = 1_500;
 
 /// What turns the verbatim pieces into the text that is pasted.
 pub enum Finisher {
@@ -125,6 +135,18 @@ pub fn spawn(
     LiveHandle { tx, failed }
 }
 
+/// Notes how much voice the microphone heard and when (interleaved samples at `rate` × channels);
+/// keeps only what the quiet check at release looks at.
+fn heard(a: &[f32], rate: u32, log: &mut std::collections::VecDeque<(Instant, u32)>) {
+    let ms = crate::audio::dsp::voice_stats(a, rate).voiced_ms;
+    if ms > 0 {
+        log.push_back((Instant::now(), ms));
+    }
+    while log.front().is_some_and(|(t, _)| t.elapsed() >= QUIET_TAIL) {
+        log.pop_front();
+    }
+}
+
 fn send(session: &LiveSession, chunks: Vec<Vec<i16>>) {
     for c in chunks {
         let _ = session.audio.send(c);
@@ -139,6 +161,12 @@ async fn run(
     failed_flag: &AtomicBool,
 ) -> LiveOutcome {
     let t0 = Instant::now();
+    // When the microphone last heard a voice, for the quiet wait at release.
+    let voice_rate = req.rate * u32::from(req.channels.max(1));
+    let mut last_voice: std::collections::VecDeque<(Instant, u32)> = Default::default();
+    let quiet_tail = |log: &std::collections::VecDeque<(Instant, u32)>| {
+        log.iter().filter(|(t, _)| t.elapsed() < QUIET_TAIL).map(|(_, ms)| ms).sum::<u32>() < TAIL_VOICE_MS
+    };
     let mut chunker = Chunker::new(req.rate, req.channels);
     let mut held: Vec<Vec<i16>> = Vec::new();
     let mut released = false;
@@ -157,7 +185,10 @@ async fn run(
                 }
             },
             cmd = rx.recv(), if !released => match cmd {
-                Some(Cmd::Audio(a)) => held.extend(chunker.push(&a)),
+                Some(Cmd::Audio(a)) => {
+                    heard(&a, voice_rate, &mut last_voice);
+                    held.extend(chunker.push(&a));
+                }
                 Some(Cmd::Release) => released = true,
                 Some(Cmd::Cancel) | None => return LiveOutcome::Cancelled,
             },
@@ -186,7 +217,10 @@ async fn run(
     };
     let mut failed: Option<String> = None;
     let mut first_interim = true;
-    let mut settle_at: Option<Instant> = released_at.map(|r| r + QUIET_AT_RELEASE);
+    // Voice sent since the server last said anything (`STALL_AFTER`).
+    let mut last_event = Instant::now();
+    let mut voice_unanswered: u32 = 0;
+    let mut settle_at: Option<Instant> = released_at.filter(|_| quiet_tail(&last_voice)).map(|r| r + QUIET_AT_RELEASE);
     let mut tick = tokio::time::interval(Duration::from_millis(100));
     let show = |composer: &DraftComposer, throttle: &mut DraftThrottle| {
         let parts = composer.parts();
@@ -198,7 +232,10 @@ async fn run(
 
     loop {
         tokio::select! {
-            ev = session.events.recv(), if failed.is_none() => match ev {
+            ev = session.events.recv(), if failed.is_none() => {
+                last_event = Instant::now();
+                voice_unanswered = 0;
+                match ev {
                 Some(LiveEvent::Ready) => tracing::info!(setup_ms = t0.elapsed().as_millis() as u64, "timing: live setup_ms"),
                 Some(LiveEvent::Interim(t)) => {
                     if first_interim {
@@ -229,9 +266,11 @@ async fn run(
                     failed_flag.store(true, Ordering::SeqCst);
                     failed = Some("closed".into());
                 }
-            },
+            }},
             cmd = rx.recv(), if released_at.is_none() => match cmd {
                 Some(Cmd::Audio(a)) => {
+                    heard(&a, voice_rate, &mut last_voice);
+                    voice_unanswered += crate::audio::dsp::voice_stats(&a, voice_rate).voiced_ms;
                     if failed.is_none() {
                         send(&session, chunker.push(&a));
                     }
@@ -244,7 +283,7 @@ async fn run(
                     session.finish();
                     let now = Instant::now();
                     released_at = Some(now);
-                    if composer.parts().interim.is_empty() {
+                    if composer.parts().interim.is_empty() && quiet_tail(&last_voice) {
                         settle_at = Some(now + QUIET_AT_RELEASE);
                     }
                 }
@@ -252,6 +291,14 @@ async fn run(
             },
             _ = tokio::time::sleep_until(settle_at.unwrap_or_else(Instant::now)), if settle_at.is_some() => break,
             _ = tick.tick() => {
+                if failed.is_none() && last_event.elapsed() >= STALL_AFTER && voice_unanswered >= STALL_VOICE_MS {
+                    tracing::warn!(voice_ms = voice_unanswered, "live: no answer while speaking; the connection is taken as lost");
+                    failed_flag.store(true, Ordering::SeqCst);
+                    failed = Some("stalled".into());
+                    if released_at.is_some() {
+                        break;
+                    }
+                }
                 show(&composer, &mut throttle);
                 if let Some(tr) = translator.as_mut() {
                     tr.poll(Instant::now().into_std());
@@ -474,6 +521,107 @@ mod tests {
         let LiveOutcome::Final { text, .. } = r.outcome.await.unwrap() else { panic!() };
         assert_eq!(text, "Всё сказано.");
         assert!(t.elapsed() <= QUIET_AT_RELEASE + Duration::from_millis(20), "{:?}", t.elapsed());
+    }
+
+    /// 16 kHz mono: `ms` of a loud tone (speech for the voice check) or of silence.
+    fn sound(ms: u64, loud: bool) -> Vec<f32> {
+        (0..16 * ms as usize).map(|i| if loud { 0.3 * ((i as f32) * 0.2).sin() } else { 0.0 }).collect()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn words_spoken_right_before_release_are_waited_for() {
+        // Review 2026-11-07: Google had finalised what it heard, but the user said two more words
+        // right before letting go; their piece came 0.6 s after the release, after the 0.5 s quiet
+        // wait — the words were lost.
+        let c = FakeConnector::ok();
+        let r = start(c.clone(), Finisher::Plain);
+        let s = c.server().await;
+        say(&s, LiveEvent::Segment("Начало.".into()));
+        settle().await;
+        r.handle.audio(&sound(300, true));
+        settle().await;
+        r.handle.release();
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        say(&s, LiveEvent::Segment("И конец.".into()));
+        let LiveOutcome::Final { text, .. } = r.outcome.await.unwrap() else { panic!() };
+        assert_eq!(text, "Начало. И конец.");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn silence_before_release_still_ends_soon() {
+        let c = FakeConnector::ok();
+        let r = start(c.clone(), Finisher::Plain);
+        let s = c.server().await;
+        r.handle.audio(&sound(300, true));
+        settle().await;
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        say(&s, LiveEvent::Segment("Всё сказано.".into()));
+        r.handle.audio(&sound(800, false));
+        settle().await;
+        let t = Instant::now();
+        r.handle.release();
+        let LiveOutcome::Final { text, .. } = r.outcome.await.unwrap() else { panic!() };
+        assert_eq!(text, "Всё сказано.");
+        assert!(t.elapsed() <= QUIET_AT_RELEASE + Duration::from_millis(20), "{:?}", t.elapsed());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_click_before_release_does_not_hold_the_paste() {
+        // Clicks and breaths are loud for a moment; they must not cost the quick end.
+        let c = FakeConnector::ok();
+        let r = start(c.clone(), Finisher::Plain);
+        let s = c.server().await;
+        say(&s, LiveEvent::Segment("Всё сказано.".into()));
+        settle().await;
+        let mut click = sound(40, true);
+        click.extend(sound(200, false));
+        r.handle.audio(&click);
+        settle().await;
+        let t = Instant::now();
+        r.handle.release();
+        let LiveOutcome::Final { text, .. } = r.outcome.await.unwrap() else { panic!() };
+        assert_eq!(text, "Всё сказано.");
+        assert!(t.elapsed() <= QUIET_AT_RELEASE + Duration::from_millis(20), "{:?}", t.elapsed());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_silent_server_while_the_user_speaks_counts_as_a_failed_connection() {
+        // Review 2026-11-07: a connection that dies without an error sends nothing more; the live
+        // text would end where the server stopped hearing. The recording takes the batch path.
+        let c = FakeConnector::ok();
+        let r = start(c.clone(), Finisher::Plain);
+        let s = c.server().await;
+        say(&s, LiveEvent::Interim("начало".into()));
+        settle().await;
+        for _ in 0..25 {
+            r.handle.audio(&sound(100, true));
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(!r.handle.failed(), "2.5 s without an answer is still normal");
+        for _ in 0..10 {
+            r.handle.audio(&sound(100, true));
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(r.handle.failed(), "3.5 s of speech without a word back");
+        r.handle.release();
+        let out = r.outcome.await.unwrap();
+        assert!(matches!(&out, LiveOutcome::Fallback { reason, .. } if reason == "stalled"), "{out:?}");
+        drop(s);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_silent_server_during_a_pause_is_fine() {
+        let c = FakeConnector::ok();
+        let r = start(c.clone(), Finisher::Plain);
+        let s = c.server().await;
+        say(&s, LiveEvent::Segment("Начало.".into()));
+        settle().await;
+        for _ in 0..50 {
+            r.handle.audio(&sound(100, false));
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(!r.handle.failed());
+        drop(s);
     }
 
     #[tokio::test(start_paused = true)]

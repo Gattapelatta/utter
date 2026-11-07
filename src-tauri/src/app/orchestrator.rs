@@ -136,6 +136,8 @@ pub trait ProviderFactory: Send + Sync {
     fn make_route(&self, kind: ProviderKind, key: String, _route: Route) -> Arc<dyn Provider> {
         self.make(kind, key)
     }
+    /// Fresh connections for the clients made from now on (after sleep an old one can be dead).
+    fn reset(&self) {}
 }
 
 /// The provider for jobs without an LLM step and its backup routes, in priority order
@@ -249,6 +251,9 @@ struct LiveRec {
     layout: (u32, u16),
     /// The batch provider was warmed up after the live connection failed.
     prewarmed: bool,
+    /// The stream missed audio (the microphone changed mid-dictation): the live text would be
+    /// cut off, so the whole recording takes the batch path at release (review 2026-11-07).
+    lost: bool,
 }
 
 /// A released live dictation waiting for its outcome.
@@ -504,6 +509,7 @@ impl Orchestrator {
             if wall.duration_since(last).is_ok_and(|gap| gap > WAKE_GAP) {
                 tracing::info!("woke from sleep; restarting hotkeys and HTTP client");
                 self.deps.hotkeys.restart();
+                self.deps.providers.reset();
                 self.provider = None;
             }
         }
@@ -533,8 +539,18 @@ impl Orchestrator {
             }
         }
         let Some(l) = self.live.as_mut() else { return };
-        let Some(c) = self.deps.audio.peek(l.offset) else { return };
-        if (c.rate, c.channels) == l.layout && !c.samples.is_empty() {
+        if l.lost {
+            return;
+        }
+        // No snapshot while recording: the device changed and the recorder started a new segment.
+        let Some(c) = self.deps.audio.peek(l.offset) else {
+            tracing::info!("live: the microphone changed mid-dictation; the whole recording takes the batch path");
+            l.lost = true;
+            return;
+        };
+        if (c.rate, c.channels) != l.layout {
+            l.lost = true;
+        } else if !c.samples.is_empty() {
             l.handle.audio(&c.samples);
             l.offset += c.samples.len();
         }
@@ -765,7 +781,7 @@ impl Orchestrator {
             },
         );
         handle.audio(&c.samples);
-        Some(LiveRec { seq, handle, offset: c.samples.len(), layout: (c.rate, c.channels), prewarmed: false })
+        Some(LiveRec { seq, handle, offset: c.samples.len(), layout: (c.rate, c.channels), prewarmed: false, lost: false })
     }
 
     fn submit_live(&mut self, l: LiveRec, mode: Mode) {
@@ -837,11 +853,11 @@ impl Orchestrator {
     fn submit(&mut self, mode: Mode) {
         let mut window = None;
         if let Some(l) = self.live.take() {
-            if !l.handle.failed() {
+            if !l.handle.failed() && !l.lost {
                 return self.submit_live(l, mode);
             }
-            // The live connection failed while speaking: the batch path with its pieces; the
-            // window keeps what came until that text is pasted (`finish` clears it).
+            // The live connection failed (or missed audio) while speaking: the batch path with its
+            // pieces; the window keeps what came until that text is pasted (`finish` clears it).
             l.handle.cancel();
             window = Some(l.seq);
         }
@@ -1876,6 +1892,38 @@ mod tests {
         assert_eq!(r.hotkeys.restarts.load(Ordering::SeqCst), 1);
     }
 
+    /// Counts fresh connection pools (review 2026-11-07: the shared Gemini pool outlived sleep).
+    struct ResetFactory {
+        inner: FakeFactory,
+        resets: AtomicUsize,
+    }
+    impl ProviderFactory for ResetFactory {
+        fn make(&self, kind: ProviderKind, key: String) -> Arc<dyn Provider> {
+            self.inner.make(kind, key)
+        }
+        fn reset(&self) {
+            self.resets.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test]
+    async fn wake_gap_opens_fresh_connections() {
+        // After sleep (VPN or network change) an old connection can be silently dead: every
+        // route would hang on it until the 10 s timeout.
+        let mut r = rig(FakeProvider::new(Ok("x".into()), Ok("x".into())), true);
+        let f = Arc::new(ResetFactory { inner: FakeFactory(r.provider.clone()), resets: AtomicUsize::new(0) });
+        r.orch.set_provider_factory(f.clone());
+        let wall = Arc::new(Mutex::new(std::time::SystemTime::now()));
+        let w = wall.clone();
+        r.orch.set_wall_clock(Box::new(move || *w.lock().unwrap()));
+        let t0 = Instant::now();
+        r.orch.handle(Input::Tick, t0).await;
+        assert_eq!(f.resets.load(Ordering::SeqCst), 0);
+        *wall.lock().unwrap() += Duration::from_secs(3600);
+        r.orch.handle(Input::Tick, t0 + Duration::from_millis(100)).await;
+        assert_eq!(f.resets.load(Ordering::SeqCst), 1);
+    }
+
     #[tokio::test]
     async fn retry_audio_survives_restart() {
         let mut r = rig(FakeProvider::new(Ok("x".into()), Err(ProviderError::Network)), true);
@@ -2299,6 +2347,24 @@ mod tests {
         assert_eq!(live.connects.load(Ordering::SeqCst), 1);
         assert_eq!(*r.out.0.lock().unwrap(), vec!["пакетный".to_string()]);
         assert_eq!(r.provider.stt_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn microphone_change_mid_live_dictation_takes_the_whole_recording() {
+        // Review 2026-11-07: after a device change the recorder starts a new segment and the
+        // live stream gets nothing more; the cut-off live text was pasted as final.
+        let (mut r, _) = live_rig(heard("Обрывок."));
+        let t0 = Instant::now();
+        r.orch.handle(Input::Hotkey(HotkeyEvent::Down(Mode::Dictation)), t0).await;
+        r.orch.handle(Input::Tick, t0 + Duration::from_millis(200)).await;
+        *r.audio.live.lock().unwrap() = None; // the headphones were unplugged
+        r.orch.handle(Input::Tick, t0 + Duration::from_millis(400)).await;
+        r.audio.captures.lock().unwrap().push_back(speech(1.0));
+        r.orch.handle(Input::Hotkey(HotkeyEvent::Up(Mode::Dictation)), t0 + Duration::from_secs(1)).await;
+        r.settle(1).await;
+        assert_eq!(*r.out.0.lock().unwrap(), vec!["пакетный".to_string()]);
+        assert_eq!(r.provider.stt_calls.load(Ordering::SeqCst), 1, "the whole recording went in one request");
+        assert_eq!(drafts(&r).last(), Some(&None), "the window closes with the paste");
     }
 
     #[tokio::test]

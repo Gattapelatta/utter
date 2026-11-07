@@ -63,13 +63,21 @@ impl Provider for GeminiClient {
 }
 
 /// Gemini clients share one connection pool, so a backup route starts on a warm connection.
+/// After sleep the pool is replaced: a connection can be silently dead after a VPN or network
+/// change, and every route would hang on it (review 2026-11-07; Plan 1: new client on wake).
 pub struct HttpProviders {
-    gemini_http: reqwest::Client,
+    gemini_http: std::sync::Mutex<reqwest::Client>,
 }
 
 impl Default for HttpProviders {
     fn default() -> Self {
-        Self { gemini_http: gemini_http_client() }
+        Self { gemini_http: std::sync::Mutex::new(gemini_http_client()) }
+    }
+}
+
+impl HttpProviders {
+    fn gemini_http(&self) -> reqwest::Client {
+        self.gemini_http.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 }
 
@@ -77,7 +85,7 @@ impl ProviderFactory for HttpProviders {
     fn make(&self, kind: ProviderKind, key: String) -> Arc<dyn Provider> {
         let cfg = defaults::config_for(kind, key);
         match kind {
-            ProviderKind::Gemini => Arc::new(GeminiClient::with_client(cfg, self.gemini_http.clone())),
+            ProviderKind::Gemini => Arc::new(GeminiClient::with_client(cfg, self.gemini_http())),
             ProviderKind::Groq | ProviderKind::OpenAi => Arc::new(OpenAiCompatible::new(cfg)),
         }
     }
@@ -85,10 +93,15 @@ impl ProviderFactory for HttpProviders {
     fn make_route(&self, kind: ProviderKind, key: String, route: Route) -> Arc<dyn Provider> {
         match kind {
             ProviderKind::Gemini => {
-                Arc::new(GeminiClient::with_client(defaults::route_config(kind, key, route), self.gemini_http.clone()))
+                Arc::new(GeminiClient::with_client(defaults::route_config(kind, key, route), self.gemini_http()))
             }
             ProviderKind::Groq | ProviderKind::OpenAi => self.make(kind, key),
         }
+    }
+
+    fn reset(&self) {
+        let fresh = gemini_http_client();
+        *self.gemini_http.lock().unwrap_or_else(|e| e.into_inner()) = fresh;
     }
 }
 
