@@ -33,9 +33,9 @@ function run(cmd: string, args: string[], opts: { stderr?: boolean } = {}): stri
   }
 }
 
-/** `codesign -dv` prints its details to stderr. */
+/** `codesign -dvv` prints its details (Authority only from -vv) to stderr. */
 function codesignDetails(app: string): string {
-  return execFileSync("sh", ["-c", 'codesign -dv "$0" 2>&1', app], { encoding: "utf8" });
+  return execFileSync("sh", ["-c", 'codesign -dvv "$0" 2>&1', app], { encoding: "utf8" });
 }
 
 function currentVersion(): string {
