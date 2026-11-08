@@ -4,10 +4,10 @@ Free, open-source voice-to-text for macOS (Windows later): hold a hotkey, speak,
 
 **Start of every session:** read `docs/superpowers/HANDOFF.md` — current status, decisions made along the way, deferred issues, and how to begin the next plan. The spec is `docs/superpowers/specs/2026-10-06-utter-design.md`; plans live in `docs/superpowers/plans/`.
 
-## Current focus (2026-11-07) — when the user says «продолжаем работу над utter»
+## Current focus (2026-11-08) — when the user says «продолжаем работу над utter»
 
 1. Read `docs/superpowers/HANDOFF.md` («С чего начать следующую сессию»).
-2. Plans 1 and 2 are in `main` (Plan 2 merged 2026-11-07 after the final review, `docs/superpowers/plans/2026-11-07-plan-2-final-review.md`). Next: Plan 3 — not written yet (Windows, CI/releases, README, Developer ID signing, icon/brand): brainstorming → spec → writing-plans, on a new `feat/*` branch.
+2. Plans 1–3 are done. Utter is **public** (github.com/Gattapelatta/utter); v0.2.0 and v0.2.1 are released, live auto-update 0.2.0 → 0.2.1 passed (`docs/superpowers/plans/2026-11-08-mac-public-release-summary.md`). Next is the user's choice: Windows (Plan 4), the deferred minors, or the Drop watching AI agents (README roadmap). Start with brainstorming on a new `feat/*` branch.
 
 ## Working with the user
 
@@ -38,6 +38,8 @@ open src-tauri/target/release/bundle/macos/Utter.app
 - Motion smoothness is judged by video, not by rAF timestamps: record `screencapture -v -V 3 -R <window rect>` and track the Drop per frame (a `+0` step followed by a double step = a missed frame).
 - The built-in browser pane does not run `requestAnimationFrame` while hidden — it cannot judge animations; use Vitest (jsdom) for motion logic and the real app for feel.
 - Every rebuild makes macOS ask for Keychain access (self-signed cdhash; user decided to keep it until a Developer ID in Plan 3): warn the user, wait until `SecurityAgent` disappears, then `open Utter.app` again to show the settings window.
+- Releases: `scripts/release.sh <version>` on `main` (`--dry-run --allow-branch` builds and checks on a branch, publishes nothing); notes first in `docs/releases/<version>.md`. Publishing and merging only with the user's yes. The user's own Utter now runs from `/Applications` (the released build); dev builds from `target/release` replace it while running.
+- README visuals: `scripts/tools/record-overlay.swift` (ScreenCaptureKit, overlay window only — never a screen region), `hero.swift`, `frames2anim.py`, `button.swift`, `label.swift`. Animations for the README are animated PNG: Safari plays a 60 fps animated WebP at ~¼ speed (measured).
 - Never kill processes by a loose pattern (`pkill -f …` once closed every app on the user's Mac): only `pkill -x utter` / `killall UtterIM`; any system process only with the user's OK.
 - Text Input Sources: a process caches the source list at its first TIS query; `TISEnableInputSource`/`TISDisableInputSource` return 0 without effect for third-party input methods on macOS 15.
 - `#[ignore]` tests touch the real Keychain, microphone, or network with the user's API key — run them only with the user's consent.
