@@ -14,3 +14,11 @@ export function parseLipo(out: string): string[] {
 export function parseLeaf(out: string): string | null {
   return /certificate leaf = H"([0-9a-f]+)"/.exec(out)?.[1] ?? null;
 }
+
+/** The README promises macOS 13+; the app's Info.plist must say so, or an older Mac installs it
+ *  and fails instead of macOS refusing up front. `value` is LSMinimumSystemVersion (null = absent). */
+export const MIN_MACOS = "13.0";
+export function minimumSystemProblem(value: string | null): string | null {
+  if (value === null) return `В приложении не указана минимальная macOS (нужна ${MIN_MACOS}).`;
+  return value.trim() === MIN_MACOS ? null : `Приложение пускает на macOS ${value.trim()}, а работает с ${MIN_MACOS}.`;
+}
