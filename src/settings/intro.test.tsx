@@ -39,7 +39,7 @@ afterEach(cleanup);
 
 const wait = (ms: number) => act(() => new Promise((r) => setTimeout(r, ms)));
 
-it("after onboarding the first section cascades in once", async () => {
+it("after onboarding the first section cascades in once", { timeout: 30_000 }, async () => {
   // Review 2026-11-07: the intro's own cascade (120 ms after the menu) and the section's cascade
   // (when the intro ended) both ran — the title rose, dropped back under its mask and rose again.
   const titleMoves: Element[] = [];
@@ -49,10 +49,12 @@ it("after onboarding the first section cascades in once", async () => {
   } as Element["animate"];
   history.replaceState(null, "", "#onboarding");
   render(<App />);
-  await wait(50);
+  for (let end = Date.now() + 10_000; !screen.queryByText("finish") && Date.now() < end; ) await wait(25);
   fireEvent.click(screen.getByText("finish"));
   await wait(50);
   act(() => useDropStage.setState({ settled: true }));
+  // Wait for the first rise however slow the machine, then long enough for a second one to show.
+  for (let end = Date.now() + 10_000; titleMoves.length === 0 && Date.now() < end; ) await wait(25);
   await wait(1_000);
   expect(screen.getByRole("heading", { level: 1 })).toBeTruthy();
   expect(titleMoves).toHaveLength(1);

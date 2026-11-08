@@ -51,13 +51,22 @@ const base: Settings = {
 };
 const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd).map((c) => c[1]);
 const wait = (ms: number) => act(() => new Promise((r) => setTimeout(r, ms)));
-/** Waits until the step's text is in (the drop has landed), up to 4 s. */
-async function landed() {
-  for (let i = 0; i < 80; i++) {
-    if (document.querySelector("[data-stage]")?.getAttribute("data-phase") === "in") return;
-    await wait(50);
+/** Waits for something that takes real time (a flight, a poll) instead of a fixed number of ms:
+ *  a slow machine (CI) only waits longer, it does not fail. */
+async function until(ok: () => unknown, what: string, ms = 10_000) {
+  const end = Date.now() + ms;
+  while (!ok()) {
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    await wait(25);
   }
-  throw new Error("the drop never landed");
+}
+const phase = () => document.querySelector("[data-stage]")?.getAttribute("data-phase");
+/** The step's text is in: the drop has landed. */
+const landed = () => until(() => phase() === "in", "the drop to land");
+/** After a click: the old text has left and the next step's text is in. */
+async function movedOn() {
+  await until(() => phase() !== "in", "the old text to leave");
+  await landed();
 }
 const heading = () => screen.getByRole("heading", { level: 1 }).textContent;
 const next = () => screen.getByRole("button", { name: /Далее|Начать|Готово/ }) as HTMLButtonElement;
@@ -76,7 +85,7 @@ afterEach(cleanup);
 async function mount() {
   const onDone = vi.fn();
   render(<Onboarding onDone={onDone} />);
-  await wait(60);
+  await until(() => screen.queryByRole("heading", { level: 1 }), "the first step");
   return onDone;
 }
 
@@ -157,18 +166,17 @@ describe("onboarding logic", () => {
   });
 });
 
-describe("onboarding flow", () => {
+// Flights and polls take real time; a slow machine needs more than vitest's default 5 s.
+describe("onboarding flow", { timeout: 30_000 }, () => {
   it("Next is disabled until the microphone is granted", async () => {
     perms = { ...G, microphone: "NotDetermined" };
     await mount();
     expect(heading()).toBe("Говори — Utter напишет");
     await act(async () => fireEvent.click(next()));
-    await wait(400);
-    expect(heading()).toBe("Разреши микрофон");
+    await until(() => heading() === "Разреши микрофон", "the microphone step");
     expect(next().disabled).toBe(true);
     perms = { ...G };
-    await wait(1100);
-    expect(next().disabled).toBe(false);
+    await until(() => !next().disabled, "the permission poll to enable Next");
   });
 
   it("accessibility status updates by polling", async () => {
@@ -177,8 +185,7 @@ describe("onboarding flow", () => {
     expect(heading()).toBe("Разреши вставку текста");
     expect(next().disabled).toBe(true);
     perms = { ...G };
-    await wait(1100);
-    expect(next().disabled).toBe(false);
+    await until(() => !next().disabled, "the permission poll to enable Next");
   });
 
   it("provider step requires a verified key", async () => {
@@ -189,8 +196,7 @@ describe("onboarding flow", () => {
     fireEvent.click(screen.getByText("Вставить вручную"));
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "AIzaWRONG" } });
     await act(async () => fireEvent.click(screen.getByText("Сохранить")));
-    await wait(20);
-    expect(screen.getByText(/Ключ не подходит/)).toBeTruthy();
+    await until(() => screen.queryByText(/Ключ не подходит/), "the rejection");
     expect(next().disabled).toBe(true);
   });
 
@@ -198,7 +204,7 @@ describe("onboarding flow", () => {
     await mount();
     clipboard = `AIza${"a".repeat(35)}`;
     await act(async () => window.dispatchEvent(new Event("focus")));
-    await wait(30);
+    await until(() => screen.queryByText("Ключ подходит"), "the key check");
     expect(calls("set_api_key")).toEqual([{ provider: "Gemini", key: clipboard }]);
     expect(calls("verify_key")).toHaveLength(1);
     expect(screen.getByText("Ключ подходит")).toBeTruthy();
@@ -212,13 +218,12 @@ describe("onboarding flow", () => {
     clipboard = `AIza${"b".repeat(35)}`;
     verify = () => Promise.reject("service_down");
     await act(async () => window.dispatchEvent(new Event("focus")));
-    await wait(30);
-    expect(screen.getByText(/недоступен/)).toBeTruthy();
+    await until(() => screen.queryByText(/недоступен/), "the service_down message");
     await wait(1_700); // the clipboard poll does not hammer a failing service
     expect(calls("verify_key")).toHaveLength(1);
     verify = async () => {};
     await act(async () => window.dispatchEvent(new Event("focus")));
-    await wait(30);
+    await until(() => screen.queryByText("Ключ подходит"), "the second check");
     expect(calls("verify_key")).toHaveLength(2);
     expect(screen.getByText("Ключ подходит")).toBeTruthy();
     expect(next().disabled).toBe(false);
@@ -229,11 +234,10 @@ describe("onboarding flow", () => {
     clipboard = `AIza${"c".repeat(35)}`;
     verify = () => Promise.reject("rate_limited");
     await act(async () => window.dispatchEvent(new Event("focus")));
-    await wait(30);
+    await until(() => screen.queryByText("Проверить снова"), "the retry button");
     verify = async () => {};
     await act(async () => fireEvent.click(screen.getByText("Проверить снова")));
-    await wait(30);
-    expect(screen.getByText("Ключ подходит")).toBeTruthy();
+    await until(() => screen.queryByText("Ключ подходит"), "the retried check");
   });
 
   it("a rejected key is not kept, so a restart does not take it for a working one", async () => {
@@ -243,8 +247,7 @@ describe("onboarding flow", () => {
     clipboard = `AIza${"d".repeat(35)}`;
     verify = () => Promise.reject("bad_key");
     await act(async () => window.dispatchEvent(new Event("focus")));
-    await wait(30);
-    expect(screen.getByText(/Ключ не подходит/)).toBeTruthy();
+    await until(() => screen.queryByText(/Ключ не подходит/), "the rejection");
     expect(mask).toBeNull();
   });
 
@@ -252,12 +255,16 @@ describe("onboarding flow", () => {
     mask = "AIza••••"; // starts at «Клавиши» (top)
     await mount();
     expect(heading()).toBe("Твои клавиши");
-    await act(async () => fireEvent.click(next()));
-    await wait(300); // old text gone, the drop is flying to the centre
+    // Every phase the stage goes through, however slow the machine.
     const stage = document.querySelector("[data-stage]")!;
-    expect(stage.getAttribute("data-phase")).toBe("wait");
-    await wait(1400);
-    expect(stage.getAttribute("data-phase")).toBe("in");
+    const seen: string[] = [];
+    const watch = new MutationObserver(() => seen.push(stage.getAttribute("data-phase")!));
+    watch.observe(stage, { attributes: true, attributeFilter: ["data-phase"] });
+    await act(async () => fireEvent.click(next()));
+    await movedOn();
+    watch.disconnect();
+    // The old text left, the new one waited while the drop flew to the centre, then came in.
+    expect(seen).toEqual(["out", "wait", "in"]);
     expect(heading()).toBe("Попробуй");
   });
 
@@ -273,18 +280,15 @@ describe("onboarding flow", () => {
   it("trial mode is on only while the trial step is shown", async () => {
     mask = "AIza••••";
     const { unmount } = render(<Onboarding onDone={vi.fn()} />);
-    await wait(60);
+    await until(() => screen.queryByRole("heading", { level: 1 }), "the first step");
     await act(async () => fireEvent.click(next()));
-    await wait(300);
-    await landed();
+    await movedOn();
     expect(calls("set_trial").slice(-1)[0]).toEqual({ on: true });
     await act(async () => fireEvent.click(screen.getByText("Назад")));
-    await wait(300);
-    await landed();
+    await movedOn();
     expect(calls("set_trial").slice(-1)[0]).toEqual({ on: false });
     await act(async () => fireEvent.click(next()));
-    await wait(300);
-    await landed();
+    await movedOn();
     expect(calls("set_trial").slice(-1)[0]).toEqual({ on: true });
     unmount();
     expect(calls("set_trial").slice(-1)[0]).toEqual({ on: false });
@@ -294,7 +298,7 @@ describe("onboarding flow", () => {
     mask = "AIza••••";
     const onDone = await mount();
     await act(async () => fireEvent.click(screen.getByText("Пропустить")));
-    await wait(700); // the text and the footer leave first
+    await until(() => onDone.mock.calls.length > 0, "the text and the footer to leave"); // they leave first
 
     const saved = calls("save_settings").slice(-1)[0] as { settings: Settings };
     expect(saved.settings.onboarding_done).toBe(true);
@@ -306,8 +310,7 @@ describe("onboarding flow", () => {
     mask = "AIza••••";
     await mount();
     await act(async () => fireEvent.click(next()));
-    await wait(300);
-    await landed();
+    await movedOn();
     await act(async () => listeners["ui://trial"]({ payload: { kind: "text", mode: "Dictation", text: "Привет, это проверка" } }));
     expect(screen.getByText("Привет, это проверка")).toBeTruthy();
     expect(useDropStage.getState().mood).toBe("happy");
@@ -317,8 +320,7 @@ describe("onboarding flow", () => {
     mask = "AIza••••";
     await mount();
     await act(async () => fireEvent.click(next()));
-    await wait(300);
-    await landed();
+    await movedOn();
     expect(screen.getByText("Зажми правый ⌥ и скажи что-нибудь.")).toBeTruthy();
   });
 
