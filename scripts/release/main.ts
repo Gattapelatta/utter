@@ -2,13 +2,13 @@
 //   facts <version> [--allow-branch]   — checks before a release; prints problems, exits 1 if any
 //   bump <version>                     — writes the version into the app's three files
 //   latest <version> <sig> <notes> <out> — writes latest.json
-//   verify <app> <archive> <sig>       — signer, identifier, architectures, update signature
+//   verify <app> <archive> <sig>       — signer, identifier, architectures, minimum macOS, update signature
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { archiveProblems, listTarGz } from "./archive.ts";
-import { parseCodesign, parseLeaf, parseLipo } from "./inspect.ts";
+import { minimumSystemProblem, parseCodesign, parseLeaf, parseLipo } from "./inspect.ts";
 import { assetUrl, buildLatestJson } from "./latest.ts";
 import { verifyMinisign } from "./minisign.ts";
 import { preflight, type Facts } from "./preflight.ts";
@@ -86,6 +86,14 @@ function verify(app: string, archive: string, sigPath: string): string[] {
   const cs = parseCodesign(codesignDetails(app));
   if (cs.authority !== IDENTITY) problems.push(`Приложение подписано «${cs.authority ?? "без сертификата"}», а нужно «${IDENTITY}».`);
   if (cs.identifier !== BUNDLE_ID) problems.push(`Идентификатор подписи «${cs.identifier}», а нужен ${BUNDLE_ID}.`);
+  let minOs: string | null = null;
+  try {
+    minOs = execFileSync("plutil", ["-extract", "LSMinimumSystemVersion", "raw", join(app, "Contents/Info.plist")], { encoding: "utf8" });
+  } catch {
+    minOs = null;
+  }
+  const minProblem = minimumSystemProblem(minOs);
+  if (minProblem) problems.push(minProblem);
   const archs = parseLipo(run("lipo", ["-archs", join(app, "Contents/MacOS/utter")]));
   if (!(archs.includes("x86_64") && archs.includes("arm64"))) problems.push(`В приложении архитектуры «${archs.join(" ")}», а нужны x86_64 и arm64.`);
   const pubkey = JSON.parse(readFileSync(FILES.tauriConf, "utf8")).plugins.updater.pubkey as string;
@@ -127,7 +135,7 @@ function main(argv: string[]): number {
       const [app, archive, sig] = args;
       const problems = verify(app, archive, sig);
       for (const p of problems) console.error(`✗ ${p}`);
-      if (!problems.length) console.log(`✓ ${app}: «${IDENTITY}» (тот же сертификат), ${BUNDLE_ID}, x86_64 + arm64, подпись цела; архив чистый, подпись обновления верна`);
+      if (!problems.length) console.log(`✓ ${app}: «${IDENTITY}» (тот же сертификат), ${BUNDLE_ID}, x86_64 + arm64, macOS 13+, подпись цела; архив чистый, подпись обновления верна`);
       return problems.length ? 1 : 0;
     }
     default:

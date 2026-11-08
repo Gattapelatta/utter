@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseCodesign, parseLipo, parseLeaf } from "./inspect";
+import { minimumSystemProblem, parseCodesign, parseLipo, parseLeaf } from "./inspect";
 
 const signed = `Executable=/tmp/Utter.app/Contents/MacOS/utter
 Identifier=app.utter.desktop
@@ -36,5 +36,13 @@ designated => identifier "app.utter.desktop" and certificate leaf = H"543970408e
 `;
     expect(parseLeaf(out)).toBe("543970408eaaf9e3c062c11084bc7b9accb9e61b");
     expect(parseLeaf('designated => cdhash H"abc"')).toBeNull();
+  });
+
+  // The README promises macOS 13+, but the built app said 10.13 (Tauri's default): an older Mac
+  // would install it and fail instead of being told up front.
+  it("minimumSystemProblem wants the app to require macOS 13", () => {
+    expect(minimumSystemProblem("13.0")).toBeNull();
+    expect(minimumSystemProblem("10.13")).toMatch(/10\.13/);
+    expect(minimumSystemProblem(null)).toMatch(/не указана/);
   });
 });
