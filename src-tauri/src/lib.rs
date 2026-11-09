@@ -1,4 +1,5 @@
 pub mod audio;
+pub mod agents;
 pub mod app;
 pub mod controller;
 pub mod history;
