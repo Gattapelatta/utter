@@ -10,8 +10,8 @@ export type AgentShow =
   | { kind: "list"; rows: AgentRow[] }
   | { kind: "card"; card: AgentCard };
 
-/** Working colours; the final ones are chosen with the user (plan Task 12). */
-export const DOT_COLOR: Record<Dot, string> = { working: "#3B82F6", waiting: "#F59E0B", done: "#22C55E" };
+/** The colours of the Figma logo, chosen by the user 2026-11-10 (variant F2): blue works, coral waits, green is done. */
+export const DOT_COLOR: Record<Dot, string> = { working: "#1ABCFE", waiting: "#FF7262", done: "#0ACF83" };
 
 /** Dots in the right ear; with more agents, three and a «+». */
 const MAX_DOTS = 4;

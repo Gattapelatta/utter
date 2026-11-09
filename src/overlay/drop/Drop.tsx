@@ -62,8 +62,8 @@ const RINGS = 3;
 const TAIL = 7;
 const WHITE = [255, 255, 255];
 const CYAN = [74, 216, 236];
-/** Working colour of the task mode (#A78BFA); the final one is chosen with the user. */
-const VIOLET = [167, 139, 250];
+/** The task mode: the Figma logo's violet #A259FF (chosen by the user 2026-11-10). */
+const VIOLET = [162, 89, 255];
 
 /**
  * The «Капля» character (docs/design/drop-prototype.html). The SVG is rendered once;

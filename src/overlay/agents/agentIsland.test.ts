@@ -74,3 +74,11 @@ describe("pokes", () => {
     expect(dizzyNow(1000, 1500, "recording")).toBe(false);
   });
 });
+
+import { DOT_COLOR } from "./agentIsland";
+
+describe("colours (chosen by the user 2026-11-10, the Figma logo, variant F2)", () => {
+  it("blue works, coral waits, green is done", () => {
+    expect(DOT_COLOR).toEqual({ working: "#1ABCFE", waiting: "#FF7262", done: "#0ACF83" });
+  });
+});
