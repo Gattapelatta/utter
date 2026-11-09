@@ -88,6 +88,21 @@ describe("general, hotkeys and translation sections", () => {
     expect(last()?.hotkeys).toEqual({ dictation: { F: 5 }, translate: "RightMeta" });
   });
 
+  it("hotkeys_section_has_three_keys", async () => {
+    useApp.setState({ settings: { ...base, hotkeys: { dictation: "RightAlt", translate: "RightMeta", task: "RightCtrl" } } });
+    render(<Hotkeys />);
+    expect(screen.getAllByText("Изменить")).toHaveLength(3);
+    expect(screen.getByText("Задача")).toBeTruthy();
+    expect(screen.getByText("Сбивчивая речь — чёткое задание для ИИ-агента")).toBeTruthy();
+    // The task key cannot take a key of either other mode.
+    captureResult = async () => "RightAlt";
+    await act(async () => fireEvent.click(screen.getAllByText("Изменить")[2]));
+    expect(screen.getByText(/уже назначена на Диктовка/)).toBeTruthy();
+    captureResult = async () => ({ F: 6 });
+    await act(async () => fireEvent.click(screen.getAllByText("Изменить")[2]));
+    expect(last()?.hotkeys).toEqual({ dictation: "RightAlt", translate: "RightMeta", task: { F: 6 } });
+  });
+
   it("shows the assignable-keys hint on not_assignable", async () => {
     captureResult = () => Promise.reject("not_assignable");
     render(<Hotkeys />);

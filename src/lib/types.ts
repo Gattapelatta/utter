@@ -1,6 +1,6 @@
 // Mirrors of the Rust types that cross the IPC boundary.
 
-export type Mode = "Dictation" | "Translate";
+export type Mode = "Dictation" | "Translate" | "Task";
 export type TranslateStyle = "Business" | "Casual";
 export type RecordMode = "Hold" | "Toggle";
 export type InsertMethod = "Paste" | "Type";
@@ -31,7 +31,8 @@ export interface Settings {
   ui_language: UiLanguage;
   translate_style: TranslateStyle;
   provider: ProviderKind;
-  hotkeys: { dictation: KeyId; translate: KeyId };
+  /** `task`: the «Задача» key (spec 2026-11-09 §3.7); absent only in older fixtures. */
+  hotkeys: { dictation: KeyId; translate: KeyId; task?: KeyId };
   history_enabled: boolean;
   onboarding_done: boolean;
   notch_drop: boolean;

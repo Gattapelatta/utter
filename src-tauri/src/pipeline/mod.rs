@@ -12,6 +12,7 @@ const RULES: &str = include_str!("prompts/rules.md");
 const CLEANUP: &str = include_str!("prompts/cleanup.md");
 const TRANSLATE_BUSINESS: &str = include_str!("prompts/translate_business.md");
 const TRANSLATE_CASUAL: &str = include_str!("prompts/translate_casual.md");
+const AGENT_TASK: &str = include_str!("prompts/agent_task.md");
 const HALLUCINATIONS: &str = include_str!("hallucinations.txt");
 const PARAGRAPHS: &str =
     "Split the text into paragraphs by meaning, separated by a blank line.";
@@ -43,7 +44,7 @@ pub enum JobError {
     Provider(ProviderError),
 }
 
-/// `None` when no LLM step is needed (dictation with cleanup off).
+/// `None` when no LLM step is needed (dictation with cleanup off). A task always has one.
 pub fn system_prompt(mode: Mode, opts: &PipelineOptions, audio_secs: f32) -> Option<String> {
     let task = match mode {
         Mode::Dictation if !opts.cleanup => return None,
@@ -52,6 +53,7 @@ pub fn system_prompt(mode: Mode, opts: &PipelineOptions, audio_secs: f32) -> Opt
             TranslateStyle::Business => TRANSLATE_BUSINESS,
             TranslateStyle::Casual => TRANSLATE_CASUAL,
         },
+        Mode::Task => AGENT_TASK,
     };
     let mut prompt = format!("{}\n{}", task.trim(), RULES.trim());
     if opts.paragraphs && audio_secs > PARAGRAPH_MIN_SECS {
@@ -189,7 +191,7 @@ pub async fn run_audio_only(
     let text = postprocess(&c.text);
     // The phrase list describes Whisper-style transcripts; a translation such as
     // "Bye!" or "You." is a legitimate result.
-    if text.is_empty() || (mode == Mode::Dictation && is_hallucination(&text)) {
+    if text.is_empty() || (mode != Mode::Translate && is_hallucination(&text)) {
         return Err(JobError::NothingHeard);
     }
     Ok(JobOutput { raw: text.clone(), text, degraded: false, tokens: c.total_tokens, llm_used: true, direct: true })
@@ -260,6 +262,14 @@ mod tests {
 
     fn opts(cleanup: bool, paragraphs: bool, style: TranslateStyle) -> PipelineOptions {
         PipelineOptions { language: Some("ru".into()), cleanup, paragraphs, style }
+    }
+
+    #[test]
+    fn task_prompt_used_even_without_cleanup() {
+        let p = system_prompt(Mode::Task, &opts(false, false, TranslateStyle::Business), 5.0).unwrap();
+        assert!(p.starts_with(AGENT_TASK.trim()));
+        assert!(p.contains(RULES.trim()));
+        assert!(!p.contains(CLEANUP.trim()));
     }
 
     #[test]

@@ -55,6 +55,28 @@ pub enum UiLanguage {
 pub struct Hotkeys {
     pub dictation: KeyId,
     pub translate: KeyId,
+    /// «Задача» (spec 2026-11-09 §3.7); files from before it get the default.
+    #[serde(default = "default_task_key")]
+    pub task: KeyId,
+}
+
+/// Keys «Задача» may take by default, in order: the first one the other two do not use.
+const TASK_KEYS: [KeyId; 3] = [KeyId::RightCtrl, KeyId::RightShift, KeyId::CapsLock];
+
+fn default_task_key() -> KeyId {
+    TASK_KEYS[0].clone()
+}
+
+impl Hotkeys {
+    /// A task key that collides with dictation or translation (an old file whose user already put
+    /// one of them on right ⌃) moves to the first free default.
+    fn fix_task_key(&mut self) {
+        if self.task == self.dictation || self.task == self.translate {
+            if let Some(free) = TASK_KEYS.iter().find(|k| **k != self.dictation && **k != self.translate) {
+                self.task = free.clone();
+            }
+        }
+    }
 }
 
 /// Which AI agents the Drop watches (spec 2026-11-09).
@@ -134,12 +156,12 @@ impl Default for Settings {
 
 #[cfg(not(windows))]
 fn default_hotkeys() -> Hotkeys {
-    Hotkeys { dictation: KeyId::RightAlt, translate: KeyId::RightMeta }
+    Hotkeys { dictation: KeyId::RightAlt, translate: KeyId::RightMeta, task: KeyId::RightCtrl }
 }
 
 #[cfg(windows)]
 fn default_hotkeys() -> Hotkeys {
-    Hotkeys { dictation: KeyId::RightAlt, translate: KeyId::RightCtrl }
+    Hotkeys { dictation: KeyId::RightAlt, translate: KeyId::RightCtrl, task: KeyId::RightShift }
 }
 
 /// Loads settings; a missing or unreadable file yields defaults.
@@ -161,8 +183,11 @@ pub fn load(path: &Path, system_lang: Option<&str>) -> Settings {
                     map.insert(k, v);
                 }
             }
-            match serde_json::from_value(base) {
-                Ok(s) => s,
+            match serde_json::from_value::<Settings>(base) {
+                Ok(mut s) => {
+                    s.hotkeys.fix_task_key();
+                    s
+                }
                 Err(e) => {
                     backup_corrupt(path, &e.to_string());
                     defaults
@@ -251,6 +276,28 @@ mod tests {
         // A file that has only some agent fields keeps the rest at their defaults.
         std::fs::write(&path, r#"{"agents":{"codex":true}}"#).unwrap();
         assert_eq!(load(&path, None).agents, AgentSettings { claude_code: false, codex: true, summary: true });
+    }
+
+    #[test]
+    fn old_settings_get_default_task_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"{"hotkeys":{"dictation":"CapsLock","translate":"RightMeta"}}"#).unwrap();
+        let s = load(&path, None);
+        assert_eq!(s.hotkeys.dictation, KeyId::CapsLock);
+        assert_eq!(s.hotkeys.task, KeyId::RightCtrl);
+        // The file was not taken for a corrupt one.
+        assert!(!dir.path().join("settings.json.bak").exists());
+    }
+
+    #[test]
+    fn task_key_moves_off_a_taken_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"{"hotkeys":{"dictation":"RightCtrl","translate":"RightMeta"}}"#).unwrap();
+        let s = load(&path, None);
+        assert_ne!(s.hotkeys.task, KeyId::RightCtrl);
+        assert_ne!(s.hotkeys.task, KeyId::RightMeta);
     }
 
     #[test]

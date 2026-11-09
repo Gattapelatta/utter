@@ -98,7 +98,7 @@ mod tests {
     fn tap_starts_and_stops() {
         let (tx, _rx) = mpsc::unbounded_channel();
         let h = start(
-            Hotkeys { dictation: KeyId::RightAlt, translate: KeyId::RightMeta },
+            Hotkeys { dictation: KeyId::RightAlt, translate: KeyId::RightMeta, task: KeyId::RightCtrl },
             tx,
         )
         .expect("event tap");

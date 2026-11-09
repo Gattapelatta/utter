@@ -70,7 +70,11 @@ export function Island({ state, level, now, view = "open", notch = null, cancell
   const fast = present ? cancelled : (leaving ?? cancelled);
   // Non-recording states keep the colour of the recording they belong to.
   const translate = useRef(false);
-  if (state.kind === "recording") translate.current = state.mode === "Translate";
+  const task = useRef(false);
+  if (state.kind === "recording") {
+    translate.current = state.mode === "Translate";
+    task.current = state.mode === "Task";
+  }
   // This recording opened the draft window: its timer stays in the wing until it leaves with the field.
   const windowed = useRef(false);
   if (view === "window") windowed.current = true;
@@ -180,6 +184,7 @@ export function Island({ state, level, now, view = "open", notch = null, cancell
               rest={view === "rest"}
               level={level}
               translate={translate.current}
+              task={task.current}
               reduced={reduced}
               startGaze={() => gaze.current}
               onSettle={(g) => {

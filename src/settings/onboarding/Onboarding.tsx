@@ -221,7 +221,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       case "key":
         return (
           <div className="mx-auto w-[440px] text-left">
-            <HotkeyRows hints={false} translateLabel={t("onboarding.keys_translate")} />
+            <HotkeyRows hints={false} translateLabel={t("onboarding.keys_translate")} task={false} />
           </div>
         );
       case "agents":

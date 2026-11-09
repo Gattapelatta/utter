@@ -1160,7 +1160,7 @@ async fn finish_text_work(
     }
     let outcome = match text {
         Some(text) => Ok(JobOutput { text, raw, degraded: false, tokens: 0, llm_used: true, direct: false }),
-        None if mode == Mode::Dictation => Ok(JobOutput { text: raw.clone(), raw, degraded: true, tokens: 0, llm_used: true, direct: false }),
+        None if mode != Mode::Translate => Ok(JobOutput { text: raw.clone(), raw, degraded: true, tokens: 0, llm_used: true, direct: false }),
         None => {
             let (o, m) = process_capture(mode, (*captured).clone(), opts, backend).await;
             n += m;
@@ -1580,6 +1580,14 @@ mod tests {
         fn microphone(&self) -> PermStatus {
             *self.0.lock().unwrap()
         }
+    }
+
+    #[test]
+    fn task_uses_dictation_path() {
+        // The live path finishes a task's pieces with the task prompt, cleanup on or off.
+        let off = PipelineOptions { language: None, cleanup: false, paragraphs: false, style: TranslateStyle::Business };
+        assert!(live_system(Mode::Task, &off).is_some_and(|p| p.contains("ИИ-агента")));
+        assert!(live_system(Mode::Dictation, &off).is_none());
     }
 
     #[derive(Default)]

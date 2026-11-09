@@ -219,5 +219,8 @@
   "agents.missing": "{agent} is not on this Mac",
   "agents.broken": "Could not connect: the {agent} settings file is damaged",
   "onboarding.agents_title": "Connect your agents",
-  "onboarding.agents_body": "The Drop will watch them and tell you when they are done"
+  "onboarding.agents_body": "The Drop will watch them and tell you when they are done",
+  "hotkeys.task": "Task",
+  "hotkeys.task_hint": "Rambling speech becomes a clear task for an AI agent",
+  "history.task": "Task"
 }

@@ -67,6 +67,8 @@ impl Router {
             Some(Mode::Dictation)
         } else if *key == self.bindings.translate {
             Some(Mode::Translate)
+        } else if *key == self.bindings.task {
+            Some(Mode::Task)
         } else {
             None
         }
@@ -156,7 +158,7 @@ mod tests {
     }
 
     fn router() -> Router {
-        Router::new(Hotkeys { dictation: KeyId::RightAlt, translate: KeyId::RightMeta })
+        Router::new(Hotkeys { dictation: KeyId::RightAlt, translate: KeyId::RightMeta, task: KeyId::RightCtrl })
     }
 
     #[test]
@@ -174,6 +176,13 @@ mod tests {
         assert_eq!(r.route(KeyId::RightAlt, true, false), Some(HotkeyEvent::Down(D)));
         assert_eq!(r.route(KeyId::RightAlt, false, false), Some(HotkeyEvent::Up(D)));
         assert_eq!(r.route(KeyId::RightMeta, true, false), Some(HotkeyEvent::Down(T)));
+    }
+
+    #[test]
+    fn task_key_routes_to_task_mode() {
+        let mut r = router();
+        assert_eq!(r.route(KeyId::RightCtrl, true, false), Some(HotkeyEvent::Down(Mode::Task)));
+        assert_eq!(r.route(KeyId::RightCtrl, false, false), Some(HotkeyEvent::Up(Mode::Task)));
     }
 
     #[test]
@@ -213,7 +222,7 @@ mod tests {
 
     #[test]
     fn caps_lock_emits_tap() {
-        let mut r = Router::new(Hotkeys { dictation: KeyId::CapsLock, translate: KeyId::RightMeta });
+        let mut r = Router::new(Hotkeys { dictation: KeyId::CapsLock, translate: KeyId::RightMeta, task: KeyId::RightCtrl });
         assert_eq!(r.route(KeyId::CapsLock, true, true), Some(HotkeyEvent::Tap(D)));
         assert_eq!(r.route(KeyId::CapsLock, true, true), Some(HotkeyEvent::Tap(D)));
     }
@@ -222,7 +231,7 @@ mod tests {
     fn set_bindings_clears_held_keys() {
         let mut r = router();
         r.route(KeyId::RightAlt, true, false);
-        r.set_bindings(Hotkeys { dictation: KeyId::F(13), translate: KeyId::F(14) });
+        r.set_bindings(Hotkeys { dictation: KeyId::F(13), translate: KeyId::F(14), task: KeyId::F(15) });
         assert_eq!(r.route(KeyId::Raw(0), true, false), None);
         assert_eq!(r.route(KeyId::F(13), true, false), Some(HotkeyEvent::Down(D)));
     }

@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 pub enum Mode {
     Dictation,
     Translate,
+    /// Speech turned into a task for an AI agent (spec 2026-11-09 §3.7): the dictation path with
+    /// its own prompt.
+    Task,
 }
 
 /// A physical key, named platform-neutrally.

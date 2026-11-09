@@ -219,5 +219,8 @@
   "agents.missing": "Не нашёл {agent} на этом Mac",
   "agents.broken": "Не смог подключиться: файл настроек {agent} повреждён",
   "onboarding.agents_title": "Подключи агентов",
-  "onboarding.agents_body": "Капля будет следить за ними и скажет, когда они закончат"
+  "onboarding.agents_body": "Капля будет следить за ними и скажет, когда они закончат",
+  "hotkeys.task": "Задача",
+  "hotkeys.task_hint": "Сбивчивая речь — чёткое задание для ИИ-агента",
+  "history.task": "Задача"
 }
