@@ -1,11 +1,12 @@
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence } from "motion/react";
 import { Island } from "./drop/Island";
 import type { Notch, View } from "./drop/islandMotion";
 import type { Level } from "./drop/Drop";
 import type { AgentView, DraftParts, OverlayState } from "../lib/types";
-import { agentShow } from "./agents/agentIsland";
-import { AgentCard, AgentList } from "./agents/AgentCard";
+import { agentShow, DIZZY_MS, dizzyNow, pokes } from "./agents/agentIsland";
+import { useT } from "../i18n";
+import { AgentCard, AgentList, AgentNote } from "./agents/AgentCard";
 import { AgentEars } from "./agents/AgentEars";
 
 const NO_AGENTS: AgentView = { rows: [], card: null, paused: false };
@@ -37,11 +38,31 @@ export function Stage({ state, rest, notch, level, now, onClick, draft = null, a
   if (visible) shown.current = state;
   const cancelled = state.kind === "cancelled";
   const live = (state.kind === "recording" || state.kind === "processing") && !!draft && (draft.settled !== "" || draft.interim !== "");
+  const t = useT();
+  // The easter egg (§3.6): 5 pokes in 2 s make the Drop dizzy for 3 s; never over a dictation.
+  const pokeTimes = useRef<number[]>([]);
+  const [dizzySince, setDizzySince] = useState<number | null>(null);
+  useEffect(() => {
+    if (dizzySince === null) return;
+    const done = setTimeout(() => setDizzySince(null), DIZZY_MS);
+    return () => clearTimeout(done);
+  }, [dizzySince]);
+  const dizzy = dizzyNow(dizzySince, Date.now(), state.kind);
+  const onPoke = () => {
+    if (state.kind !== "hidden" || dizzy) return;
+    const at = Date.now();
+    pokeTimes.current = [...pokeTimes.current.filter((p) => at - p < 2000), at];
+    if (pokes(pokeTimes.current, at)) {
+      pokeTimes.current = [];
+      setDizzySince(at);
+    }
+  };
   const show = agentShow(agents, state.kind, hover);
-  const agentOpen = show.kind === "card" || show.kind === "list";
+  const agentOpen = dizzy || show.kind === "card" || show.kind === "list";
   const view: View = visible ? (live ? "window" : "open") : agentOpen ? "window" : "rest";
-  const agent =
-    show.kind === "card" ? (
+  const agent = dizzy ? (
+    <AgentNote text={t("agents.dizzy")} notch={notch} />
+  ) : show.kind === "card" ? (
       <AgentCard card={show.card} rows={agents.rows} notch={notch} />
     ) : show.kind === "list" ? (
       <AgentList rows={show.rows} notch={notch} />
@@ -62,6 +83,8 @@ export function Stage({ state, rest, notch, level, now, onClick, draft = null, a
             draft={live ? draft : null}
             agent={visible ? null : agent}
             ears={ears}
+            onPoke={visible ? undefined : onPoke}
+            mood={dizzy ? "dizzy" : undefined}
           />
         </div>
       )}

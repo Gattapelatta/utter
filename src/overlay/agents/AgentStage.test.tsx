@@ -50,3 +50,33 @@ describe("Stage with agents", () => {
     expect(c.querySelector("[data-agent-ears]")).toBeNull();
   });
 });
+
+import { act, fireEvent } from "@testing-library/react";
+
+describe("easter egg through the stage", () => {
+  it("five pokes at the Drop open the island with the dizzy line, gone after 3 s", () => {
+    vi.useFakeTimers();
+    try {
+      const c = stage({ rows: [], card: null, paused: false }, true);
+      const drop = c.querySelector("[data-drop-place]") as HTMLElement;
+      for (let i = 0; i < 4; i++) fireEvent.click(drop);
+      expect(c.querySelector("[data-agent-note]")).toBeNull();
+      fireEvent.click(drop);
+      expect(c.querySelector("[data-agent-note]")?.textContent).toBe("Too many pokes. Give me a sec — back in three seconds.");
+      expect(c.querySelector("[data-island]")?.getAttribute("data-view")).toBe("window");
+      act(() => vi.advanceTimersByTime(3000));
+      // The line fades out (still in the tree while it leaves); the island is back to the ears.
+      expect(c.querySelector("[data-island]")?.getAttribute("data-view")).toBe("rest");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("pokes during a recording do nothing", () => {
+    const rec = { kind: "recording", mode: "Dictation", style: "Business", started_at_ms: 0, warn: false, pending: 0 } as const;
+    const c = render(<Stage state={rec} rest={true} notch={notch} level={0} now={0} />).container;
+    const drop = c.querySelector("[data-drop-place]") as HTMLElement;
+    for (let i = 0; i < 6; i++) fireEvent.click(drop);
+    expect(c.querySelector("[data-agent-note]")).toBeNull();
+  });
+});

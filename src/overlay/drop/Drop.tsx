@@ -41,6 +41,17 @@ interface Props {
 export const BODY = "M50 14 C74 14 87 36 87 58 C87 77 71 90 50 90 C29 90 13 77 13 58 C13 36 26 14 50 14Z";
 const STAR = "M0 -1 L.22 -.22 L1 0 L.22 .22 L0 1 L-.22 .22 L-1 0 L-.22 -.22Z";
 const CLOUD = "M-12 4 C-16 4 -16 -3 -11 -3 C-11 -9 -3 -10 -1 -5 C1 -10 10 -9 10 -3 C15 -3 15 4 11 4Z";
+/** An Archimedean spiral of two turns around (x, y), radius 5. */
+function spiral(x: number, y: number): string {
+  const pts: string[] = [];
+  for (let i = 0; i <= 40; i++) {
+    const a = (i / 40) * Math.PI * 4;
+    const r = (i / 40) * 5;
+    pts.push(`${(x + Math.cos(a) * r).toFixed(2)} ${(y + Math.sin(a) * r).toFixed(2)}`);
+  }
+  return `M${pts.join(" L")}`;
+}
+
 export const EYES: [number, number][] = [
   [38, 55],
   [62, 55],
@@ -90,6 +101,7 @@ export function Drop({ mood, level, translate, reduced, size = 48, follow = fals
     const q = <T extends Element>(sel: string) => [...root.querySelectorAll<T>(sel)];
     const [body] = q<SVGGElement>("[data-body]");
     const [eyes] = q<SVGGElement>("[data-eyes]");
+    const [dizzy] = q<SVGGElement>("[data-dizzy]");
     const [eyeL, eyeR] = q<SVGPathElement>("[data-eye]");
     const [glow] = q<SVGCircleElement>("[data-glow]");
     const stops = q<SVGStopElement>("stop");
@@ -177,6 +189,8 @@ export function Drop({ mood, level, translate, reduced, size = 48, follow = fals
       }
       put(body, "transform", `rotate(${f.rot.toFixed(3)} 50 90) translate(0 ${f.y.toFixed(3)})`);
       put(eyes, "transform", `translate(${f.ex.toFixed(3)} ${f.ey.toFixed(3)})`);
+      put(eyes, "opacity", (1 - f.dizzy).toFixed(3));
+      put(dizzy, "opacity", f.dizzy.toFixed(3));
       put(eyeL, "d", eyePath(EYES[0][0], EYES[0][1], f.lid, f.smile));
       put(eyeR, "d", eyePath(EYES[1][0], EYES[1][1], f.lid, f.smile));
 
@@ -253,6 +267,15 @@ export function Drop({ mood, level, translate, reduced, size = 48, follow = fals
               strokeWidth="1.6"
               strokeLinejoin="round"
             />
+          ))}
+        </g>
+        {/* The easter egg: spiral eyes and blush (spec 2026-11-09 §3.6). */}
+        <g data-dizzy opacity="0">
+          {EYES.map(([x, y]) => (
+            <path key={x} d={spiral(x, y)} fill="none" style={{ stroke: "var(--drop-eye, #000)" }} strokeWidth="1.6" strokeLinecap="round" />
+          ))}
+          {EYES.map(([x, y]) => (
+            <ellipse key={`b${x}`} cx={x + (x < 50 ? -4 : 4)} cy={y + 9} rx="4.5" ry="2.6" fill="#ff8a9a" opacity="0.75" />
           ))}
         </g>
       </g>

@@ -521,13 +521,15 @@ mod glue {
         Some(Rect { x: pos.x as f64 / scale, y: pos.y as f64 / scale, w: size.width as f64 / scale, h: size.height as f64 / scale })
     }
 
-    /// Every 100 ms while there are agents (1 s otherwise): time for cards and permissions,
-    /// the pointer over the ears, whether the window takes clicks.
+    /// Every 100 ms while there are agents, 500 ms while only the ears are up (pokes at the Drop,
+    /// spec §3.6), 1 s otherwise: time for cards and permissions, the pointer over the ears,
+    /// whether the window takes clicks.
     async fn watch(app: AppHandle, core: Arc<Core>) {
         loop {
             let view = core.view();
             let active = !view.rows.is_empty() || view.card.is_some();
-            tokio::time::sleep(Duration::from_millis(if active { 100 } else { 1000 })).await;
+            let period = if active { 100 } else if ears_shown(&app) { 500 } else { 1000 };
+            tokio::time::sleep(Duration::from_millis(period)).await;
             let idle = !busy(&app);
             core.tick(Instant::now(), idle);
             publish(&app);
@@ -540,9 +542,12 @@ mod glue {
                 continue;
             }
             let card = view.card.is_some();
-            let open = card || shown.hover;
+            // Hovering opens the list only when there are agents; otherwise the ears stay ears.
+            let open = card || (shown.hover && !view.rows.is_empty());
             let over = match (overlay_rest::cursor_point(), window_rect(&app)) {
-                (Some((x, y)), Some(win)) if !view.rows.is_empty() || card => hover_zone(win, open).contains(x, y),
+                (Some((x, y)), Some(win)) if !view.rows.is_empty() || card || ears_shown(&app) => {
+                    hover_zone(win, open).contains(x, y)
+                }
                 _ => false,
             };
             if over != shown.hover {

@@ -33,3 +33,18 @@ export function agentShow(view: AgentView, dictation: OverlayState["kind"], hove
   const more = all.length > MAX_DOTS;
   return { kind: "ears", dot: all[0], dots: more ? all.slice(0, MAX_DOTS - 1) : all, more };
 }
+
+/** The easter egg (§3.6): this many pokes at the Drop within `POKE_WINDOW_MS` make it dizzy. */
+const POKES = 5;
+const POKE_WINDOW_MS = 2000;
+export const DIZZY_MS = 3000;
+
+/** Whether the pokes (click times, ms) up to `now` are enough to make the Drop dizzy. */
+export function pokes(times: number[], now: number): boolean {
+  return times.filter((t) => t <= now && now - t < POKE_WINDOW_MS).length >= POKES;
+}
+
+/** Dizzy for `DIZZY_MS` from `since` (the poke that did it), and never over a dictation. */
+export function dizzyNow(since: number | null, now: number, dictation: OverlayState["kind"]): boolean {
+  return since !== null && now - since < DIZZY_MS && dictation === "hidden";
+}

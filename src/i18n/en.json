@@ -209,5 +209,6 @@
   "agents.open": "Open",
   "agents.ok": "OK",
   "agents.step": "step {n} of {m}",
-  "agents.after_pause": "While paused: {done} finished, {waiting} waiting for you"
+  "agents.after_pause": "While paused: {done} finished, {waiting} waiting for you",
+  "agents.dizzy": "Too many pokes. Give me a sec — back in three seconds."
 }

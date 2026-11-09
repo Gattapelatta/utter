@@ -135,6 +135,15 @@ export function AgentCard({ card, rows, notch }: { card: Card; rows: AgentRow[];
   );
 }
 
+/** One line in the open island (the dizzy Drop's words). */
+export function AgentNote({ text, notch }: { text: string; notch: Notch }) {
+  return (
+    <Panel notch={notch}>
+      <div data-agent-note>{text}</div>
+    </Panel>
+  );
+}
+
 /** Pointer over the ears: one line per agent, the most urgent first; a click opens it. */
 export function AgentList({ rows, notch }: { rows: AgentRow[]; notch: Notch }) {
   const t = useT();

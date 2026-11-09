@@ -49,3 +49,28 @@ describe("agentShow", () => {
     expect(four).toEqual({ kind: "ears", dot: "working", dots: ["working", "working", "working", "working"], more: false });
   });
 });
+
+import { DIZZY_MS, dizzyNow, pokes } from "./agentIsland";
+
+describe("pokes", () => {
+  it("five_pokes_in_2s_make_dizzy", () => {
+    expect(pokes([0, 400, 800, 1200, 1900], 1900)).toBe(true);
+  });
+
+  it("four_pokes_do_not", () => {
+    expect(pokes([0, 400, 800, 1900], 1900)).toBe(false);
+    // Five, but spread over more than 2 s.
+    expect(pokes([0, 600, 1200, 1800, 2100], 2100)).toBe(false);
+  });
+
+  it("dizzy_ends_after_3s", () => {
+    expect(DIZZY_MS).toBe(3000);
+    expect(dizzyNow(1000, 3999, "hidden")).toBe(true);
+    expect(dizzyNow(1000, 4000, "hidden")).toBe(false);
+    expect(dizzyNow(null, 0, "hidden")).toBe(false);
+  });
+
+  it("no_dizzy_while_recording", () => {
+    expect(dizzyNow(1000, 1500, "recording")).toBe(false);
+  });
+});

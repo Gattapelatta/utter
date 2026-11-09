@@ -50,6 +50,10 @@ interface Props {
   agent?: React.ReactNode;
   /** The agents' dots in the ears at rest. */
   ears?: React.ReactNode;
+  /** A click on the Drop (the easter egg counts them). */
+  onPoke?: () => void;
+  /** Overrides the Drop's mood (dizzy). */
+  mood?: Mood;
 }
 
 /**
@@ -57,7 +61,7 @@ interface Props {
  * (§4.2). The shape is a clip of the island; the Drop flies between its place on the island
  * and the left ear.
  */
-export function Island({ state, level, now, view = "open", notch = null, cancelled = false, draft = null, agent = null, ears = null }: Props) {
+export function Island({ state, level, now, view = "open", notch = null, cancelled = false, draft = null, agent = null, ears = null, onPoke, mood }: Props) {
   const t = useT();
   const reduced = useMemo(prefersReducedMotion, []);
   // While leaving, the props are those of the last render; AnimatePresence passes the fresh "cancelled".
@@ -160,12 +164,19 @@ export function Island({ state, level, now, view = "open", notch = null, cancell
       </motion.div>
       {view === "rest" && ears}
       <div className="island-row">
-        <motion.div data-drop-place initial={at("folded").drop} animate={at(view).drop} exit={at("folded").drop}>
+        <motion.div
+          data-drop-place
+          initial={at("folded").drop}
+          animate={at(view).drop}
+          exit={at("folded").drop}
+          onClick={onPoke}
+          style={onPoke ? { pointerEvents: "auto" } : undefined}
+        >
           {inEar ? (
             <RestDrop start={gaze.current} reduced={reduced} gazeRef={gaze} />
           ) : (
             <Drop
-              mood={open && !agent ? moodFor(state) : "idle"}
+              mood={mood ?? (open && !agent ? moodFor(state) : "idle")}
               rest={view === "rest"}
               level={level}
               translate={translate.current}

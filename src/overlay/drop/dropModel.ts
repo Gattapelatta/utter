@@ -1,7 +1,7 @@
 import { spring, stepSpring, type Spring } from "./springs";
 
 /** What the character is doing (spec §4.2). */
-export type Mood = "idle" | "listening" | "thinking" | "happy" | "sad";
+export type Mood = "idle" | "listening" | "thinking" | "happy" | "sad" | "dizzy";
 
 export interface ModelInput {
   mood: Mood;
@@ -34,6 +34,8 @@ export interface Frame {
   /** Seconds since the success/error effect started, or Infinity. */
   good: number;
   bad: number;
+  /** Spiral eyes and blush, 0..1 (the easter egg, spec 2026-11-09 §3.6). */
+  dizzy: number;
   /** Nothing moves until `wakeAt`: the caller may stop drawing frames until then. */
   settled: boolean;
   /** When the next scheduled move (look, blink, smile) starts, in the same clock as `now`. */
@@ -73,7 +75,11 @@ export function gazeToward(dx: number, dy: number): { x: number; y: number } {
 export const LOOK_IDLE: [number, number][] = [[0, 0], [-8, 0], [8, 0], [-6, -5], [6, -5], [0, -5.5], [-8, 2], [8, 2]];
 const LOOK_THINK: [number, number][] = [[-6, -5.5], [6, -5.5], [0, -6], [-8, -2], [8, -2]];
 
-type Springs = Record<"close" | "blink" | "smile" | "y" | "rot" | "ex" | "ey" | "env" | "fx" | "glow" | "cool", Spring>;
+type Springs = Record<"close" | "blink" | "smile" | "y" | "rot" | "ex" | "ey" | "env" | "fx" | "glow" | "cool" | "dizzy", Spring>;
+
+/** Dizzy sway: ±6° at 2 Hz. */
+const DIZZY_DEG = 6;
+const DIZZY_HZ = 2;
 
 export interface Model {
   P: Springs;
@@ -105,6 +111,7 @@ export function createModel(now: number, random: () => number = Math.random, gaz
       fx: spring(0, 4),
       glow: spring(0.75, 4.5),
       cool: spring(0, 4),
+      dizzy: spring(0, 9),
     },
     mood: null,
     moodAt: now,
@@ -132,6 +139,8 @@ function enter(m: Model, mood: Mood, now: number) {
   P.smile.t = 0;
   P.y.t = 0;
   P.glow.t = 0.75;
+  P.dizzy.t = mood === "dizzy" ? 1 : 0;
+  if (mood === "dizzy") P.close.t = 0;
   if (mood === "listening") P.close.t = 1;
   if (mood === "thinking" || mood === "idle") {
     P.close.t = 0;
@@ -213,6 +222,13 @@ export function stepModel(m: Model, input: ModelInput, now: number): Frame {
     m.smileUntil = 0;
   }
   for (const s of Object.values(P)) stepSpring(s, dt);
+  if (mood === "dizzy" && !still) {
+    // Driven directly: a 2 Hz sway is faster than the head's spring could follow. Position and
+    // speed both, so the spring carries on smoothly when the mood ends.
+    const w = 2 * Math.PI * DIZZY_HZ;
+    P.rot.x = Math.sin(w * since) * DIZZY_DEG;
+    P.rot.v = Math.cos(w * since) * DIZZY_DEG * w;
+  }
   m.flow += dt * (0.3 + P.env.x * 0.45);
 
   const clamp = (v: number) => Math.max(0, Math.min(1, v));
@@ -230,6 +246,7 @@ export function stepModel(m: Model, input: ModelInput, now: number): Frame {
     flow: m.flow,
     good: mood === "happy" && !still ? since : Infinity,
     bad: mood === "sad" && !still ? since : Infinity,
+    dizzy: clamp(P.dizzy.x),
     settled: (mood === "idle" || mood === "thinking") && Object.entries(P).every(([k, s]) => {
         const tol = POSITIONS.has(k) ? STILL_POS : STILL;
         return Math.abs(s.x - s.t) < tol && Math.abs(s.v) < tol * 4;

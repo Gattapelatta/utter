@@ -165,3 +165,37 @@ describe("drop in the notch (rest)", () => {
     expect(f.glow).toBeGreaterThan(0.7);
   });
 });
+
+describe("dizzy (easter egg, spec 2026-11-09 §3.6)", () => {
+  const dizzy: ModelInput = { mood: "dizzy", level: 0, translate: false, reduced: false };
+
+  it("sways ±6° at 2 Hz with spiral eyes and blush on", () => {
+    const m = createModel(0);
+    let max = 0;
+    let crossings = 0;
+    let prev = 0;
+    let last: Frame | null = null;
+    for (let i = 1; i <= 120; i++) {
+      const f = stepModel(m, dizzy, (i * 1000) / 60);
+      if (i > 30) {
+        max = Math.max(max, Math.abs(f.rot));
+        if (Math.sign(f.rot) !== Math.sign(prev) && prev !== 0) crossings++;
+      }
+      prev = f.rot;
+      last = f;
+    }
+    // 1.5 s at 2 Hz: ~6 zero crossings; the spring reaches most of the ±6°.
+    expect(max).toBeGreaterThan(4);
+    expect(max).toBeLessThanOrEqual(6.5);
+    expect(crossings).toBeGreaterThanOrEqual(5);
+    expect(crossings).toBeLessThanOrEqual(7);
+    expect(last!.dizzy).toBeGreaterThan(0.95);
+    expect(last!.settled).toBe(false);
+  });
+
+  it("other moods have no spirals", () => {
+    const m = createModel(0);
+    const f = stepModel(m, { mood: "idle", level: 0, translate: false, reduced: false }, 16);
+    expect(f.dizzy).toBe(0);
+  });
+});

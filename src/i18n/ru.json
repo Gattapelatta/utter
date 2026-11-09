@@ -209,5 +209,6 @@
   "agents.open": "Открыть",
   "agents.ok": "OK",
   "agents.step": "шаг {n} из {m}",
-  "agents.after_pause": "Пока была пауза: {done} закончили, {waiting} ждут тебя"
+  "agents.after_pause": "Пока была пауза: {done} закончили, {waiting} ждут тебя",
+  "agents.dizzy": "Слишком много тычков. Дай секунду — вернусь к работе через три секунды."
 }
