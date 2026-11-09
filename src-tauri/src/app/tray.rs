@@ -106,6 +106,8 @@ pub struct TrayLabels {
     pub check_updates: &'static str,
     /// "{v}" is replaced with the version.
     pub update_to: &'static str,
+    /// Silence from the agents (spec 2026-11-09 §3.5).
+    pub agents_pause: &'static str,
     pub quit: &'static str,
 }
 
@@ -126,6 +128,7 @@ pub fn labels(lang: Lang) -> TrayLabels {
             settings: "Настройки…",
             check_updates: "Проверить обновления",
             update_to: "Обновить до {v}…",
+            agents_pause: "Пауза агентов",
             quit: "Выйти из Utter",
         },
         Lang::En => TrayLabels {
@@ -142,10 +145,19 @@ pub fn labels(lang: Lang) -> TrayLabels {
             settings: "Settings…",
             check_updates: "Check for updates",
             update_to: "Update to {v}…",
+            agents_pause: "Pause agents",
             quit: "Quit Utter",
         },
     }
 }
+
+/// «Пауза агентов» is in the menu only while an agent is connected.
+pub fn pause_shown(s: &Settings) -> bool {
+    s.agents.claude_code || s.agents.codex
+}
+
+/// Where «Пауза агентов» goes in the menu: after «Проверить обновления».
+const PAUSE_AT: usize = 8;
 
 fn lang_of(s: &Settings) -> Lang {
     resolve_lang(s.ui_language, sys_locale::get_locale().as_deref())
@@ -163,6 +175,8 @@ pub struct TrayHandles {
     history: MenuItem<Wry>,
     settings: MenuItem<Wry>,
     updates: MenuItem<Wry>,
+    menu: Menu<Wry>,
+    pause: CheckMenuItem<Wry>,
     /// The version a found update offers (the item then reads "Update to …").
     offer: Mutex<Option<String>>,
     quit: MenuItem<Wry>,
@@ -184,6 +198,8 @@ pub fn build(app: &AppHandle, s: &Settings) -> tauri::Result<()> {
     let settings = MenuItem::with_id(app, "settings", l.settings, true, None::<&str>)?;
     let updates = MenuItem::with_id(app, "updates", l.check_updates, true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", l.quit, true, None::<&str>)?;
+    // Pause does not survive a restart (spec §3.5): it always starts unchecked.
+    let pause = CheckMenuItem::with_id(app, "agents_pause", l.agents_pause, true, false, None::<&str>)?;
     let menu = Menu::with_items(
         app,
         &[
@@ -199,6 +215,9 @@ pub fn build(app: &AppHandle, s: &Settings) -> tauri::Result<()> {
             &quit,
         ],
     )?;
+    if pause_shown(s) {
+        menu.insert(&pause, PAUSE_AT)?;
+    }
     TrayIconBuilder::with_id(TRAY_ID)
         .menu(&menu)
         .show_menu_on_left_click(true)
@@ -217,6 +236,8 @@ pub fn build(app: &AppHandle, s: &Settings) -> tauri::Result<()> {
         history,
         settings,
         updates,
+        menu,
+        pause,
         offer: Mutex::new(None),
         quit,
         gen: Mutex::new((0, AppStatus::Idle)),
@@ -230,6 +251,10 @@ fn on_menu(app: &AppHandle, id: &str) {
         "history" => settings_window::open(app, Some("history")),
         "updates" => settings_window::open(app, Some("about")),
         "quit" => app.exit(0),
+        "agents_pause" => {
+            let on = app.try_state::<TrayHandles>().and_then(|h| h.pause.is_checked().ok()).unwrap_or(false);
+            crate::agents::service::set_paused(app, on);
+        }
         "mode_hold" | "mode_toggle" | "style_business" | "style_casual" => {
             let Some(state) = app.try_state::<AppState>() else { return };
             let mut next = state.shared.settings();
@@ -268,6 +293,18 @@ pub fn refresh(app: &AppHandle, s: &Settings) {
     let offer = h.offer.lock().ok().and_then(|o| o.clone());
     let _ = h.updates.set_text(updates_text(&l, offer.as_deref()));
     let _ = h.quit.set_text(l.quit);
+    let _ = h.pause.set_text(l.agents_pause);
+    // In the menu exactly while an agent is connected; leaving it switches the pause off.
+    let present = h.menu.items().map(|items| items.iter().any(|i| i.id() == h.pause.id())).unwrap_or(false);
+    if pause_shown(s) && !present {
+        let _ = h.menu.insert(&h.pause, PAUSE_AT);
+    } else if !pause_shown(s) && present {
+        let _ = h.menu.remove(&h.pause);
+        if h.pause.is_checked().unwrap_or(false) {
+            let _ = h.pause.set_checked(false);
+            crate::agents::service::set_paused(app, false);
+        }
+    }
     let status = h.gen.lock().map(|g| g.1).unwrap_or(AppStatus::Idle);
     let _ = h.status.set_text(status_text(&l, status));
 }
@@ -393,6 +430,18 @@ mod tests {
         assert_eq!(resolve_lang(UiLanguage::Ru, Some("en-US")), Lang::Ru);
         assert_eq!(labels(Lang::En).quit, "Quit Utter");
         assert_eq!(labels(Lang::Ru).settings, "Настройки…");
+    }
+
+    #[test]
+    fn menu_has_pause_when_agent_connected() {
+        let mut s = Settings::default();
+        assert!(!pause_shown(&s));
+        s.agents.codex = true;
+        assert!(pause_shown(&s));
+        s.agents = crate::settings::AgentSettings { claude_code: true, codex: false, summary: false };
+        assert!(pause_shown(&s));
+        assert_eq!(labels(Lang::Ru).agents_pause, "Пауза агентов");
+        assert_eq!(labels(Lang::En).agents_pause, "Pause agents");
     }
 
     #[test]

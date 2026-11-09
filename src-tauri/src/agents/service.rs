@@ -306,6 +306,10 @@ impl Core {
         }
     }
 
+    pub fn paused(&self) -> bool {
+        self.reg().view().paused
+    }
+
     pub fn set_summary(&self, key: &SessionKey, s: Option<String>) {
         self.reg().set_summary(key, s);
     }
@@ -585,6 +589,14 @@ mod glue {
         }
     }
 
+    /// «Пауза агентов» from the menu: no cards; open permission requests go back to the agent.
+    pub fn set_paused(app: &AppHandle, on: bool) {
+        let Some(agents) = app.try_state::<Agents>() else { return };
+        agents.core.set_paused(on, Instant::now());
+        tracing::info!(on, "agents paused");
+        publish(app);
+    }
+
     /// Brings the app the session runs in forward, with its desktop.
     fn open_host(app: &AppHandle, key: &SessionKey) {
         let Some(agents) = app.try_state::<Agents>() else { return };
@@ -790,6 +802,18 @@ mod tests {
         let Incoming::Ask { rx, .. } = core.receive(permission(), Lang::En, t) else { panic!() };
         core.set_paused(true, t);
         assert_eq!(rx.await.unwrap(), Reply::NoDecision);
+    }
+
+    #[test]
+    fn pause_item_toggles_registry() {
+        let t = Instant::now();
+        let core = Core::default();
+        core.set_paused(true, t);
+        assert!(core.view().paused);
+        assert!(core.paused());
+        core.set_paused(false, t);
+        assert!(!core.view().paused);
+        assert!(!core.paused());
     }
 
     #[test]
