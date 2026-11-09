@@ -11,7 +11,8 @@ import { DemoPhrase } from "./DemoPhrase";
 import { useDropStage } from "../drop/dropStage";
 import { Segmented } from "../ui/Segmented";
 import type { Theme } from "../../lib/types";
-import { canAdvance, DROP_H, DROP_W, dropAt, dropY, firstIncompleteStep, GAP, STEPS, type StepId } from "./steps";
+import { canAdvance, DROP_H, DROP_W, dropAt, dropY, firstIncompleteStep, GAP, stepsFor, type StepId } from "./steps";
+import { AgentToggles, useAgentsDetected } from "../sections/AgentToggles";
 import { Accessibility } from "./steps/Accessibility";
 import { Microphone } from "./steps/Microphone";
 import { ProviderKey } from "./steps/ProviderKey";
@@ -29,6 +30,7 @@ const TITLES: Record<StepId, [string, string]> = {
   accessibility: ["onboarding.ax_title", "onboarding.ax_body"],
   provider: ["onboarding.provider_title", "onboarding.provider_body"],
   key: ["onboarding.keys_title", "onboarding.keys_body"],
+  agents: ["onboarding.agents_title", "onboarding.agents_body"],
   trial: ["onboarding.trial_title", "onboarding.trial_body"],
 };
 
@@ -70,6 +72,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const [phase, setPhase] = useState<Phase>("in");
   const [keyOk, setKeyOk] = useState(false);
   const [finishing, setFinishing] = useState(false);
+  const steps = stepsFor(useAgentsDetected() === true);
 
   const stepRef = useRef(step);
   const phaseRef = useRef(phase);
@@ -187,7 +190,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   );
 
   if (!step || !settings) return null;
-  const index = STEPS.indexOf(step);
+  const index = steps.indexOf(step);
   const [titleKey, bodyKey] = TITLES[step];
 
   const content = (() => {
@@ -219,6 +222,12 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         return (
           <div className="mx-auto w-[440px] text-left">
             <HotkeyRows hints={false} translateLabel={t("onboarding.keys_translate")} />
+          </div>
+        );
+      case "agents":
+        return (
+          <div className="mx-auto w-[440px] text-left">
+            <AgentToggles onboarding />
           </div>
         );
       case "trial":
@@ -280,13 +289,13 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       >
         <div className="w-[200px]">
           {index > 0 && (
-            <Button variant="ghost" onClick={() => go(STEPS[index - 1])}>
+            <Button variant="ghost" onClick={() => go(steps[index - 1])}>
               {t("common.back")}
             </Button>
           )}
         </div>
         <div className="flex items-center gap-1.5" aria-hidden>
-          {STEPS.map((s, i) => (
+          {steps.map((s, i) => (
             <span key={s} className={`dot h-1.5 rounded-full ${i === index ? "w-[18px] bg-text" : "w-1.5 bg-surface-raised"}`} />
           ))}
         </div>
@@ -299,7 +308,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
           <Button
             variant="primary"
             disabled={!canAdvance(step, perms, keyOk)}
-            onClick={() => (last ? finish() : go(STEPS[index + 1]))}
+            onClick={() => (last ? finish() : go(steps[index + 1]))}
           >
             {nextLabel}
           </Button>

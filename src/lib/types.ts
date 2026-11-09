@@ -35,6 +35,26 @@ export interface Settings {
   history_enabled: boolean;
   onboarding_done: boolean;
   notch_drop: boolean;
+  /** Absent only in fixtures older than the agents (spec 2026-11-09); Utter always sends them. */
+  agents?: AgentSettings;
+  agents_codex_prev_notify?: string[] | null;
+}
+
+export interface AgentSettings {
+  claude_code: boolean;
+  codex: boolean;
+  summary: boolean;
+}
+
+export const AGENTS_OFF: AgentSettings = { claude_code: false, codex: false, summary: true };
+
+/** Rust `agents::service::Link`. */
+export type AgentLink = { kind: "off" } | { kind: "on" } | { kind: "missing" } | { kind: "broken"; message: string };
+
+export interface AgentsStatus {
+  detected: { claude_code: boolean; codex: boolean };
+  claude_code: AgentLink;
+  codex: AgentLink;
 }
 
 export type OverlayState =

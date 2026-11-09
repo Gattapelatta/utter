@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AgentView, DraftParts, SessionKey, FreeLimits, HistoryEntry, KeyId, Mode, OverlayState, PermissionsStatus, ProviderKind, Settings, TrialOutcome, UpdateState, UsageDay } from "./types";
+import type { AgentsStatus, AgentView, DraftParts, SessionKey, FreeLimits, HistoryEntry, KeyId, Mode, OverlayState, PermissionsStatus, ProviderKind, Settings, TrialOutcome, UpdateState, UsageDay } from "./types";
 
 export const ipc = {
   getSettings: () => invoke<Settings>("get_settings"),
@@ -36,6 +36,7 @@ export const ipc = {
   overlayFrames: (avg: number, p95: number, max: number, count: number) =>
     invoke<void>("overlay_frames", { avg, p95, max, count }),
   agentsView: () => invoke<AgentView>("agents_view"),
+  agentsStatus: () => invoke<AgentsStatus>("agents_status"),
   agentPermission: (id: number, choice: "allow" | "always" | "deny" | "open") => invoke<void>("agent_permission", { id, choice }),
   agentOpen: (key: SessionKey) => invoke<void>("agent_open", { key }),
   agentDismiss: () => invoke<void>("agent_dismiss"),

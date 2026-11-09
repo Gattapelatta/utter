@@ -210,5 +210,14 @@
   "agents.ok": "OK",
   "agents.step": "step {n} of {m}",
   "agents.after_pause": "While paused: {done} finished, {waiting} waiting for you",
-  "agents.dizzy": "Too many pokes. Give me a sec — back in three seconds."
+  "agents.dizzy": "Too many pokes. Give me a sec — back in three seconds.",
+  "nav.agents": "Agents",
+  "agents.claude_code_hint": "The Drop tells you when Claude Code is done or waiting for you, and lets you allow from the island",
+  "agents.codex_hint": "The Drop tells you when Codex is done",
+  "agents.summary": "One-line summary (via {provider})",
+  "agents.summary_hint": "The agent's last message goes to {provider} with your key to make a short line",
+  "agents.missing": "{agent} is not on this Mac",
+  "agents.broken": "Could not connect: the {agent} settings file is damaged",
+  "onboarding.agents_title": "Connect your agents",
+  "onboarding.agents_body": "The Drop will watch them and tell you when they are done"
 }
