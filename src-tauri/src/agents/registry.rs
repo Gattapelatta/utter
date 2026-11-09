@@ -42,10 +42,42 @@ pub struct AgentRow {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Card {
-    Permission { id: u64, key: SessionKey, tool: String, detail: String, can_always: bool },
+    /// `rule`: what «Всегда» allows from now on, in words (shown beside the button).
+    Permission { id: u64, key: SessionKey, tool: String, detail: String, can_always: bool, rule: Option<String> },
     Done { key: SessionKey },
     Waiting { key: SessionKey },
     AfterPause { done: u32, waiting: u32 },
+}
+
+/// Claude Code's suggested rule, readable: `Bash(npm run:*)`, `mode: acceptEdits`, directories,
+/// or the suggestion itself.
+fn rule_text(s: &serde_json::Value) -> String {
+    let str_of = |v: &serde_json::Value, k: &str| v.get(k).and_then(serde_json::Value::as_str).map(str::to_string);
+    match str_of(s, "type").as_deref() {
+        Some("addRules" | "replaceRules") => {
+            let rules: Vec<String> = s
+                .get("rules")
+                .and_then(serde_json::Value::as_array)
+                .map(|rs| {
+                    rs.iter()
+                        .map(|r| match (str_of(r, "toolName"), str_of(r, "ruleContent")) {
+                            (Some(t), Some(c)) => format!("{t}({c})"),
+                            (Some(t), None) => t,
+                            _ => r.to_string(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            if rules.is_empty() { s.to_string() } else { rules.join(", ") }
+        }
+        Some("setMode") => format!("mode: {}", str_of(s, "mode").unwrap_or_default()),
+        Some("addDirectories") => s
+            .get("directories")
+            .and_then(serde_json::Value::as_array)
+            .map(|d| d.iter().filter_map(serde_json::Value::as_str).collect::<Vec<_>>().join(", "))
+            .unwrap_or_else(|| s.to_string()),
+        _ => s.to_string(),
+    }
 }
 
 impl Card {
@@ -174,6 +206,7 @@ impl Registry {
                         tool,
                         detail,
                         can_always: suggestion.is_some(),
+                        rule: suggestion.as_ref().map(rule_text),
                     });
                 }
             }
@@ -206,6 +239,17 @@ impl Registry {
             self.permissions.push_back(card);
         }
         id
+    }
+
+    /// Ids of the session's open permission requests.
+    pub fn permission_ids(&self, key: &SessionKey) -> Vec<u64> {
+        self.permissions
+            .iter()
+            .filter_map(|c| match c {
+                Card::Permission { id, key: k, .. } if k == key => Some(*id),
+                _ => None,
+            })
+            .collect()
     }
 
     pub fn set_summary(&mut self, key: &SessionKey, s: Option<String>) {
@@ -463,6 +507,26 @@ mod tests {
         let mut r = Registry::default();
         r.apply(permission("a", true), t);
         assert!(matches!(r.view().card, Some(Card::Permission { can_always: true, .. })));
+    }
+
+    #[test]
+    fn always_shows_the_rule_it_saves() {
+        // Review 2026-11-10: «Всегда» must say what it allows from now on.
+        let t = Instant::now();
+        let rule = |s: serde_json::Value| {
+            let mut r = Registry::default();
+            let ev = ev("a", EventKind::Permission { tool: "Bash".into(), detail: "x".into(), suggestion: Some(s) });
+            r.apply(ev, t);
+            match r.view().card {
+                Some(Card::Permission { rule, .. }) => rule,
+                _ => panic!(),
+            }
+        };
+        let add = |content: serde_json::Value| json!({"type":"addRules","rules":[{"toolName":"Bash","ruleContent":content}],"behavior":"allow"});
+        assert_eq!(rule(add(json!("npm run:*"))).as_deref(), Some("Bash(npm run:*)"));
+        assert_eq!(rule(json!({"type":"addRules","rules":[{"toolName":"WebFetch"}]})).as_deref(), Some("WebFetch"));
+        assert_eq!(rule(json!({"type":"setMode","mode":"acceptEdits","destination":"session"})).as_deref(), Some("mode: acceptEdits"));
+        assert_eq!(rule(json!({"type":"addDirectories","directories":["/a","/b"]})).as_deref(), Some("/a, /b"));
     }
 
     #[test]

@@ -209,7 +209,6 @@
   "agents.open": "Открыть",
   "agents.ok": "OK",
   "agents.step": "шаг {n} из {m}",
-  "agents.after_pause": "Пока была пауза: {done} закончили, {waiting} ждут тебя",
   "agents.dizzy": "Слишком много тычков. Дай секунду — вернусь к работе через три секунды.",
   "nav.agents": "Агенты",
   "agents.claude_code_hint": "Капля скажет, когда Claude Code закончил или ждёт тебя, и даст разрешить из острова",
@@ -222,5 +221,15 @@
   "onboarding.agents_body": "Капля будет следить за ними и скажет, когда они закончат",
   "hotkeys.task": "Задача",
   "hotkeys.task_hint": "Сбивчивая речь — чёткое задание для ИИ-агента",
-  "history.task": "Задача"
+  "history.task": "Задача",
+  "agents.always_rule": "«Всегда» разрешит: {rule}",
+  "agents.after_pause_prefix": "Пока была пауза:",
+  "agents.after_pause_done_one": "{n} агент закончил",
+  "agents.after_pause_done_few": "{n} агента закончили",
+  "agents.after_pause_done_many": "{n} агентов закончили",
+  "agents.after_pause_done_other": "{n} агента закончили",
+  "agents.after_pause_waiting_one": "{n} ждёт тебя",
+  "agents.after_pause_waiting_few": "{n} ждут тебя",
+  "agents.after_pause_waiting_many": "{n} ждут тебя",
+  "agents.after_pause_waiting_other": "{n} ждут тебя"
 }

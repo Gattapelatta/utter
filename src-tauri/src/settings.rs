@@ -212,6 +212,18 @@ pub fn save(path: &Path, s: &Settings) -> std::io::Result<()> {
     write_atomic(path, &bytes)
 }
 
+/// `write_atomic`, keeping the file's permission bits (`mode`) when given.
+pub fn write_atomic_mode(path: &Path, bytes: &[u8], mode: Option<u32>) -> std::io::Result<()> {
+    let Some(mode) = mode else { return write_atomic(path, bytes) };
+    use std::os::unix::fs::PermissionsExt;
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".mode.tmp");
+    let tmp = std::path::PathBuf::from(tmp);
+    write_atomic(&tmp, bytes)?;
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(mode))?;
+    std::fs::rename(&tmp, path)
+}
+
 /// Writes to a sibling temp file, syncs it, then renames over `path`.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {

@@ -156,7 +156,8 @@ export interface AgentRow {
 }
 
 export type AgentCard =
-  | { kind: "permission"; id: number; key: SessionKey; tool: string; detail: string; can_always: boolean }
+  /** `rule`: what «Всегда» allows from now on, in words. */
+  | { kind: "permission"; id: number; key: SessionKey; tool: string; detail: string; can_always: boolean; rule?: string | null }
   | { kind: "done"; key: SessionKey }
   | { kind: "waiting"; key: SessionKey }
   | { kind: "after_pause"; done: number; waiting: number };

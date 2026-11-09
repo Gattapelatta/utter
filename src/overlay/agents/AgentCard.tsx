@@ -95,9 +95,14 @@ export function AgentCard({ card, rows, notch }: { card: Card; rows: AgentRow[];
   const t = useT();
   const name = useAgentName();
   if (card.kind === "after_pause") {
+    // «2 агента закончили, 1 ждёт тебя»: plural forms, and no «0 …» parts (spec §3.5).
+    const parts = [
+      card.done > 0 && t("agents.after_pause_done", { n: card.done }),
+      card.waiting > 0 && t("agents.after_pause_waiting", { n: card.waiting }),
+    ].filter(Boolean);
     return (
       <Panel notch={notch}>
-        <div>{t("agents.after_pause", { done: card.done, waiting: card.waiting })}</div>
+        <div>{`${t("agents.after_pause_prefix")} ${parts.join(", ")}`}</div>
       </Panel>
     );
   }
@@ -108,12 +113,28 @@ export function AgentCard({ card, rows, notch }: { card: Card; rows: AgentRow[];
     return (
       <Panel notch={notch}>
         <Title text={`${head} ${t("agents.permission")}`} color={DOT_COLOR.waiting} />
+        {/* All of it, wrapped and scrollable: nothing the user allows may hide behind «…» (review 2026-11-10). */}
         <div
           data-agent-detail
-          style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: "12px", color: TEXT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+          style={{
+            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+            fontSize: "12px",
+            lineHeight: 1.35,
+            color: TEXT,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-all",
+            overflowY: "auto",
+            minHeight: 0,
+            flex: "1 1 auto",
+          }}
         >
           {card.detail || card.tool}
         </div>
+        {card.can_always && card.rule && (
+          <div data-agent-rule style={{ color: DIM, fontSize: "11px", wordBreak: "break-all", flex: "none" }}>
+            {t("agents.always_rule", { rule: card.rule })}
+          </div>
+        )}
         <Buttons>
           <Button label={t("agents.deny")} onClick={() => answer("deny")} />
           <Button label={t("agents.allow")} onClick={() => answer("allow")} strong />

@@ -63,10 +63,13 @@ fn read(path: &Path) -> Result<Option<String>, String> {
     }
 }
 
-/// Writes through a symlink (dotfile managers keep these files as links), atomically.
+/// Writes through a symlink (dotfile managers keep these files as links), atomically, keeping
+/// the file's permissions: these files may hold tokens (review 2026-11-10).
 fn write(path: &Path, text: &str) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
     let real = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    crate::settings::write_atomic(&real, text.as_bytes()).map_err(|e| e.to_string())
+    let mode = std::fs::metadata(&real).ok().map(|m| m.permissions().mode() & 0o7777);
+    crate::settings::write_atomic_mode(&real, text.as_bytes(), mode).map_err(|e| e.to_string())
 }
 
 fn claude_link(home: &Path, helper: &str, on: bool, found: bool) -> Link {
@@ -174,10 +177,21 @@ fn home_dir() -> PathBuf {
     std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default()
 }
 
-/// `utter-agent` next to Utter's own binary.
+/// A path the hooks may point at: not the disk image and not macOS's temporary copy of an app
+/// opened from Downloads (AppTranslocation) — both vanish (review 2026-11-10).
+pub fn stable_helper(path: &str) -> bool {
+    !path.starts_with("/Volumes/") && !path.contains("/AppTranslocation/")
+}
+
+/// `utter-agent` next to Utter's own binary, if the hooks may point at it.
 fn helper_path() -> Option<String> {
     let path = std::env::current_exe().ok()?.parent()?.join("utter-agent");
-    path.exists().then(|| path.to_string_lossy().into_owned())
+    let path = path.exists().then(|| path.to_string_lossy().into_owned())?;
+    if !stable_helper(&path) {
+        tracing::warn!(path, "Utter runs from a temporary place: agents not connected");
+        return None;
+    }
+    Some(path)
 }
 
 /// Applies the agents part of the settings to the agents' files; returns the settings with
@@ -261,6 +275,18 @@ impl Core {
             EventKind::Finished { last_message } => Some((event.key.clone(), last_message.clone())),
             _ => None,
         };
+        if event.kind == EventKind::Ended {
+            // The session's open requests end with it; nobody will click them.
+            let open = self.reg().permission_ids(&event.key);
+            self.reg().apply(event.clone(), now);
+            for id in open {
+                self.broker.answer(id, Reply::NoDecision);
+            }
+            if let Ok(mut a) = self.ancestors.lock() {
+                a.remove(&event.key);
+            }
+            return if req.wants_reply { Incoming::Reply(Reply::NoDecision) } else { Incoming::Updated };
+        }
         let id = self.reg().apply(event, now);
         if let Some(id) = id {
             return Incoming::Ask { id, rx: self.broker.open(id) };
@@ -300,6 +326,12 @@ impl Core {
         self.reg().resolve_permission(id);
     }
 
+    /// The helper went away (Esc in Claude Code, its own timeout): no answer, no card.
+    pub fn abandon(&self, id: u64) {
+        self.broker.answer(id, Reply::NoDecision);
+        self.reg().resolve_permission(id);
+    }
+
     pub fn set_paused(&self, on: bool, now: Instant) {
         for id in self.reg().set_paused(on, now) {
             self.broker.answer(id, Reply::NoDecision);
@@ -329,6 +361,29 @@ impl Core {
     pub fn view(&self) -> AgentView {
         self.reg().view()
     }
+}
+
+// ---------- How often the watcher looks ----------
+
+/// 100 ms while a card is open or the pointer is over the ears (hover must feel instant);
+/// 300 ms with only dots (an unseen green dot may stay for hours); 500 ms with bare ears
+/// (pokes); 1 s otherwise. Review 2026-11-10: 10 Hz for a dot was a constant cost.
+pub fn watch_period(view: &AgentView, hover: bool, ears: bool) -> Duration {
+    let ms = if view.card.is_some() || hover {
+        100
+    } else if !view.rows.is_empty() {
+        300
+    } else if ears {
+        500
+    } else {
+        1000
+    };
+    Duration::from_millis(ms)
+}
+
+/// Whether the pointer matters at all (otherwise it is not even read).
+pub fn needs_pointer(view: &AgentView, ears: bool) -> bool {
+    !view.rows.is_empty() || view.card.is_some() || ears
 }
 
 // ---------- Where the pointer counts as "on the Drop" ----------
@@ -437,8 +492,16 @@ mod glue {
         }
         tracing::info!("agents socket open");
         loop {
-            let Ok((stream, _)) = listener.accept().await else { continue };
-            tauri::async_runtime::spawn(connection(app.clone(), core.clone(), stream));
+            match listener.accept().await {
+                Ok((stream, _)) => {
+                    tauri::async_runtime::spawn(connection(app.clone(), core.clone(), stream));
+                }
+                // A persistent error (out of file descriptors) must not spin a core (review 2026-11-10).
+                Err(e) => {
+                    tracing::warn!("agents socket: {e}");
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+            }
         }
     }
 
@@ -452,7 +515,8 @@ mod glue {
     async fn connection(app: AppHandle, core: Arc<Core>, stream: tokio::net::UnixStream) {
         let (read, mut write) = stream.into_split();
         let mut line = String::new();
-        if BufReader::new(read.take(LINE_MAX)).read_line(&mut line).await.is_err() {
+        let mut reader = BufReader::new(read.take(LINE_MAX));
+        if reader.read_line(&mut line).await.is_err() {
             return;
         }
         let Ok(req) = serde_json::from_str::<Request>(&line) else { return };
@@ -470,7 +534,17 @@ mod glue {
             Incoming::Reply(r) => Some(r),
             Incoming::Ask { id, rx } => {
                 tracing::info!(id, "agent asks for permission");
-                let r = rx.await.unwrap_or(Reply::NoDecision);
+                // The helper sends nothing more: anything read here is its end (Esc in Claude
+                // Code, its own timeout). Then the card must go (review 2026-11-10).
+                let mut rest = [0u8; 1];
+                let r = tokio::select! {
+                    r = rx => r.unwrap_or(Reply::NoDecision),
+                    _ = reader.read(&mut rest) => {
+                        core.abandon(id);
+                        tracing::info!(id, "the agent stopped waiting");
+                        Reply::NoDecision
+                    }
+                };
                 tracing::info!(id, ?r, "permission answered");
                 publish(&app);
                 Some(r)
@@ -518,6 +592,21 @@ mod glue {
         app.try_state::<overlay_rest::RestPresence>().and_then(|p| p.0.lock().ok().map(|p| p.shown)).unwrap_or(false)
     }
 
+    /// The overlay window's frame, read at most once a second: each read waits for the main
+    /// thread three times, and the frame changes only when the window is placed.
+    fn frame(app: &AppHandle, cache: &Mutex<Option<(Rect, Instant)>>) -> Option<Rect> {
+        let cached = *cache.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((r, at)) = cached {
+            if at.elapsed() < Duration::from_secs(1) {
+                return Some(r);
+            }
+        }
+        // No lock held while waiting for the main thread.
+        let r = window_rect(app)?;
+        *cache.lock().unwrap_or_else(|e| e.into_inner()) = Some((r, Instant::now()));
+        Some(r)
+    }
+
     /// The overlay window's frame in screen points (top-left).
     fn window_rect(app: &AppHandle) -> Option<Rect> {
         let w = app.get_webview_window(overlay::LABEL)?;
@@ -528,52 +617,71 @@ mod glue {
     /// Every 100 ms while there are agents, 500 ms while only the ears are up (pokes at the Drop,
     /// spec §3.6), 1 s otherwise: time for cards and permissions, the pointer over the ears,
     /// whether the window takes clicks.
+    /// The watcher never holds `shown` while it calls into Tauri: window getters and setters wait
+    /// for the main thread, where the agent commands lock `shown` (review 2026-11-10: deadlock).
     async fn watch(app: AppHandle, core: Arc<Core>) {
+        let frame_cache: Mutex<Option<(Rect, Instant)>> = Mutex::new(None);
         loop {
-            let view = core.view();
-            let active = !view.rows.is_empty() || view.card.is_some();
-            let period = if active { 100 } else if ears_shown(&app) { 500 } else { 1000 };
-            tokio::time::sleep(Duration::from_millis(period)).await;
+            let Some(agents) = app.try_state::<Agents>() else {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            };
+            let hover = agents.shown.lock().unwrap_or_else(|e| e.into_inner()).hover;
+            tokio::time::sleep(watch_period(&core.view(), hover, ears_shown(&app))).await;
             let idle = !busy(&app);
             core.tick(Instant::now(), idle);
             publish(&app);
             let view = core.view();
-            let Some(agents) = app.try_state::<Agents>() else { continue };
-            let mut shown = agents.shown.lock().unwrap_or_else(|e| e.into_inner());
             if !idle {
                 // The dictation owns the window; take it back when it is over.
-                shown.clickable = None;
+                agents.shown.lock().unwrap_or_else(|e| e.into_inner()).clickable = None;
                 continue;
             }
+            let ears = ears_shown(&app);
             let card = view.card.is_some();
             // Hovering opens the list only when there are agents; otherwise the ears stay ears.
-            let open = card || (shown.hover && !view.rows.is_empty());
-            let over = match (overlay_rest::cursor_point(), window_rect(&app)) {
-                (Some((x, y)), Some(win)) if !view.rows.is_empty() || card || ears_shown(&app) => {
-                    hover_zone(win, open).contains(x, y)
+            let open = card || (hover && !view.rows.is_empty());
+            let over = if needs_pointer(&view, ears) {
+                match (overlay_rest::cursor_point(), frame(&app, &frame_cache)) {
+                    (Some((x, y)), Some(win)) => hover_zone(win, open).contains(x, y),
+                    _ => false,
                 }
-                _ => false,
+            } else {
+                false
             };
-            if over != shown.hover {
-                shown.hover = over;
-                let _ = app.emit_to(overlay::LABEL, "overlay://agent-hover", serde_json::json!({ "over": over }));
-            }
             // AfterPause has no buttons; everything else on a card does.
             let buttons = matches!(view.card, Some(Card::Permission { .. } | Card::Done { .. } | Card::Waiting { .. }));
             let clickable = over || buttons;
-            if shown.clickable != Some(clickable) {
+            // Decide under the lock, act after it.
+            let (hover_changed, clickable_changed, force_show, force_hide) = {
+                let mut shown = agents.shown.lock().unwrap_or_else(|e| e.into_inner());
+                let hover_changed = over != shown.hover;
+                shown.hover = over;
+                let clickable_changed = shown.clickable != Some(clickable);
                 shown.clickable = Some(clickable);
+                // A card must be seen even when the ears are off (a full-screen app).
+                let force_show = card && !shown.forced && !ears;
+                let force_hide = !card && shown.forced;
+                if force_show {
+                    shown.forced = true;
+                }
+                if force_hide {
+                    shown.forced = false;
+                }
+                (hover_changed, clickable_changed, force_show, force_hide)
+            };
+            if hover_changed {
+                let _ = app.emit_to(overlay::LABEL, "overlay://agent-hover", serde_json::json!({ "over": over }));
+            }
+            if clickable_changed {
                 if let Some(w) = app.get_webview_window(overlay::LABEL) {
                     let _ = w.set_ignore_cursor_events(!clickable);
                 }
             }
-            // A card must be seen even when the ears are off (a full-screen app).
-            if card && !shown.forced && !ears_shown(&app) {
-                shown.forced = true;
+            if force_show {
                 let a = app.clone();
                 let _ = app.run_on_main_thread(move || overlay::show_for_agents(&a));
-            } else if !card && shown.forced {
-                shown.forced = false;
+            } else if force_hide {
                 let a = app.clone();
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(overlay::HIDE_AFTER).await;
@@ -814,6 +922,73 @@ mod tests {
         core.set_paused(false, t);
         assert!(!core.view().paused);
         assert!(!core.paused());
+    }
+
+    #[tokio::test]
+    async fn helper_gone_clears_card() {
+        // Review 2026-11-10: Esc in Claude Code (or its own timeout) closes the helper; the card
+        // must go and nobody may answer into the void.
+        let t = Instant::now();
+        let core = Core::default();
+        let Incoming::Ask { id, rx } = core.receive(permission(), Lang::En, t) else { panic!() };
+        core.abandon(id);
+        assert_eq!(rx.await.unwrap(), Reply::NoDecision);
+        assert_eq!(core.view().card, None);
+        assert!(core.broker.pending().is_empty());
+    }
+
+    #[tokio::test]
+    async fn ended_session_answers_its_open_requests() {
+        let t = Instant::now();
+        let core = Core::default();
+        let Incoming::Ask { rx, .. } = core.receive(permission(), Lang::En, t) else { panic!() };
+        core.receive(request("SessionEnd", json!({"session_id":"s","cwd":"/p"})), Lang::En, t);
+        assert_eq!(rx.await.unwrap(), Reply::NoDecision);
+        assert!(core.broker.pending().is_empty());
+        assert_eq!(core.ancestors(&SessionKey { agent: crate::agents::event::Agent::ClaudeCode, id: "s".into() }), None);
+    }
+
+    #[test]
+    fn period_is_fast_only_when_needed() {
+        use crate::agents::registry::{AgentRow, SessionState};
+        let key = SessionKey { agent: crate::agents::event::Agent::Codex, id: "t".into() };
+        let row = AgentRow { key: key.clone(), agent: key.agent, project: "p".into(), state: SessionState::Done, steps: None, actions: vec![], summary: None, seen: false };
+        let none = AgentView { rows: vec![], card: None, paused: false };
+        let dots = AgentView { rows: vec![row.clone()], card: None, paused: false };
+        let card = AgentView { rows: vec![row], card: Some(Card::Done { key }), paused: false };
+        // An unseen green dot may stay for hours: no 10 Hz polling for it.
+        assert_eq!(watch_period(&dots, false, true), Duration::from_millis(300));
+        assert_eq!(watch_period(&dots, true, true), Duration::from_millis(100));
+        assert_eq!(watch_period(&card, false, true), Duration::from_millis(100));
+        assert_eq!(watch_period(&none, false, true), Duration::from_millis(500));
+        assert_eq!(watch_period(&none, false, false), Duration::from_millis(1000));
+        // Nothing to hover: the pointer is not even read.
+        assert!(!needs_pointer(&none, false));
+        assert!(needs_pointer(&none, true));
+        assert!(needs_pointer(&dots, false));
+    }
+
+    #[test]
+    fn unstable_helper_paths_are_refused() {
+        // Run from the disk image or a translocated copy, the hooks would point at a path that
+        // vanishes: every Claude Code event would fail and Codex would lose its own notify.
+        assert!(!stable_helper("/Volumes/Utter/Utter.app/Contents/MacOS/utter-agent"));
+        assert!(!stable_helper("/private/var/folders/x/T/AppTranslocation/ABC/d/Utter.app/Contents/MacOS/utter-agent"));
+        assert!(stable_helper("/Applications/Utter.app/Contents/MacOS/utter-agent"));
+        assert!(stable_helper("/Users/me/Desktop/Translate/src-tauri/target/release/bundle/macos/Utter.app/Contents/MacOS/utter-agent"));
+    }
+
+    #[test]
+    fn write_keeps_file_mode() {
+        // ~/.claude/settings.json may hold tokens (env, MCP): a 0600 file stays 0600.
+        use std::os::unix::fs::PermissionsExt;
+        let home = home();
+        let claude = home.path().join(".claude/settings.json");
+        std::fs::write(&claude, "{}").unwrap();
+        std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o600)).unwrap();
+        apply_in(home.path(), HELPER, &on(true, false), None, BOTH);
+        assert!(install::claude_installed(&std::fs::read_to_string(&claude).unwrap(), HELPER));
+        assert_eq!(std::fs::metadata(&claude).unwrap().permissions().mode() & 0o777, 0o600);
     }
 
     #[test]

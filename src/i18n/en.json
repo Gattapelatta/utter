@@ -209,7 +209,6 @@
   "agents.open": "Open",
   "agents.ok": "OK",
   "agents.step": "step {n} of {m}",
-  "agents.after_pause": "While paused: {done} finished, {waiting} waiting for you",
   "agents.dizzy": "Too many pokes. Give me a sec — back in three seconds.",
   "nav.agents": "Agents",
   "agents.claude_code_hint": "The Drop tells you when Claude Code is done or waiting for you, and lets you allow from the island",
@@ -222,5 +221,15 @@
   "onboarding.agents_body": "The Drop will watch them and tell you when they are done",
   "hotkeys.task": "Task",
   "hotkeys.task_hint": "Rambling speech becomes a clear task for an AI agent",
-  "history.task": "Task"
+  "history.task": "Task",
+  "agents.always_rule": "Always allows: {rule}",
+  "agents.after_pause_prefix": "While paused:",
+  "agents.after_pause_done_one": "{n} finished",
+  "agents.after_pause_done_few": "{n} finished",
+  "agents.after_pause_done_many": "{n} finished",
+  "agents.after_pause_done_other": "{n} finished",
+  "agents.after_pause_waiting_one": "{n} waiting for you",
+  "agents.after_pause_waiting_few": "{n} waiting for you",
+  "agents.after_pause_waiting_many": "{n} waiting for you",
+  "agents.after_pause_waiting_other": "{n} waiting for you"
 }

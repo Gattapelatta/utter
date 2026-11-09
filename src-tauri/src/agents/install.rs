@@ -31,8 +31,10 @@ pub struct Detected {
 
 // ---------- Claude Code: ~/.claude/settings.json ----------
 
+/// Does nothing (exit 0, no output) when the helper is gone — Utter.app trashed or moved — so
+/// Claude Code never shows a hook error for it (review 2026-11-10).
 fn claude_command(helper: &str, event: &str) -> String {
-    format!("\"{helper}\" claude {event}")
+    format!("[ -x \"{helper}\" ] && \"{helper}\" claude {event} || true")
 }
 
 fn parse_settings(current: Option<&str>) -> Result<Map<String, Value>, InstallError> {
@@ -276,7 +278,14 @@ pub fn codex_install(current: Option<&str>, helper: &str) -> Result<(String, Opt
     let mut values = vec![helper.to_string(), "codex".to_string()];
     values.extend(prev.iter().cloned());
     let out = splice(text, found.map(|(_, a, b)| (a, b)), &notify_line(&values));
-    Ok((out, (!prev.is_empty()).then_some(prev)))
+    // Codex rejects its whole config over one mistake (a second `notify`, a key this line reader
+    // did not see): write only what a real TOML parser reads back as exactly ours.
+    let ours = toml::Value::Array(values.iter().cloned().map(toml::Value::String).collect());
+    match out.parse::<toml::Table>() {
+        Ok(t) if t.get("notify") == Some(&ours) => Ok((out, (!prev.is_empty()).then_some(prev))),
+        Ok(_) => Err(InstallError::Corrupt("notify was not where Utter looked for it".into())),
+        Err(e) => Err(InstallError::Corrupt(e.to_string())),
+    }
 }
 
 /// Gives `notify` back: the chain in the file, else `prev` (saved at install), else no line at all.
@@ -336,7 +345,7 @@ mod tests {
     fn claude_install_creates_file_when_missing() {
         let out = json_of(&claude_install(None, HELPER).unwrap());
         for event in CLAUDE_EVENTS {
-            assert_eq!(commands(&out, event), vec![format!("\"{HELPER}\" claude {event}")], "{event}");
+            assert_eq!(commands(&out, event), vec![claude_command(HELPER, event)], "{event}");
         }
         let perm = &out["hooks"]["PermissionRequest"][0]["hooks"][0];
         assert_eq!(perm["timeout"], 120);
@@ -354,7 +363,7 @@ mod tests {
         })
         .to_string();
         let out = json_of(&claude_install(Some(&current), HELPER).unwrap());
-        assert_eq!(commands(&out, "Stop"), vec!["say done".to_string(), format!("\"{HELPER}\" claude Stop")]);
+        assert_eq!(commands(&out, "Stop"), vec!["say done".to_string(), claude_command(HELPER, "Stop")]);
         assert_eq!(out["model"], "opus");
         assert_eq!(out["permissions"]["allow"][0], "Bash(ls)");
     }
@@ -401,6 +410,17 @@ mod tests {
         let mut v = json_of(&claude_install(None, HELPER).unwrap());
         v["hooks"].as_object_mut().unwrap().remove("Stop");
         assert!(!claude_installed(&v.to_string(), HELPER));
+    }
+
+    #[test]
+    fn claude_hook_does_nothing_without_helper() {
+        // Review 2026-11-10: Utter.app trashed → the hook must not fail every Claude Code event.
+        let out = json_of(&claude_install(None, "/nonexistent/utter-agent").unwrap());
+        let cmd = commands(&out, "Stop")[0].clone();
+        let run = std::process::Command::new("/bin/sh").args(["-c", &cmd]).output().unwrap();
+        assert!(run.status.success());
+        assert!(run.stdout.is_empty());
+        assert!(run.stderr.is_empty());
     }
 
     #[test]
@@ -473,6 +493,22 @@ mod tests {
     fn codex_unclosed_notify_is_error() {
         assert!(matches!(codex_install(Some("notify = [\"a\",\n"), HELPER), Err(InstallError::Corrupt(_))));
         assert!(matches!(codex_install(Some("notify = 5\n"), HELPER), Err(InstallError::Corrupt(_))));
+    }
+
+    #[test]
+    fn codex_quoted_notify_key_is_not_duplicated() {
+        // A second `notify` would make Codex reject its whole config: refuse instead.
+        for current in ["\"notify\" = [\"x\"]\n", "\u{feff}notify = [\"x\"]\n"] {
+            match codex_install(Some(current), HELPER) {
+                Err(InstallError::Corrupt(_)) => {}
+                Ok((out, _)) => assert_eq!(out.matches("notify").count(), 1, "{out}"),
+            }
+        }
+    }
+
+    #[test]
+    fn codex_broken_toml_is_left_alone() {
+        assert!(matches!(codex_install(Some("model = \n[[["), HELPER), Err(InstallError::Corrupt(_))));
     }
 
     #[test]
