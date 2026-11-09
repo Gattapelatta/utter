@@ -2,3 +2,5 @@
 
 pub mod event;
 pub mod install;
+pub mod host;
+pub mod wire;

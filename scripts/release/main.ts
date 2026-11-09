@@ -8,7 +8,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { archiveProblems, listTarGz } from "./archive.ts";
-import { minimumSystemProblem, parseCodesign, parseLeaf, parseLipo } from "./inspect.ts";
+import { helperProblem, minimumSystemProblem, parseCodesign, parseLeaf, parseLipo } from "./inspect.ts";
 import { assetUrl, buildLatestJson } from "./latest.ts";
 import { verifyMinisign } from "./minisign.ts";
 import { preflight, type Facts } from "./preflight.ts";
@@ -96,6 +96,10 @@ function verify(app: string, archive: string, sigPath: string): string[] {
   if (minProblem) problems.push(minProblem);
   const archs = parseLipo(run("lipo", ["-archs", join(app, "Contents/MacOS/utter")]));
   if (!(archs.includes("x86_64") && archs.includes("arm64"))) problems.push(`В приложении архитектуры «${archs.join(" ")}», а нужны x86_64 и arm64.`);
+  const helper = join(app, "Contents/MacOS/utter-agent");
+  const helperArchs = existsSync(helper) ? parseLipo(run("lipo", ["-archs", helper])) : null;
+  const helperIssue = helperProblem(helperArchs);
+  if (helperIssue) problems.push(helperIssue);
   const pubkey = JSON.parse(readFileSync(FILES.tauriConf, "utf8")).plugins.updater.pubkey as string;
   if (!verifyMinisign(readFileSync(archive), readFileSync(sigPath, "utf8"), pubkey))
     problems.push("Подпись архива обновления не сходится с ключом в tauri.conf.json — люди не смогут обновиться.");
