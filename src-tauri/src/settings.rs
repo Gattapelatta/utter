@@ -57,6 +57,22 @@ pub struct Hotkeys {
     pub translate: KeyId,
 }
 
+/// Which AI agents the Drop watches (spec 2026-11-09).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentSettings {
+    pub claude_code: bool,
+    pub codex: bool,
+    /// «Итог одной строкой»: the provider writes the summary line.
+    pub summary: bool,
+}
+
+impl Default for AgentSettings {
+    fn default() -> Self {
+        AgentSettings { claude_code: false, codex: false, summary: true }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -77,6 +93,9 @@ pub struct Settings {
     pub onboarding_done: bool,
     /// The Drop lives in the camera notch while idle (§4.2a).
     pub notch_drop: bool,
+    pub agents: AgentSettings,
+    /// Codex`s own `notify` command before Utter chained itself in front of it.
+    pub agents_codex_prev_notify: Option<Vec<String>>,
 }
 
 impl Settings {
@@ -101,6 +120,8 @@ impl Settings {
             history_enabled: true,
             onboarding_done: false,
             notch_drop: true,
+            agents: AgentSettings::default(),
+            agents_codex_prev_notify: None,
         }
     }
 }
@@ -217,6 +238,19 @@ mod tests {
         let s = load(&path, None);
         assert!(s.notch_drop);
         assert!(s.autostart);
+    }
+
+    #[test]
+    fn old_settings_get_agents_off_and_summary_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"{"schema_version":1}"#).unwrap();
+        let s = load(&path, None);
+        assert_eq!(s.agents, AgentSettings { claude_code: false, codex: false, summary: true });
+        assert_eq!(s.agents_codex_prev_notify, None);
+        // A file that has only some agent fields keeps the rest at their defaults.
+        std::fs::write(&path, r#"{"agents":{"codex":true}}"#).unwrap();
+        assert_eq!(load(&path, None).agents, AgentSettings { claude_code: false, codex: true, summary: true });
     }
 
     #[test]

@@ -52,6 +52,8 @@ pub fn autostart_change(prev: &Settings, next: &Settings) -> Option<bool> {
 pub fn update_settings(app: &AppHandle, state: &AppState, next: Settings) -> Result<(), String> {
     let path = state.shared.data_dir.join("settings.json");
     let prev = state.shared.settings();
+    // Connect or disconnect the agents first: Codex's previous `notify` is kept in the settings.
+    let next = if prev.agents != next.agents { crate::agents::service::reconcile(next) } else { next };
     settings::save(&path, &next).map_err(|e| e.to_string())?;
     if let Some(on) = autostart_change(&prev, &next) {
         set_autostart(app, on);

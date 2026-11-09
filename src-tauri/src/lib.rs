@@ -63,6 +63,14 @@ fn init_core(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     let lang = sys_locale::get_locale();
     let settings = settings::load(&data_dir.join("settings.json"), lang.as_deref());
+    // The agents' files must match the settings (the app may have moved; ChatGPT rewrites its config).
+    let settings = {
+        let checked = agents::service::reconcile(settings.clone());
+        if checked != settings {
+            let _ = settings::save(&data_dir.join("settings.json"), &checked);
+        }
+        checked
+    };
     app::tray::build(app.handle(), &settings)?;
     let shared = Arc::new(Shared::new(settings.clone(), data_dir));
     shared.remove_orphan_audio();
@@ -118,6 +126,7 @@ fn init_core(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     app.manage(AppState { shared, tx, secrets: secrets.clone(), hotkeys, providers, log_dir });
+    agents::service::spawn(app.handle().clone());
     #[cfg(feature = "debug-eval")]
     app::debug_eval::start(app.handle().clone(), app.path().app_data_dir()?);
     // Reading the key may show a Keychain prompt; never wait for it on the main thread
@@ -180,6 +189,12 @@ pub fn run() {
             app::commands::install_update,
             app::commands::overlay_frames,
             app::commands::ui_log,
+            agents::service::agents_status,
+            agents::service::agents_view,
+            agents::service::agent_permission,
+            agents::service::agent_open,
+            agents::service::agent_dismiss,
+            agents::service::agent_seen,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]

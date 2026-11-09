@@ -41,6 +41,16 @@ pub fn parent_chain(ancestors: &[i32]) -> Vec<Ancestor> {
         .collect()
 }
 
+/// Brings the app forward with its desktop (Space). `open -b` goes through LaunchServices, which
+/// switches to the app's full-screen Space; a background app's own `activate` may be refused
+/// on macOS 14+ (cooperative activation).
+pub fn activate(host: &Host) {
+    let Some(bundle) = host.bundle_id.as_deref() else { return };
+    if let Err(e) = std::process::Command::new("/usr/bin/open").args(["-b", bundle]).spawn() {
+        tracing::warn!("could not open {bundle}: {e}");
+    }
+}
+
 #[cfg(not(target_os = "macos"))]
 pub fn parent_chain(ancestors: &[i32]) -> Vec<Ancestor> {
     ancestors.iter().map(|&pid| (pid, None, None)).collect()

@@ -219,6 +219,17 @@ pub fn spawn_watcher(
     });
 }
 
+/// The mouse pointer in global top-left points.
+#[cfg(target_os = "macos")]
+pub fn cursor_point() -> Option<(f64, f64)> {
+    mac::cursor_point()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn cursor_point() -> Option<(f64, f64)> {
+    None
+}
+
 /// The frame (top-left points, global) of the display under the mouse.
 #[cfg(target_os = "macos")]
 pub fn cursor_screen() -> Option<Rect> {
@@ -258,6 +269,12 @@ mod mac {
 
     /// The display under the mouse and its frame. A sleeping display is not "active", so the
     /// active list would be empty exactly when we need to see that the display sleeps.
+    pub(super) fn cursor_point() -> Option<(f64, f64)> {
+        let src = CGEventSource::new(CGEventSourceStateID::HIDSystemState).ok()?;
+        let p = CGEvent::new(src).ok()?.location();
+        Some((p.x, p.y))
+    }
+
     pub(super) fn cursor_display() -> Option<(u32, Rect)> {
         let src = CGEventSource::new(CGEventSourceStateID::HIDSystemState).ok()?;
         let p = CGEvent::new(src).ok()?.location();

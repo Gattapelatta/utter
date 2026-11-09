@@ -6,3 +6,5 @@ pub mod host;
 pub mod wire;
 pub mod summary;
 pub mod registry;
+pub mod broker;
+pub mod service;

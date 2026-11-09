@@ -147,6 +147,14 @@ pub fn show_rest(app: &AppHandle, replace: bool) {
     order_front(&w);
 }
 
+/// Shows the window for an agent card while the ears are off (a full-screen app): placed on the
+/// display under the mouse, like a dictation. Must run on the main thread.
+pub fn show_for_agents(app: &AppHandle) {
+    let Some(w) = app.get_webview_window(LABEL) else { return };
+    place(app, &w);
+    order_front(&w);
+}
+
 /// Orders the window out. Must run on the main thread.
 pub fn hide_window(app: &AppHandle) {
     if let Some(w) = app.get_webview_window(LABEL) {
