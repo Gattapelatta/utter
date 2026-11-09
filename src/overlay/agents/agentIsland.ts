@@ -1,0 +1,35 @@
+import type { AgentCard, AgentRow, AgentView, OverlayState, SessionState } from "../../lib/types";
+
+/** A state dot: blue — works, amber — waits for the user, green — finished, not yet looked at. */
+export type Dot = "working" | "waiting" | "done";
+
+/** What the island shows for the agents (spec 2026-11-09 §3.2). */
+export type AgentShow =
+  | { kind: "none" }
+  | { kind: "ears"; dot: Dot; dots: Dot[]; more: boolean }
+  | { kind: "list"; rows: AgentRow[] }
+  | { kind: "card"; card: AgentCard };
+
+/** Working colours; the final ones are chosen with the user (plan Task 12). */
+export const DOT_COLOR: Record<Dot, string> = { working: "#3B82F6", waiting: "#F59E0B", done: "#22C55E" };
+
+/** Dots in the right ear; with more agents, three and a «+». */
+const MAX_DOTS = 4;
+
+export function dotOf(state: SessionState): Dot {
+  return state === "permission" || state === "waiting" ? "waiting" : state;
+}
+
+/**
+ * Dictation always wins (§3.2 «Очерёдность»); then a card; then the list while the pointer is over
+ * the ears; then the dots in the ears. Rows come sorted by urgency from Utter.
+ */
+export function agentShow(view: AgentView, dictation: OverlayState["kind"], hover: boolean): AgentShow {
+  if (dictation !== "hidden") return { kind: "none" };
+  if (view.card) return { kind: "card", card: view.card };
+  if (view.rows.length === 0) return { kind: "none" };
+  if (hover) return { kind: "list", rows: view.rows };
+  const all = view.rows.map((r) => dotOf(r.state));
+  const more = all.length > MAX_DOTS;
+  return { kind: "ears", dot: all[0], dots: more ? all.slice(0, MAX_DOTS - 1) : all, more };
+}

@@ -4,7 +4,7 @@ import { useClock } from "./useClock";
 import type { Notch } from "./drop/islandMotion";
 import { events, ipc } from "../lib/ipc";
 import { useApp } from "../lib/store";
-import type { DraftParts, OverlayState } from "../lib/types";
+import type { AgentView, DraftParts, OverlayState } from "../lib/types";
 import { visibleDraft, type TaggedDraft } from "./visibleDraft";
 
 export function Overlay() {
@@ -19,6 +19,8 @@ export function Overlay() {
   const readLevel = useCallback(() => level.current, []);
   const [notch, setNotch] = useState<Notch>(null);
   const [draft, setDraft] = useState<TaggedDraft | null>(null);
+  const [agents, setAgents] = useState<AgentView>({ rows: [], card: null, paused: false });
+  const [hover, setHover] = useState(false);
   // The recording on screen, for tagging drafts as they arrive.
   const recordingStart = useRef<number | null>(null);
   if (state.kind === "recording") recordingStart.current = state.started_at_ms;
@@ -33,8 +35,11 @@ export function Overlay() {
     const un2 = events.overlayLevel((l) => setLevel(Math.min(1, Math.sqrt(l) * 2.2)));
     const un3 = events.overlayRest((r) => setRest(r.shown));
     const un4 = events.overlayDraft((d) => setDraft(d ? { parts: d, start: recordingStart.current } : null));
+    const un5 = events.agents(setAgents);
+    const un6 = events.agentHover((h) => setHover(h.over));
     // Events sent before these listeners existed are lost: ask for the ears again.
     Promise.all([un0, un3]).then(() => ipc.overlayReady().catch(() => {}));
+    un5.then(() => ipc.agentsView().then(setAgents).catch(() => {}));
     // Diagnostics: whether WebKit treats the page as visible when the pill is shown.
     const vis = () => ipc.uiLog("info", `overlay page ${document.visibilityState}`).catch(() => {});
     document.addEventListener("visibilitychange", vis);
@@ -45,6 +50,8 @@ export function Overlay() {
       un2.then((f) => f());
       un3.then((f) => f());
       un4.then((f) => f());
+      un5.then((f) => f());
+      un6.then((f) => f());
       document.removeEventListener("visibilitychange", vis);
     };
   }, []);
@@ -67,7 +74,17 @@ export function Overlay() {
 
   return (
     <>
-      <Stage state={state} rest={rest} notch={notch} level={readLevel} now={now} onClick={onClick} draft={visibleDraft(state, draft)} />
+      <Stage
+        state={state}
+        rest={rest}
+        notch={notch}
+        level={readLevel}
+        now={now}
+        onClick={onClick}
+        draft={visibleDraft(state, draft)}
+        agents={agents}
+        hover={hover}
+      />
       {import.meta.env.DEV && (
         <DevStates onState={setState} onLevel={setLevel} onNotch={setNotch} onRest={setRest} onDraft={(d) => setDraft(d ? { parts: d, start: recordingStart.current } : null)} />
       )}

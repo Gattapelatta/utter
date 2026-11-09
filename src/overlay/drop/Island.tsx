@@ -46,6 +46,10 @@ interface Props {
   cancelled?: boolean;
   /** The live draft shown in the window view. */
   draft?: DraftParts | null;
+  /** An agent card or list (spec 2026-11-09): shown in the window view instead of the draft. */
+  agent?: React.ReactNode;
+  /** The agents' dots in the ears at rest. */
+  ears?: React.ReactNode;
 }
 
 /**
@@ -53,7 +57,7 @@ interface Props {
  * (§4.2). The shape is a clip of the island; the Drop flies between its place on the island
  * and the left ear.
  */
-export function Island({ state, level, now, view = "open", notch = null, cancelled = false, draft = null }: Props) {
+export function Island({ state, level, now, view = "open", notch = null, cancelled = false, draft = null, agent = null, ears = null }: Props) {
   const t = useT();
   const reduced = useMemo(prefersReducedMotion, []);
   // While leaving, the props are those of the last render; AnimatePresence passes the fresh "cancelled".
@@ -106,6 +110,9 @@ export function Island({ state, level, now, view = "open", notch = null, cancell
     right = <span className="island-text">{t(key, { provider: state.provider ?? "", n: state.minutes ?? 0 })}</span>;
   }
 
+  // The agents own the open island: no timer or dictation message beside the Drop.
+  if (agent) right = null;
+
   const folded = { notch, fast, reduced };
   const at = (v: View) => ({
     shape: shapeTarget(v, folded.notch, folded.fast, folded.reduced),
@@ -133,18 +140,32 @@ export function Island({ state, level, now, view = "open", notch = null, cancell
           a fading field must not hang below it. */}
       <motion.div data-draft-clip className="island-shape-clip" initial={at("folded").shape} animate={at(view).shape} exit={at("folded").shape}>
         <AnimatePresence>
-          {(view === "window" || state.kind === "recording") && (
-            <DraftPanel key="draft" draft={view === "window" ? draft : null} shown={view === "window"} />
+          {agent ? (
+            <motion.div
+              key="agent"
+              data-agent-content
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1, transition: { delay: 0.15, duration: 0.25 } }}
+              exit={{ opacity: 0, transition: { duration: 0.15 } }}
+              style={{ position: "absolute", inset: 0, willChange: "opacity" }}
+            >
+              {agent}
+            </motion.div>
+          ) : (
+            (view === "window" || state.kind === "recording") && (
+              <DraftPanel key="draft" draft={view === "window" ? draft : null} shown={view === "window"} />
+            )
           )}
         </AnimatePresence>
       </motion.div>
+      {view === "rest" && ears}
       <div className="island-row">
         <motion.div data-drop-place initial={at("folded").drop} animate={at(view).drop} exit={at("folded").drop}>
           {inEar ? (
             <RestDrop start={gaze.current} reduced={reduced} gazeRef={gaze} />
           ) : (
             <Drop
-              mood={open ? moodFor(state) : "idle"}
+              mood={open && !agent ? moodFor(state) : "idle"}
               rest={view === "rest"}
               level={level}
               translate={translate.current}

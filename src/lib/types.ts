@@ -116,3 +116,32 @@ export type UpdateState =
   | { kind: "waiting_for_idle" }
   | { kind: "ready" }
   | { kind: "failed" };
+
+/** Agents the Drop watches (Rust `agents::*`, spec 2026-11-09). */
+export type AgentKind = "claude_code" | "codex";
+export type SessionKey = { agent: AgentKind; id: string };
+export type SessionState = "permission" | "waiting" | "working" | "done";
+
+export interface AgentRow {
+  key: SessionKey;
+  agent: AgentKind;
+  project: string;
+  state: SessionState;
+  steps: [number, number] | null;
+  /** At most two, the newest last. */
+  actions: string[];
+  summary: string | null;
+  seen: boolean;
+}
+
+export type AgentCard =
+  | { kind: "permission"; id: number; key: SessionKey; tool: string; detail: string; can_always: boolean }
+  | { kind: "done"; key: SessionKey }
+  | { kind: "waiting"; key: SessionKey }
+  | { kind: "after_pause"; done: number; waiting: number };
+
+export interface AgentView {
+  rows: AgentRow[];
+  card: AgentCard | null;
+  paused: boolean;
+}

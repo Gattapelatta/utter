@@ -197,5 +197,17 @@
   "about.drop_title": "This is Drop",
   "about.drop_body": "Your voice — typed anywhere.",
   "about.drop_poke": "Cheer Drop up",
-  "about.copy": "Copy"
+  "about.copy": "Copy",
+  "agents.claude_code": "Claude Code",
+  "agents.codex": "Codex",
+  "agents.permission": "needs permission",
+  "agents.deny": "Deny",
+  "agents.allow": "Allow",
+  "agents.always": "Always",
+  "agents.finished": "finished",
+  "agents.waiting": "is waiting for you",
+  "agents.open": "Open",
+  "agents.ok": "OK",
+  "agents.step": "step {n} of {m}",
+  "agents.after_pause": "While paused: {done} finished, {waiting} waiting for you"
 }
