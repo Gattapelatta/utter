@@ -54,6 +54,8 @@ interface Props {
   onPoke?: () => void;
   /** Overrides the Drop's mood (dizzy). */
   mood?: Mood;
+  /** The agents' island height (the "agent" view). */
+  agentH?: number;
 }
 
 /**
@@ -61,7 +63,7 @@ interface Props {
  * (§4.2). The shape is a clip of the island; the Drop flies between its place on the island
  * and the left ear.
  */
-export function Island({ state, level, now, view = "open", notch = null, cancelled = false, draft = null, agent = null, ears = null, onPoke, mood }: Props) {
+export function Island({ state, level, now, view = "open", notch = null, cancelled = false, draft = null, agent = null, ears = null, onPoke, mood, agentH = 150 }: Props) {
   const t = useT();
   const reduced = useMemo(prefersReducedMotion, []);
   // While leaving, the props are those of the last render; AnimatePresence passes the fresh "cancelled".
@@ -123,10 +125,10 @@ export function Island({ state, level, now, view = "open", notch = null, cancell
 
   const folded = { notch, fast, reduced };
   const at = (v: View) => ({
-    shape: shapeTarget(v, folded.notch, folded.fast, folded.reduced),
-    drop: dropTarget(v, folded.notch, folded.fast, folded.reduced),
+    shape: shapeTarget(v, folded.notch, folded.fast, folded.reduced, agentH),
+    drop: dropTarget(v, folded.notch, folded.fast, folded.reduced, agentH),
   });
-  const open = view === "open" || view === "window";
+  const open = view === "open" || view === "window" || view === "agent";
   const content = contentTarget(open ? "open" : "rest");
   const timer = timerTarget(view === "window" ? "window" : "open");
   const slot = fieldLeaving

@@ -21,8 +21,8 @@ const stage = (agents: AgentView, rest: boolean, hover = false) =>
 describe("Stage with agents", () => {
   it("a card opens the island even when the ears are off (a full-screen app)", () => {
     const c = stage({ rows: [row], card: { kind: "done", key: row.key }, paused: false }, false);
-    expect(c.querySelector("[data-island]")?.getAttribute("data-view")).toBe("window");
-    expect(c.textContent).toContain("shop · Codex finished");
+    expect(c.querySelector("[data-island]")?.getAttribute("data-view")).toBe("agent");
+    expect(c.querySelector("[data-agent-title]")?.textContent?.replace(/\s+/g, " ")).toBe("shop Codex finished");
     expect(c.querySelector("[data-draft-panel]")).toBeNull();
   });
 
@@ -65,7 +65,7 @@ describe("Stage with agents", () => {
 
   it("hovering the ears opens the list", () => {
     const c = stage({ rows: [row], card: null, paused: false }, true, true);
-    expect(c.querySelector("[data-island]")?.getAttribute("data-view")).toBe("window");
+    expect(c.querySelector("[data-island]")?.getAttribute("data-view")).toBe("agent");
     expect(c.querySelector("[data-agent-row]")).not.toBeNull();
   });
 
@@ -91,7 +91,7 @@ describe("easter egg through the stage", () => {
       expect(c.querySelector("[data-agent-note]")).toBeNull();
       fireEvent.click(drop);
       expect(c.querySelector("[data-agent-note]")?.textContent).toBe("Too many pokes. Give me a sec — back in three seconds.");
-      expect(c.querySelector("[data-island]")?.getAttribute("data-view")).toBe("window");
+      expect(c.querySelector("[data-island]")?.getAttribute("data-view")).toBe("agent");
       act(() => vi.advanceTimersByTime(3000));
       // The line fades out (still in the tree while it leaves); the island is back to the ears.
       expect(c.querySelector("[data-island]")?.getAttribute("data-view")).toBe("rest");

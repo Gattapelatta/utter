@@ -26,6 +26,7 @@ const row: AgentRow = {
   seen: false,
 };
 const notch = { width: 179, height: 32 };
+const title = () => document.querySelector("[data-agent-title]")?.textContent?.replace(/\s+/g, " ").trim();
 
 describe("AgentCard", () => {
   it("nothing_drawn_above_notch_height", () => {
@@ -41,7 +42,7 @@ describe("AgentCard", () => {
   it("permission_buttons_send_choice", () => {
     render(<AgentCard card={{ kind: "permission", id: 7, key, tool: "Bash", detail: "git push origin main", can_always: true }} rows={[row]} notch={notch} />);
     expect(screen.getByText("git push origin main")).toBeTruthy();
-    expect(screen.getByText(/shop · Claude Code/)).toBeTruthy();
+    expect(title()).toBe("shop needs permission");
     fireEvent.click(screen.getByText("Always"));
     expect(invoke).toHaveBeenCalledWith("agent_permission", { id: 7, choice: "always" });
     fireEvent.click(screen.getByText("Deny"));
@@ -70,7 +71,7 @@ describe("AgentCard", () => {
 
   it("done_card_shows_summary_and_open", () => {
     render(<AgentCard card={{ kind: "done", key }} rows={[row]} notch={notch} />);
-    expect(screen.getByText("shop · Claude Code finished")).toBeTruthy();
+    expect(title()).toBe("shop Claude Code finished");
     expect(screen.getByText("Исправил округление в billing.ts")).toBeTruthy();
     fireEvent.click(screen.getByText("Open"));
     expect(invoke).toHaveBeenCalledWith("agent_open", { key });
@@ -80,7 +81,7 @@ describe("AgentCard", () => {
 
   it("waiting_card_says_it_waits", () => {
     render(<AgentCard card={{ kind: "waiting", key }} rows={[{ ...row, state: "waiting" }]} notch={notch} />);
-    expect(screen.getByText("shop · Claude Code is waiting for you")).toBeTruthy();
+    expect(title()).toBe("shop Claude Code is waiting for you");
   });
 
   it("after_pause_card_counts", () => {
@@ -105,9 +106,27 @@ describe("AgentCard", () => {
     useApp.setState({ lang: "en" });
   });
 
+  it("the open island is tinted with the state's colour", () => {
+    const { container } = render(<AgentCard card={{ kind: "done", key }} rows={[row]} notch={notch} />);
+    // jsdom cannot parse a radial gradient: the colour is checked through the state it names.
+    expect(container.querySelector("[data-agent-tint]")?.getAttribute("data-agent-tint")).toBe("done");
+    cleanup();
+    const p = render(<AgentCard card={{ kind: "permission", id: 1, key, tool: "Bash", detail: "x", can_always: false }} rows={[row]} notch={notch} />);
+    expect(p.container.querySelector("[data-agent-tint]")?.getAttribute("data-agent-tint")).toBe("waiting");
+  });
+
+  it("there is no grey field any more: the text sits right of the big Drop", () => {
+    const { container } = render(<AgentCard card={{ kind: "done", key }} rows={[row]} notch={notch} />);
+    const panel = container.querySelector("[data-agent-panel]") as HTMLElement;
+    expect(panel.style.background).toBe("");
+    expect(parseFloat(panel.style.left)).toBeGreaterThanOrEqual(24 + 44);
+  });
+
   it("list_rows_show_step_and_actions_and_open", () => {
     render(<AgentList rows={[{ ...row, state: "working" }]} notch={notch} />);
-    expect(screen.getByText("step 2 of 4")).toBeTruthy();
+    expect(title()).toBe("shop Claude Code · step 2 of 4");
+    // The older action done (✓, past tense), the newest one going on (›).
+    expect(screen.getByText("Прочитал a.rs")).toBeTruthy();
     expect(screen.getByText("Правит billing.ts")).toBeTruthy();
     fireEvent.click(screen.getByText("shop"));
     expect(invoke).toHaveBeenCalledWith("agent_open", { key });

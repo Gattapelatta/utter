@@ -6,7 +6,7 @@ import type { Level } from "./drop/Drop";
 import type { AgentView, DraftParts, OverlayState } from "../lib/types";
 import { agentShow, DIZZY_MS, dizzyNow, pokes } from "./agents/agentIsland";
 import { useT } from "../i18n";
-import { AgentCard, AgentList, AgentNote } from "./agents/AgentCard";
+import { AgentCard, agentHeight, AgentList, AgentNote } from "./agents/AgentCard";
 import { AgentEars } from "./agents/AgentEars";
 
 const NO_AGENTS: AgentView = { rows: [], card: null, paused: false };
@@ -59,7 +59,14 @@ export function Stage({ state, rest, notch, level, now, onClick, draft = null, a
   };
   const show = agentShow(agents, state.kind, hover);
   const agentOpen = dizzy || show.kind === "card" || show.kind === "list";
-  const view: View = visible ? (live ? "window" : "open") : agentOpen ? "window" : "rest";
+  const view: View = visible ? (live ? "window" : "open") : agentOpen ? "agent" : "rest";
+  const agentH = dizzy
+    ? agentHeight({ note: true }, notch)
+    : show.kind === "card"
+      ? agentHeight({ card: show.card }, notch)
+      : show.kind === "list"
+        ? agentHeight({ rows: show.rows }, notch)
+        : 150;
   const agent = dizzy ? (
     <AgentNote text={t("agents.dizzy")} notch={notch} />
   ) : show.kind === "card" ? (
@@ -85,6 +92,7 @@ export function Stage({ state, rest, notch, level, now, onClick, draft = null, a
             ears={ears}
             onPoke={visible ? undefined : onPoke}
             mood={dizzy ? "dizzy" : undefined}
+            agentH={agentH}
           />
         </div>
       )}

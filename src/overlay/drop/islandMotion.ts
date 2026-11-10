@@ -4,7 +4,7 @@ export type Notch = { width: number; height: number } | null;
  * What the black shape shows: the full island, the draft window (spec 2026-11-06), the ears at
  * rest (§4.2a), or nothing (in the notch).
  */
-export type View = "open" | "window" | "rest" | "folded";
+export type View = "open" | "window" | "rest" | "folded" | "agent";
 
 /** A shape hanging from the top edge, centred: width, height, bottom corner radius (pt). */
 export type Box = { w: number; h: number; r: number };
@@ -27,6 +27,17 @@ const SLOT = { left: DROP_AT.x + 24 + 44, w: 48 };
 /** In the draft window: the Drop (26 pt) in the left wing, the timer (13 pt) in the right one. */
 const WING_DROP = { x: 37, y: 43 };
 const WING_TIMER = { right: BASE_W - 24, y: 43, scale: 13 / 21 };
+
+/** The agents' island (the user's mockup 2026-11-09): the draft window's width, as tall as its content. */
+export function agentBox(h: number): Box {
+  return { w: BASE_W, h: Math.min(Math.round(h), BASE_H), r: 30 };
+}
+
+/** The agents' big Drop (44 pt): on the left, 24 pt in, its top 14 pt below the notch. */
+const AGENT_DROP = 44;
+export function agentDropCentre(notch: Notch): { x: number; y: number } {
+  return { x: 24 + AGENT_DROP / 2, y: (notch?.height ?? 0) + 14 + AGENT_DROP / 2 };
+}
 
 export function restBox(notch: Notch): Box {
   return notch ? { w: notch.width + 2 * EAR_W, h: notch.height, r: EAR_RADIUS } : PLATE;
@@ -64,11 +75,13 @@ const quick = { duration: 0.15 };
 
 function motionFor(view: View, cancelled: boolean, reduced: boolean) {
   if (reduced) return quick;
-  return view === "open" || view === "window" ? grow : fold(cancelled);
+  return view === "open" || view === "window" || view === "agent" ? grow : fold(cancelled);
 }
 
-function boxFor(view: View, notch: Notch): Box {
+function boxFor(view: View, notch: Notch, agentH: number): Box {
   switch (view) {
+    case "agent":
+      return agentBox(agentH);
     case "open":
       return ISLAND_BOX;
     case "window":
@@ -80,19 +93,23 @@ function boxFor(view: View, notch: Notch): Box {
   }
 }
 
-export function shapeTarget(view: View, notch: Notch, cancelled: boolean, reduced: boolean) {
-  return { clipPath: clip(boxFor(view, notch)), transition: motionFor(view, cancelled, reduced) };
+/** `agentH`: the agents' island height (only for the "agent" view). */
+export function shapeTarget(view: View, notch: Notch, cancelled: boolean, reduced: boolean, agentH = 150) {
+  return { clipPath: clip(boxFor(view, notch, agentH)), transition: motionFor(view, cancelled, reduced) };
 }
 
 const place = (x: number, y: number, s: number) => `translate(${+x.toFixed(4)}px, ${+y.toFixed(4)}px) scale(${+s.toFixed(6)})`;
 
 /** The one Drop flies between its island place and the left ear, together with the shape. */
-export function dropTarget(view: View, notch: Notch, cancelled: boolean, reduced: boolean) {
+export function dropTarget(view: View, notch: Notch, cancelled: boolean, reduced: boolean, _agentH = 150) {
   const o = restDropOffset(notch);
+  const a = agentDropCentre(notch);
   const transform =
     view === "open"
       ? place(0, 0, 1)
-      : view === "window"
+      : view === "agent"
+        ? place(a.x - DROP_AT.x, a.y - DROP_AT.y, AGENT_DROP / 48)
+        : view === "window"
         ? place(WING_DROP.x - DROP_AT.x, WING_DROP.y - DROP_AT.y, REST_DROP / 48)
         : place(o.x, o.y, o.scale);
   return {
@@ -108,7 +125,7 @@ export function dropTarget(view: View, notch: Notch, cancelled: boolean, reduced
  * what the eye reads as "closing" — a short fade looked like a sudden vanish.
  */
 export function contentTarget(view: View) {
-  return view === "open" || view === "window"
+  return view === "open" || view === "window" || view === "agent"
     ? { opacity: 1, transition: { delay: 0.18, duration: 0.22 } }
     : { opacity: 0, transition: { duration: 0.5, ease: [0.4, 0, 0.6, 1] as [number, number, number, number] } };
 }

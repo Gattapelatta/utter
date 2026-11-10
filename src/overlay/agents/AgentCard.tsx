@@ -2,48 +2,122 @@ import { ipc } from "../../lib/ipc";
 import { useT } from "../../i18n";
 import type { AgentCard as Card, AgentKind, AgentRow } from "../../lib/types";
 import type { Notch } from "../drop/islandMotion";
-import { DOT_COLOR, dotOf } from "./agentIsland";
+import { DOT_COLOR, dotOf, type Dot } from "./agentIsland";
 
-/** The panel under the wings of the open island (the draft field's frame, spec 2026-11-06). */
-const FIELD = { left: 14, top: 64, width: 392, bottom: 14 };
-
-/** Nothing under the camera: the panel starts at least 12 pt below the notch. */
-function panelTop(notch: Notch): number {
-  return Math.max(FIELD.top, (notch?.height ?? 0) + 12);
-}
+/**
+ * The agents' open island (the user's mockup 2026-11-09, asked for again 2026-11-10): the big Drop
+ * on the left, the words on its right, the island tinted with the state's colour. Nothing under
+ * the camera: everything starts 14 pt below the notch.
+ */
+const TEXT_LEFT = 84;
+const TEXT_RIGHT = 18;
+const BOTTOM = 14;
+const TITLE_H = 18;
+const LINE_H = 16;
+const BUTTONS_H = 28;
+const GAP = 8;
+/** Characters of the command per line in the mono box (300 pt at 12 px). */
+const MONO_PER_LINE = 44;
+const MONO_LINES = 3;
 
 const TEXT = "#e6e8ea";
 const DIM = "#8a9097";
 
-function Panel({ notch, children }: { notch: Notch; children: React.ReactNode }) {
+function top(notch: Notch): number {
+  return (notch?.height ?? 0) + 14;
+}
+
+/** The Drop (44 pt) must fit too, however short the words. */
+function minHeight(notch: Notch): number {
+  return top(notch) + 44 + 16;
+}
+
+function rgb(hex: string): string {
+  const n = parseInt(hex.slice(1), 16);
+  return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
+}
+
+const detailLines = (detail: string) => Math.min(MONO_LINES, Math.max(1, Math.ceil(detail.length / MONO_PER_LINE)));
+
+/** How tall the island opens for this card or list. */
+export function agentHeight(show: { card: Card } | { rows: AgentRow[] } | { note: true }, notch: Notch): number {
+  let h = top(notch);
+  if ("note" in show) h += 2 * LINE_H;
+  else if ("rows" in show) h += show.rows.slice(0, 3).reduce((s, r, i) => s + (i ? GAP : 0) + TITLE_H + Math.min(2, r.actions.length) * LINE_H, 0);
+  else {
+    const c = show.card;
+    if (c.kind === "after_pause") h += 2 * LINE_H;
+    else if (c.kind === "permission") h += TITLE_H + 6 + detailLines(c.detail || c.tool) * LINE_H + 12 + (c.can_always && c.rule ? 18 : 0) + GAP + BUTTONS_H;
+    else h += TITLE_H + (c.kind === "done" ? 2 * LINE_H + 4 : 0) + GAP + BUTTONS_H;
+  }
+  return Math.max(minHeight(notch), h + BOTTOM);
+}
+
+/** The state's colour washing in from the bottom-right corner (the mockup's «отлив»). */
+function Tint({ dot }: { dot: Dot | null }) {
+  if (!dot) return null;
+  const c = rgb(DOT_COLOR[dot]);
   return (
     <div
-      data-agent-panel
+      data-agent-tint={dot}
       style={{
         position: "absolute",
-        left: `${FIELD.left}px`,
-        top: `${panelTop(notch)}px`,
-        width: `${FIELD.width}px`,
-        bottom: `${FIELD.bottom}px`,
-        boxSizing: "border-box",
-        padding: "10px 12px",
-        background: "#1C1C1E",
-        border: "1px solid #3A3A3D",
-        borderRadius: "14px",
-        color: TEXT,
-        fontFamily: "var(--font)",
-        fontSize: "13px",
-        lineHeight: 1.3,
-        display: "flex",
-        flexDirection: "column",
-        gap: "6px",
-        overflow: "hidden",
-        // The clip it sits in lets clicks through; the buttons must take them.
-        pointerEvents: "auto",
+        inset: 0,
+        pointerEvents: "none",
+        background: `radial-gradient(120% 140% at 100% 100%, rgba(${c}, 0.42) 0%, rgba(${c}, 0.12) 45%, rgba(${c}, 0) 70%)`,
       }}
-    >
-      {children}
-    </div>
+    />
+  );
+}
+
+/** The state dot on the big Drop's top-left (beside the eye, not over it). */
+function DropDot({ dot, notch }: { dot: Dot | null; notch: Notch }) {
+  if (!dot) return null;
+  return (
+    <span
+      data-agent-drop-dot={dot}
+      style={{
+        position: "absolute",
+        left: "22px",
+        top: `${top(notch) - 2}px`,
+        width: 10,
+        height: 10,
+        borderRadius: 5,
+        background: DOT_COLOR[dot],
+        boxShadow: "0 0 0 2px #000",
+      }}
+    />
+  );
+}
+
+function Panel({ notch, dot, children }: { notch: Notch; dot: Dot | null; children: React.ReactNode }) {
+  return (
+    <>
+      <Tint dot={dot} />
+      <DropDot dot={dot} notch={notch} />
+      <div
+        data-agent-panel
+        style={{
+          position: "absolute",
+          left: `${TEXT_LEFT}px`,
+          right: `${TEXT_RIGHT}px`,
+          top: `${top(notch)}px`,
+          bottom: `${BOTTOM}px`,
+          color: TEXT,
+          fontFamily: "var(--font)",
+          fontSize: "13px",
+          lineHeight: `${LINE_H}px`,
+          display: "flex",
+          flexDirection: "column",
+          gap: "6px",
+          overflow: "hidden",
+          // The clip it sits in lets clicks through; the buttons must take them.
+          pointerEvents: "auto",
+        }}
+      >
+        {children}
+      </div>
+    </>
   );
 }
 
@@ -57,13 +131,14 @@ function Button({ label, onClick, strong = false }: { label: string; onClick: ()
       }}
       style={{
         border: "none",
-        borderRadius: "9px",
-        padding: "5px 12px",
-        fontSize: "12px",
+        borderRadius: "14px",
+        height: `${BUTTONS_H}px`,
+        padding: "0 14px",
+        fontSize: "12.5px",
         fontWeight: 600,
         fontFamily: "inherit",
         cursor: "pointer",
-        background: strong ? "#e6e8ea" : "#2C2C2E",
+        background: strong ? "#ffffff" : "rgba(255, 255, 255, 0.12)",
         color: strong ? "#111" : TEXT,
       }}
     >
@@ -77,18 +152,34 @@ function useAgentName(): (a: AgentKind) => string {
   return (a) => t(a === "codex" ? "agents.codex" : "agents.claude_code");
 }
 
-function Title({ text, color }: { text: string; color?: string }) {
+/** «<b>shop</b> Claude Code закончил»: the project bold, the rest dim. */
+function Title({ project, rest }: { project: string; rest: string }) {
   return (
-    <div data-agent-title style={{ display: "flex", alignItems: "center", gap: "7px", fontWeight: 600 }}>
-      {color && <span style={{ width: 8, height: 8, borderRadius: 4, background: color, flex: "none" }} />}
-      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{text}</span>
+    <div data-agent-title style={{ height: `${TITLE_H}px`, lineHeight: `${TITLE_H}px`, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: "none" }}>
+      <b style={{ fontWeight: 700, color: TEXT }}>{project}</b> <span style={{ color: DIM }}>{rest}</span>
     </div>
   );
 }
 
 const Buttons = ({ children }: { children: React.ReactNode }) => (
-  <div style={{ display: "flex", gap: "6px", justifyContent: "flex-end", marginTop: "auto" }}>{children}</div>
+  <div style={{ display: "flex", gap: "8px", marginTop: "auto", flex: "none" }}>{children}</div>
 );
+
+/** «Правит billing.ts» → «Поправил billing.ts»: a finished step reads in the past. */
+const PAST: [RegExp, string][] = [
+  [/^Читает /, "Прочитал "],
+  [/^Правит /, "Поправил "],
+  [/^Запускает /, "Запустил "],
+  [/^Ищет /, "Искал "],
+  [/^Reading /, "Read "],
+  [/^Editing /, "Edited "],
+  [/^Running /, "Ran "],
+  [/^Searching /, "Searched "],
+];
+export function pastOf(action: string): string {
+  for (const [re, to] of PAST) if (re.test(action)) return action.replace(re, to);
+  return action;
+}
 
 /** A card opened by an agent: a permission request, «finished», «waits for you», «while paused». */
 export function AgentCard({ card, rows, notch }: { card: Card; rows: AgentRow[]; notch: Notch }) {
@@ -101,37 +192,40 @@ export function AgentCard({ card, rows, notch }: { card: Card; rows: AgentRow[];
       card.waiting > 0 && t("agents.after_pause_waiting", { n: card.waiting }),
     ].filter(Boolean);
     return (
-      <Panel notch={notch}>
+      <Panel notch={notch} dot={card.waiting > 0 ? "waiting" : "done"}>
         <div>{`${t("agents.after_pause_prefix")} ${parts.join(", ")}`}</div>
       </Panel>
     );
   }
   const row = rows.find((r) => r.key.agent === card.key.agent && r.key.id === card.key.id);
-  const head = `${row?.project ?? ""} · ${name(card.key.agent)}`;
+  const project = row?.project ?? "";
   if (card.kind === "permission") {
     const answer = (choice: "allow" | "always" | "deny") => ipc.agentPermission(card.id, choice).catch(() => {});
     return (
-      <Panel notch={notch}>
-        <Title text={`${head} ${t("agents.permission")}`} color={DOT_COLOR.waiting} />
+      <Panel notch={notch} dot="waiting">
+        <Title project={project} rest={t("agents.permission")} />
         {/* All of it, wrapped and scrollable: nothing the user allows may hide behind «…» (review 2026-11-10). */}
         <div
           data-agent-detail
           style={{
             fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
             fontSize: "12px",
-            lineHeight: 1.35,
+            lineHeight: `${LINE_H}px`,
             color: TEXT,
+            background: "rgba(255, 255, 255, 0.07)",
+            borderRadius: "8px",
+            padding: "6px 10px",
             whiteSpace: "pre-wrap",
             wordBreak: "break-all",
             overflowY: "auto",
-            minHeight: 0,
-            flex: "1 1 auto",
+            maxHeight: `${MONO_LINES * LINE_H + 12}px`,
+            flex: "0 1 auto",
           }}
         >
           {card.detail || card.tool}
         </div>
         {card.can_always && card.rule && (
-          <div data-agent-rule style={{ color: DIM, fontSize: "11px", wordBreak: "break-all", flex: "none" }}>
+          <div data-agent-rule style={{ color: DIM, fontSize: "11px", lineHeight: "14px", wordBreak: "break-all", flex: "none" }}>
             {t("agents.always_rule", { rule: card.rule })}
           </div>
         )}
@@ -145,12 +239,16 @@ export function AgentCard({ card, rows, notch }: { card: Card; rows: AgentRow[];
   }
   const done = card.kind === "done";
   return (
-    <Panel notch={notch}>
-      <Title text={`${head} ${t(done ? "agents.finished" : "agents.waiting")}`} color={DOT_COLOR[done ? "done" : "waiting"]} />
-      {done && row?.summary && <div data-agent-summary style={{ color: TEXT }}>{row.summary}</div>}
+    <Panel notch={notch} dot={done ? "done" : "waiting"}>
+      <Title project={project} rest={`${name(card.key.agent)} ${t(done ? "agents.finished" : "agents.waiting")}`} />
+      {done && row?.summary && (
+        <div data-agent-summary style={{ color: TEXT, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+          {row.summary}
+        </div>
+      )}
       <Buttons>
-        <Button label={t("agents.open")} onClick={() => ipc.agentOpen(card.key).catch(() => {})} />
-        <Button label={t("agents.ok")} onClick={() => ipc.agentDismiss().catch(() => {})} strong />
+        <Button label={t("agents.open")} onClick={() => ipc.agentOpen(card.key).catch(() => {})} strong />
+        <Button label={t("agents.ok")} onClick={() => ipc.agentDismiss().catch(() => {})} />
       </Buttons>
     </Panel>
   );
@@ -159,43 +257,52 @@ export function AgentCard({ card, rows, notch }: { card: Card; rows: AgentRow[];
 /** One line in the open island (the dizzy Drop's words). */
 export function AgentNote({ text, notch }: { text: string; notch: Notch }) {
   return (
-    <Panel notch={notch}>
+    <Panel notch={notch} dot={null}>
       <div data-agent-note>{text}</div>
     </Panel>
   );
 }
 
-/** Pointer over the ears: one line per agent, the most urgent first; a click opens it. */
+/** Pointer over the ears: one entry per agent, the most urgent first; a click opens it. */
 export function AgentList({ rows, notch }: { rows: AgentRow[]; notch: Notch }) {
   const t = useT();
   const name = useAgentName();
   return (
-    <Panel notch={notch}>
-      {rows.slice(0, 3).map((r) => (
-        <div
-          key={`${r.key.agent}:${r.key.id}`}
-          data-agent-row
-          onClick={() => ipc.agentOpen(r.key).catch(() => {})}
-          style={{ cursor: "pointer", display: "flex", flexDirection: "column", gap: "1px" }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: "7px" }}>
-            <span style={{ width: 8, height: 8, borderRadius: 4, background: DOT_COLOR[dotOf(r.state)], flex: "none" }} />
-            <span style={{ fontWeight: 600 }}>{r.project}</span>
-            <span style={{ color: DIM }}>{name(r.agent)}</span>
-            {r.steps && <span style={{ color: DIM, marginLeft: "auto" }}>{t("agents.step", { n: r.steps[0], m: r.steps[1] })}</span>}
+    <Panel notch={notch} dot={rows[0] ? dotOf(rows[0].state) : null}>
+      {rows.slice(0, 3).map((r, i) => {
+        const steps = r.steps ? ` · ${t("agents.step", { n: r.steps[0], m: r.steps[1] })}` : "";
+        const [older, newest] = r.actions.length > 1 ? [r.actions[r.actions.length - 2], r.actions[r.actions.length - 1]] : [null, r.actions[0] ?? null];
+        return (
+          <div
+            key={`${r.key.agent}:${r.key.id}`}
+            data-agent-row
+            onClick={() => ipc.agentOpen(r.key).catch(() => {})}
+            style={{ cursor: "pointer", display: "flex", flexDirection: "column", marginTop: i ? `${GAP - 6}px` : 0, flex: "none" }}
+          >
+            {i === 0 ? (
+              <Title project={r.project} rest={`${name(r.agent)}${steps}`} />
+            ) : (
+              <div style={{ height: `${TITLE_H}px`, display: "flex", alignItems: "center", gap: "6px", whiteSpace: "nowrap", overflow: "hidden" }}>
+                <span style={{ width: 7, height: 7, borderRadius: 4, background: DOT_COLOR[dotOf(r.state)], flex: "none" }} />
+                <b style={{ fontWeight: 700 }}>{r.project}</b>
+                <span style={{ color: DIM }}>{`${name(r.agent)}${steps}`}</span>
+              </div>
+            )}
+            {older && (
+              <div style={{ color: DIM, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {"✓ "}
+                <span data-agent-action>{pastOf(older)}</span>
+              </div>
+            )}
+            {newest && (
+              <div style={{ color: TEXT, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {"› "}
+                <span data-agent-action>{newest}</span>
+              </div>
+            )}
           </div>
-          {r.actions.length > 0 && (
-            <div style={{ color: DIM, fontSize: "12px", paddingLeft: "15px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {r.actions.map((a, i) => (
-                <span key={i}>
-                  {i > 0 && " · "}
-                  <span data-agent-action>{a}</span>
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-      ))}
+        );
+      })}
     </Panel>
   );
 }
