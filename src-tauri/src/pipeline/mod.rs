@@ -1,5 +1,6 @@
 //! Speech → text → (cleanup | translation). Pure orchestration over provider traits.
 
+pub mod fillers;
 pub mod routes;
 
 use crate::providers::{AudioLlm, ProviderError, SpeechToText, TextModel};
@@ -77,7 +78,8 @@ pub fn user_message(transcript: &str) -> String {
     format!("<transcript>\n{transcript}\n</transcript>")
 }
 
-fn normalize(text: &str) -> String {
+/// Lower case, no punctuation, single spaces — for comparing two transcripts.
+pub fn normalize(text: &str) -> String {
     text.chars()
         .map(|c| if c.is_alphanumeric() || c.is_whitespace() { c } else { ' ' })
         .collect::<String>()
