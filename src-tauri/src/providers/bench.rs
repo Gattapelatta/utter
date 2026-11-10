@@ -1,6 +1,7 @@
 //! Live latency benchmark against Gemini with the user's key from the Keychain.
 //! Run: cargo test --release --lib -- --ignored gemini_latency --nocapture
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use base64::Engine;
@@ -391,4 +392,58 @@ async fn backup_candidates() {
             break;
         }
     }
+}
+
+/// Spread of the cleanup request at the end of a dictation: both Lite models get the same text at
+/// once (as the app's hedge would), rounds spaced to stay under 15 requests/minute per model.
+/// Run: cargo test --release --lib -- --ignored cleanup_latency_spread --nocapture
+#[tokio::test]
+#[ignore = "live: ~34 cleanup requests with the user's key"]
+async fn cleanup_latency_spread() {
+    use crate::providers::{defaults, gemini_http_client, GeminiClient, TextModel};
+    let key = KeychainStore::new().get(ProviderKind::Gemini).expect("Gemini key in Keychain");
+    let opts = PipelineOptions { language: Some("ru".into()), cleanup: true, paragraphs: false, style: TranslateStyle::Business };
+    let system = system_prompt(Mode::Dictation, &opts, 0.0).unwrap();
+    let texts = [
+        "ну и в общем давай завтра созвонимся часа в три",
+        "слушай я тут посмотрел отчёт по продажам за сентябрь и ну в целом всё неплохо но вот по рекламе мы как-то э-э перерасходовали бюджет процентов на двадцать наверное и я думаю что надо бы это обсудить с маркетингом до конца недели потому что иначе в октябре будет та же история",
+    ];
+    let http = gemini_http_client();
+    let client = |model: &str| {
+        let mut cfg = defaults::config_for(ProviderKind::Gemini, key.clone());
+        cfg.text_model = model.into();
+        Arc::new(GeminiClient::with_client(cfg, http.clone()))
+    };
+    let (a, b, c) = (client(defaults::GEMINI_TEXT_MODEL), client(defaults::GEMINI_BACKUP_LITE_MODEL), client(defaults::GEMINI_BACKUP_MODEL));
+    a.prewarm().await;
+    let time = |m: Arc<GeminiClient>, text: &'static str, system: String| async move {
+        let t = Instant::now();
+        let r = m.complete(&system, &user_message(text)).await;
+        (t.elapsed().as_millis() as u64, r.map(|c| c.text).map_err(|e| format!("{e:?}")))
+    };
+    let mut rows: Vec<(u64, u64, Option<u64>)> = Vec::new();
+    for round in 0..16 {
+        let started = Instant::now();
+        let text = texts[round % 2];
+        let with_c = round % 4 == 3;
+        let fc = async { if with_c { Some(time(c.clone(), text, system.clone()).await) } else { None } };
+        let ((ta, ra), (tb, rb), rc) = tokio::join!(time(a.clone(), text, system.clone()), time(b.clone(), text, system.clone()), fc);
+        let short = |r: &Result<String, String>| match r { Ok(t) => t.chars().take(50).collect::<String>(), Err(e) => format!("ERR {e}") };
+        println!("round {round:>2} {:<5}  3.5-lite {ta:>5} ms  3.1-lite {tb:>5} ms  {}  | {}", if round % 2 == 0 { "short" } else { "long" },
+            rc.as_ref().map(|(t, _)| format!("3.6-flash {t:>5} ms")).unwrap_or_default(), short(&ra));
+        if rb.is_err() { println!("           3.1-lite: {}", short(&rb)); }
+        rows.push((if ra.is_ok() { ta } else { u64::MAX }, if rb.is_ok() { tb } else { u64::MAX }, rc.map(|(t, r)| if r.is_ok() { t } else { u64::MAX })));
+        let spent = started.elapsed();
+        if spent < Duration::from_secs(5) { tokio::time::sleep(Duration::from_secs(5) - spent).await; }
+    }
+    let stat = |mut v: Vec<u64>, name: &str| {
+        v.sort();
+        let n = v.len();
+        let under = |ms| v.iter().filter(|&&t| t <= ms).count();
+        println!("{name:<22} n={n} median {} ms, max {} ms, ≤1 s {}/{n}, ≤1.5 s {}/{n}", v[n / 2], v[n - 1], under(1000), under(1500));
+    };
+    stat(rows.iter().map(|r| r.0).collect(), "3.5-flash-lite");
+    stat(rows.iter().map(|r| r.1).collect(), "3.1-flash-lite");
+    stat(rows.iter().map(|r| r.0.min(r.1)).collect(), "first of both Lite");
+    stat(rows.iter().filter_map(|r| r.2).collect(), "3.6-flash");
 }
