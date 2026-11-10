@@ -361,7 +361,8 @@ impl PieceProcessor {
             abort(&old.job.attempts);
         }
         let text = tail.trim().to_string();
-        if let Some(a) = self.attempt(&text, false, Priority::End) {
+        // While speaking a guess is a piece like the others: the reserve stays for the end.
+        if let Some(a) = self.attempt(&text, false, self.priority()) {
             let now = Instant::now();
             let job = Job { pieces: 0..0, text, attempts: vec![a], first_sent: now, last_sent: now };
             self.guess = Some(Guess { key, job, answer: None });
@@ -782,7 +783,7 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn guess_counts_in_end_priority() {
+    async fn guess_while_speaking_leaves_the_end_reserve() {
         let main = Fake::new(&[]);
         let mut r = rig(&main, None);
         let now = Instant::now();
@@ -790,9 +791,11 @@ mod tests {
             assert!(r.budget.lock().unwrap().try_take("main", Priority::Speech, now));
         }
         r.p.guess("давай");
-        assert_eq!(main.inputs().len(), 0, "spawned, not yet run");
         drive(&mut r.p, 50).await;
-        assert_eq!(main.inputs(), vec!["давай"]);
+        assert!(main.inputs().is_empty(), "the reserve is for the end");
+        r.p.release("давай");
+        drive(&mut r.p, 50).await;
+        assert_eq!(main.inputs(), vec!["давай", "давай"], "at release the tail takes the reserve");
     }
 
     const LIMIT: Duration = Duration::from_millis(950);
