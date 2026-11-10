@@ -22,6 +22,9 @@ use crate::providers::{ProviderError, TextModel};
 pub const RETRY_AFTER: Duration = Duration::from_millis(2_500);
 /// Attempts one request may have in all; past them it waits for the ones still running.
 const MAX_ATTEMPTS: usize = 4;
+/// After release a translation still unanswered this long gets a fresh request to the main
+/// model (spec §4.3).
+const TRANSLATE_LADDER: Duration = Duration::from_secs(1);
 
 pub struct Models {
     pub main: Arc<dyn TextModel>,
@@ -104,10 +107,19 @@ fn abort(attempts: &[Attempt]) {
     }
 }
 
+/// The text to paste and how it was made.
+#[derive(Debug, PartialEq)]
+pub struct Ends {
+    pub text: String,
+    pub pieces: usize,
+    /// Pieces pasted as heard (no answer by the deadline).
+    pub raw_pieces: usize,
+    pub requests: u32,
+}
+
 pub struct PieceProcessor {
     models: Models,
     system: String,
-    #[allow(dead_code)] // read by `finish` (plan Task 5)
     kind: Kind,
     budget: SharedBudget,
     health: Arc<Mutex<RouteHealth>>,
@@ -119,6 +131,7 @@ pub struct PieceProcessor {
     /// Answers by the first piece they cover: (end of the range, text).
     done: BTreeMap<usize, (usize, String)>,
     guess: Option<Guess>,
+    released: bool,
     requests: u32,
 }
 
@@ -135,6 +148,7 @@ impl PieceProcessor {
             jobs: Vec::new(),
             done: BTreeMap::new(),
             guess: None,
+            released: false,
             requests: 0,
         }
     }
@@ -164,7 +178,26 @@ impl PieceProcessor {
     }
 
     fn priority(&self) -> Priority {
-        Priority::Speech
+        if self.released {
+            Priority::End
+        } else {
+            Priority::Speech
+        }
+    }
+
+    fn retry_every(&self) -> Duration {
+        if self.released && self.kind == Kind::Translate {
+            TRANSLATE_LADDER
+        } else {
+            RETRY_AFTER
+        }
+    }
+
+    /// One more attempt for a request: the backup while healthy and not tried yet, else
+    /// a fresh one to the main model.
+    fn one_more(&mut self, backup_tried: bool, text: &str, p: Priority) -> Option<Attempt> {
+        let try_backup = !backup_tried && self.backup_healthy();
+        self.attempt(text, try_backup, p).or_else(|| if try_backup { self.attempt(text, false, p) } else { None })
     }
 
     fn backup_healthy(&self) -> bool {
@@ -258,22 +291,31 @@ impl PieceProcessor {
     /// gets one more: the backup while healthy and not tried yet, else the main model.
     fn race(&mut self) {
         let now = Instant::now();
-        let p = self.priority();
+        let (p, every) = (self.priority(), self.retry_every());
+        let due = |j: &Job| {
+            let running = j.attempts.iter().filter(|a| !a.over).count();
+            (running == 0 || now.saturating_duration_since(j.last_sent) >= every) && j.attempts.len() < MAX_ATTEMPTS
+        };
         for ji in 0..self.jobs.len() {
             let job = &self.jobs[ji];
-            let running = job.attempts.iter().filter(|a| !a.over).count();
-            let due = running == 0 || now.saturating_duration_since(job.last_sent) >= RETRY_AFTER;
-            if !due || job.attempts.len() >= MAX_ATTEMPTS {
+            if !due(job) {
                 continue;
             }
-            let try_backup = !job.attempts.iter().any(|a| a.backup) && self.backup_healthy();
-            let text = job.text.clone();
-            let started = self.attempt(&text, try_backup, p).or_else(|| if try_backup { self.attempt(&text, false, p) } else { None });
-            if let Some(a) = started {
+            let (tried, text) = (job.attempts.iter().any(|a| a.backup), job.text.clone());
+            if let Some(a) = self.one_more(tried, &text, p) {
                 let job = &mut self.jobs[ji];
                 tracing::info!(attempt = job.attempts.len() + 1, waited_ms = now.saturating_duration_since(job.first_sent).as_millis() as u64, "timing: live text sent again");
                 job.attempts.push(a);
                 job.last_sent = now;
+            }
+        }
+        // After release the tail is a request like the others.
+        let guess = self.guess.as_ref().filter(|g| self.released && g.answer.is_none() && due(&g.job));
+        if let Some((tried, text)) = guess.map(|g| (g.job.attempts.iter().any(|a| a.backup), g.job.text.clone())) {
+            if let Some(a) = self.one_more(tried, &text, p) {
+                let g = self.guess.as_mut().expect("checked");
+                g.job.attempts.push(a);
+                g.job.last_sent = now;
             }
         }
     }
@@ -294,9 +336,14 @@ impl PieceProcessor {
             let pieces = start..i;
             let text = self.joined(&pieces);
             let Some(a) = self.attempt(&text, false, p) else { return };
+            let mut attempts = vec![a];
+            // After release: two attempts at once (spec §4.2 p. 2).
+            if self.released {
+                attempts.extend(self.one_more(false, &text, p));
+            }
             self.assigned[pieces.clone()].iter_mut().for_each(|x| *x = true);
             let now = Instant::now();
-            self.jobs.push(Job { pieces, text, attempts: vec![a], first_sent: now, last_sent: now });
+            self.jobs.push(Job { pieces, text, attempts, first_sent: now, last_sent: now });
         }
     }
 
@@ -321,6 +368,95 @@ impl PieceProcessor {
         }
     }
 
+    /// The key is released: what waits goes now, twice; requests in flight get one more attempt.
+    pub fn release(&mut self, tail: &str) {
+        self.released = true;
+        self.collect();
+        let in_flight = self.jobs.len();
+        self.send_waiting();
+        self.guess_twice(tail);
+        // Requests in flight: one more attempt each, oldest first, while there is room.
+        for ji in 0..in_flight {
+            let job = &self.jobs[ji];
+            if job.attempts.len() >= MAX_ATTEMPTS {
+                continue;
+            }
+            let (tried, text) = (job.attempts.iter().any(|a| a.backup), job.text.clone());
+            let Some(a) = self.one_more(tried, &text, Priority::End) else { break };
+            let job = &mut self.jobs[ji];
+            job.attempts.push(a);
+            job.last_sent = Instant::now();
+        }
+    }
+
+    /// The tail as a guess with two attempts running (unless already answered).
+    fn guess_twice(&mut self, tail: &str) {
+        let key = normalize(tail);
+        if key.is_empty() {
+            return;
+        }
+        if !self.guess.as_ref().is_some_and(|g| g.key == key) {
+            self.guess(tail);
+        }
+        let Some(g) = self.guess.as_ref().filter(|g| g.answer.is_none()) else { return };
+        if g.job.attempts.iter().filter(|a| !a.over).count() >= 2 || g.job.attempts.len() >= MAX_ATTEMPTS {
+            return;
+        }
+        let (tried, text) = (g.job.attempts.iter().any(|a| a.backup), g.job.text.clone());
+        if let Some(a) = self.one_more(tried, &text, Priority::End) {
+            let g = self.guess.as_mut().expect("checked");
+            g.job.attempts.push(a);
+            g.job.last_sent = Instant::now();
+        }
+    }
+
+    /// Every piece answered, and the tail too (by a guess with its words).
+    fn complete(&self, tail_key: &str) -> bool {
+        self.jobs.is_empty()
+            && self.assigned.iter().all(|&a| a)
+            && (tail_key.is_empty() || self.guess.as_ref().is_some_and(|g| g.key == tail_key && g.answer.is_some()))
+    }
+
+    /// Waits for the answers until `deadline`. Cleanup: pieces without an answer go as heard
+    /// (without filler sounds), always `Ok`. Translate: every piece must be translated, else
+    /// `Err(Timeout)` at the deadline.
+    pub async fn finish(mut self, tail: &str, deadline: Instant) -> Result<Ends, ProviderError> {
+        let released = Instant::now();
+        self.released = true;
+        let key = normalize(tail);
+        self.guess_twice(tail);
+        loop {
+            self.poll();
+            if self.complete(&key) {
+                break;
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                if self.kind == Kind::Translate {
+                    return Err(ProviderError::Timeout);
+                }
+                break;
+            }
+            tokio::time::sleep_until(deadline.min(now + Duration::from_millis(10))).await;
+        }
+        let (mut text, mut raw_pieces) = self.assemble();
+        if !key.is_empty() {
+            let tail_text = match self.guess.as_ref().filter(|g| g.key == key).and_then(|g| g.answer.clone()) {
+                Some(answer) => answer.trim().to_string(),
+                None => {
+                    raw_pieces += 1;
+                    strip_fillers(tail.trim())
+                }
+            };
+            if !tail_text.is_empty() {
+                text = if text.is_empty() { tail_text } else { format!("{text} {tail_text}") };
+            }
+        }
+        let pieces = self.segments.len() + usize::from(!key.is_empty());
+        tracing::info!(ready_ms = released.elapsed().as_millis() as u64, pieces, raw_pieces, "timing: live end");
+        Ok(Ends { text, pieces, raw_pieces, requests: self.requests })
+    }
+
     /// Requests started so far (each attempt counts in usage).
     pub fn requests(&self) -> u32 {
         self.requests
@@ -328,7 +464,6 @@ impl PieceProcessor {
 
     /// The answers and verbatim pieces in order; unanswered pieces go as heard. Returns the
     /// text and how many pieces had no answer.
-    #[cfg_attr(not(test), allow(dead_code))] // used by `finish` (plan Task 5)
     fn assemble(&self) -> (String, usize) {
         let mut out: Vec<String> = Vec::new();
         let mut raw = 0;
@@ -431,6 +566,10 @@ mod tests {
     }
 
     fn rig(main: &Arc<Fake>, backup: Option<&Arc<Fake>>) -> Rig {
+        rig_kind(main, backup, Kind::Cleanup)
+    }
+
+    fn rig_kind(main: &Arc<Fake>, backup: Option<&Arc<Fake>>, kind: Kind) -> Rig {
         let budget: SharedBudget = Arc::new(Mutex::new(RequestBudget::new(14, 3)));
         let health = Arc::new(Mutex::new(RouteHealth::new(3)));
         let models = Models {
@@ -439,7 +578,7 @@ mod tests {
             backup: backup.map(|b| b.clone() as Arc<dyn TextModel>),
             backup_id: "backup".into(),
         };
-        let p = PieceProcessor::new(models, "sys".into(), Kind::Cleanup, budget.clone(), health.clone());
+        let p = PieceProcessor::new(models, "sys".into(), kind, budget.clone(), health.clone());
         Rig { p, budget, health }
     }
 
@@ -647,6 +786,140 @@ mod tests {
         assert_eq!(main.inputs().len(), 0, "spawned, not yet run");
         drive(&mut r.p, 50).await;
         assert_eq!(main.inputs(), vec!["давай"]);
+    }
+
+    const LIMIT: Duration = Duration::from_millis(950);
+
+    #[tokio::test(start_paused = true)]
+    async fn release_sends_waiting_pieces_twice() {
+        let main = Fake::new(&[]);
+        let backup = Fake::tagged("B:", &[]);
+        let mut r = rig(&main, Some(&backup));
+        let now = Instant::now();
+        for _ in 0..11 {
+            assert!(r.budget.lock().unwrap().try_take("main", Priority::Speech, now));
+        }
+        r.p.push("раз".into());
+        r.p.push("два".into());
+        assert!(main.inputs().is_empty());
+        r.p.release("");
+        drive(&mut r.p, 10).await;
+        assert_eq!(main.inputs(), vec!["раз два"]);
+        assert_eq!(backup.inputs(), vec!["раз два"]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn release_sends_the_tail_as_a_guess() {
+        let main = Fake::new(&[]);
+        let mut r = rig(&main, None);
+        r.p.release("и в три");
+        drive(&mut r.p, 10).await;
+        assert_eq!(main.inputs(), vec!["и в три", "и в три"], "two attempts at once");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cleanup_mixes_done_and_raw_at_the_deadline() {
+        let main = Fake::new(&[200, 10_000, 10_000, 10_000]);
+        let mut r = rig(&main, None);
+        r.p.push("раз".into());
+        r.p.push("Два, э-э, три.".into());
+        drive(&mut r.p, 300).await;
+        r.p.release("");
+        let t = Instant::now();
+        let ends = r.p.finish("", t + LIMIT).await.unwrap();
+        assert_eq!(t.elapsed(), LIMIT);
+        assert_eq!(ends.text, "EN[раз] Два, три.");
+        assert_eq!((ends.pieces, ends.raw_pieces), (2, 1));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn all_answered_finishes_at_once() {
+        let main = Fake::new(&[]);
+        let mut r = rig(&main, None);
+        r.p.push("раз".into());
+        drive(&mut r.p, 300).await;
+        r.p.release("");
+        let t = Instant::now();
+        let ends = r.p.finish("", t + LIMIT).await.unwrap();
+        assert!(t.elapsed() < Duration::from_millis(10), "{:?}", t.elapsed());
+        assert_eq!(ends, Ends { text: "EN[раз]".into(), pieces: 1, raw_pieces: 0, requests: 1 });
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn full_budget_pastes_raw_within_limit() {
+        let main = Fake::new(&[]);
+        let mut r = rig(&main, None);
+        let now = Instant::now();
+        for _ in 0..14 {
+            assert!(r.budget.lock().unwrap().try_take("main", Priority::End, now));
+        }
+        r.p.push("Ну, э-э, давай.".into());
+        r.p.release("и в три");
+        let t = Instant::now();
+        let ends = r.p.finish("и в три", t + LIMIT).await.unwrap();
+        assert!(main.inputs().is_empty());
+        assert_eq!(t.elapsed(), LIMIT);
+        assert_eq!(ends, Ends { text: "Ну, давай. и в три".into(), pieces: 2, raw_pieces: 2, requests: 0 });
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn tail_answered_by_its_guess() {
+        let main = Fake::new(&[]);
+        let mut r = rig(&main, None);
+        r.p.guess("и в три");
+        drive(&mut r.p, 300).await;
+        r.p.release("и в три");
+        let t = Instant::now();
+        let ends = r.p.finish("И в три.", t + LIMIT).await.unwrap();
+        assert!(t.elapsed() < Duration::from_millis(10));
+        assert_eq!((ends.text.as_str(), ends.raw_pieces), ("EN[и в три]", 0));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn translate_waits_for_every_piece() {
+        let main = Fake::new(&[2_000, 2_000, 2_000]);
+        let mut r = rig_kind(&main, None, Kind::Translate);
+        r.p.push("раз".into());
+        r.p.release("");
+        let t = Instant::now();
+        let ends = r.p.finish("", t + Duration::from_secs(4)).await.unwrap();
+        assert!(t.elapsed() >= Duration::from_millis(2_000) && t.elapsed() <= Duration::from_millis(2_010), "{:?}", t.elapsed());
+        assert_eq!(ends.text, "EN[раз]");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn translate_ladder_adds_a_fresh_main_after_1_s() {
+        let main = Fake::new(&[10_000, 100]);
+        let backup = Fake::tagged("B:", &[10_000]);
+        let mut r = rig_kind(&main, Some(&backup), Kind::Translate);
+        let t0 = Instant::now();
+        r.p.release("давай");
+        let ends = r.p.finish("давай", t0 + Duration::from_secs(4)).await.unwrap();
+        near(main.times(t0), &[0, 1_000]);
+        assert_eq!(backup.inputs().len(), 1);
+        assert_eq!(ends.text, "EN[давай]");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn translate_gives_up_at_its_deadline() {
+        let main = Fake::new(&[10_000, 10_000, 10_000, 10_000]);
+        let mut r = rig_kind(&main, None, Kind::Translate);
+        r.p.push("раз".into());
+        r.p.release("");
+        let t = Instant::now();
+        let out = r.p.finish("", t + Duration::from_secs(4)).await;
+        assert_eq!(out, Err(ProviderError::Timeout));
+        assert_eq!(t.elapsed(), Duration::from_secs(4));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn nothing_to_translate_is_empty() {
+        let main = Fake::new(&[]);
+        let mut r = rig_kind(&main, None, Kind::Translate);
+        r.p.release("");
+        let t = Instant::now();
+        let ends = r.p.finish("", t + Duration::from_secs(4)).await.unwrap();
+        assert_eq!(ends, Ends { text: String::new(), pieces: 0, raw_pieces: 0, requests: 0 });
     }
 
     #[tokio::test(start_paused = true)]
