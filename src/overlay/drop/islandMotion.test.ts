@@ -7,6 +7,18 @@ const template = (s: string) => s.replace(/-?\d+(\.\d+)?(e-?\d+)?/g, "#");
 type T = { transition: { type?: string; duration?: number; ease?: number[]; bounce?: number } };
 
 describe("agent island (the user's mockup 2026-11-09, asked for again 2026-11-10)", () => {
+  it("opens at once and quickly (the user 2026-11-10: no waiting on hover)", () => {
+    const shape = shapeTarget("agent", notch, false, false, 150) as unknown as T;
+    expect(shape.transition.duration).toBeLessThanOrEqual(0.3);
+    expect(shape.transition.bounce).toBe(0);
+    const drop = dropTarget("agent", notch, false, false, 150) as unknown as T;
+    expect(drop.transition.duration).toBeLessThanOrEqual(0.3);
+    const content = contentTarget("agent") as unknown as { transition: { delay: number; duration: number } };
+    expect(content.transition.delay).toBeLessThanOrEqual(0.08);
+    // The dictation island keeps its own, approved timing.
+    expect((shapeTarget("open", notch, false, false) as unknown as T).transition.duration).toBe(0.5);
+  });
+
   it("is as wide as the draft window and as tall as its content", () => {
     expect(agentBox(150)).toEqual({ w: 420, h: 150, r: 30 });
     // Never taller than the window it is cut from.

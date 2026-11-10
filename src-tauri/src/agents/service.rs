@@ -382,6 +382,18 @@ pub fn with_connection(mut view: AgentView, s: &AgentSettings) -> AgentView {
     view
 }
 
+// ---------- Pointer moves near the top ----------
+
+/// How far below a display's top edge pointer moves matter (the window's height, with slack).
+pub const BAND: f64 = 240.0;
+
+/// A move `from_top` points below the display's top: is it in the band now, and must the
+/// watcher look at once (in the band, or just left it)?
+pub fn pointer_band(from_top: f64, was_inside: bool) -> (bool, bool) {
+    let inside = from_top < BAND;
+    (inside, inside || was_inside)
+}
+
 // ---------- How often the watcher looks ----------
 
 /// 100 ms while a card is open or the pointer is over the ears (hover must feel instant);
@@ -472,6 +484,8 @@ mod glue {
         shown: Mutex<Shown>,
         /// What on the island can be clicked (buttons, rows, the Drop), in window points.
         hits: Mutex<Vec<Zone>>,
+        /// Woken by pointer moves near the top: the island opens without waiting for a poll.
+        wake: Arc<tokio::sync::Notify>,
     }
 
     /// What the window currently shows for the agents, so only changes go out.
@@ -514,7 +528,9 @@ mod glue {
 
     pub fn spawn(app: AppHandle) {
         let core = Arc::new(Core::default());
-        app.manage(Agents { core: core.clone(), shown: Mutex::new(Shown::default()), hits: Mutex::new(Vec::new()) });
+        let wake = Arc::new(tokio::sync::Notify::new());
+        app.manage(Agents { core: core.clone(), shown: Mutex::new(Shown::default()), hits: Mutex::new(Vec::new()), wake: wake.clone() });
+        let _ = app.run_on_main_thread(move || watch_pointer(wake));
         tauri::async_runtime::spawn(listen(app.clone(), core.clone()));
         tauri::async_runtime::spawn(watch(app, core));
     }
@@ -674,7 +690,11 @@ mod glue {
                 continue;
             };
             let hover = agents.shown.lock().unwrap_or_else(|e| e.into_inner()).hover;
-            tokio::time::sleep(watch_period(&core.view(), hover, ears_shown(&app))).await;
+            let period = watch_period(&core.view(), hover, ears_shown(&app));
+            tokio::select! {
+                _ = tokio::time::sleep(period) => {}
+                _ = agents.wake.notified() => {}
+            }
             let idle = !busy(&app);
             core.tick(Instant::now(), idle);
             publish(&app);
@@ -745,6 +765,35 @@ mod glue {
             }
         }
     }
+
+    /// Wakes the watcher on every pointer move near the top of a display (and on leaving it), so
+    /// hovering the notch opens the island at once (the user 2026-11-10). A global monitor sees
+    /// moves over other apps only — exactly where the pointer is when it reaches the notch.
+    /// Must run on the main thread.
+    #[cfg(target_os = "macos")]
+    fn watch_pointer(wake: Arc<tokio::sync::Notify>) {
+        use objc2_app_kit::{NSEvent, NSEventMask};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let inside = AtomicBool::new(false);
+        let block = block2::RcBlock::new(move |_event: std::ptr::NonNull<NSEvent>| {
+            let Some((_, y)) = overlay_rest::cursor_point() else { return };
+            let top = overlay_rest::cursor_screen().map(|r| r.y).unwrap_or(0.0);
+            let (now_inside, look) = pointer_band(y - top, inside.load(Ordering::Relaxed));
+            inside.store(now_inside, Ordering::Relaxed);
+            if look {
+                wake.notify_one();
+            }
+        });
+        let mask = NSEventMask::MouseMoved | NSEventMask::LeftMouseDragged;
+        match NSEvent::addGlobalMonitorForEventsMatchingMask_handler(mask, &block) {
+            // The monitor lives as long as Utter.
+            Some(monitor) => std::mem::forget(monitor),
+            None => tracing::warn!("pointer monitor not installed: hover waits for the poll"),
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn watch_pointer(_wake: Arc<tokio::sync::Notify>) {}
 
     /// «Пауза агентов» from the menu: no cards; open permission requests go back to the agent.
     pub fn set_paused(app: &AppHandle, on: bool) {
@@ -1072,6 +1121,16 @@ mod tests {
         assert_eq!(last_message, "All done.");
         assert_eq!(core.ancestors(&key), Some(vec![10, 1]));
         assert!(matches!(core.receive(request("Nope", json!({"session_id":"s"})), Lang::En, t), Incoming::Ignored));
+    }
+
+    #[test]
+    fn moves_near_the_top_wake_the_watcher() {
+        // The user 2026-11-10: the island must open the moment the pointer reaches the notch,
+        // not on the next poll. Moves in the band wake the watcher, and so does leaving it.
+        assert_eq!(pointer_band(10.0, false), (true, true));
+        assert_eq!(pointer_band(BAND - 1.0, true), (true, true));
+        assert_eq!(pointer_band(BAND + 50.0, true), (false, true));
+        assert_eq!(pointer_band(BAND + 50.0, false), (false, false));
     }
 
     #[test]

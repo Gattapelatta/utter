@@ -72,10 +72,13 @@ const fold = (cancelled: boolean) => ({
   ease: [0.4, 0, 0.2, 1] as [number, number, number, number],
 });
 const quick = { duration: 0.15 };
+/** The agents' island opens the moment the pointer arrives (the user 2026-11-10). */
+const snap = { type: "spring" as const, bounce: 0, duration: 0.28 };
 
 function motionFor(view: View, cancelled: boolean, reduced: boolean) {
   if (reduced) return quick;
-  return view === "open" || view === "window" || view === "agent" ? grow : fold(cancelled);
+  if (view === "agent") return snap;
+  return view === "open" || view === "window" ? grow : fold(cancelled);
 }
 
 function boxFor(view: View, notch: Notch, agentH: number): Box {
@@ -125,7 +128,8 @@ export function dropTarget(view: View, notch: Notch, cancelled: boolean, reduced
  * what the eye reads as "closing" — a short fade looked like a sudden vanish.
  */
 export function contentTarget(view: View) {
-  return view === "open" || view === "window" || view === "agent"
+  if (view === "agent") return { opacity: 1, transition: { delay: 0.06, duration: 0.16 } };
+  return view === "open" || view === "window"
     ? { opacity: 1, transition: { delay: 0.18, duration: 0.22 } }
     : { opacity: 0, transition: { duration: 0.5, ease: [0.4, 0, 0.6, 1] as [number, number, number, number] } };
 }

@@ -162,7 +162,7 @@ export function Island({ state, level, now, view = "open", notch = null, cancell
               key="agent"
               data-agent-content
               initial={{ opacity: 0 }}
-              animate={{ opacity: 1, transition: { delay: 0.15, duration: 0.25 } }}
+              animate={{ opacity: 1, transition: { delay: 0.06, duration: 0.16 } }}
               exit={{ opacity: 0, transition: { duration: 0.15 } }}
               style={{ position: "absolute", inset: 0, willChange: "opacity" }}
             >
