@@ -625,14 +625,16 @@ mod glue {
     async fn summarize(app: AppHandle, core: Arc<Core>, key: SessionKey, message: String, s: Settings) {
         let model = if s.agents.summary {
             let state = app.try_state::<AppState>();
-            let (secrets, providers) = match state {
-                Some(st) => (st.secrets.clone(), st.providers.clone()),
+            let (secrets, providers, budget) = match state {
+                Some(st) => (st.secrets.clone(), st.providers.clone(), st.shared.budget.clone()),
                 None => return,
             };
             let kind = s.provider;
+            // No room left beside the dictation's reserve: the plain summary.
+            let room = super::summary_may_use_model(kind, &budget, tokio::time::Instant::now());
             // Reading the key may wait for a Keychain prompt: never on this thread.
             let key_text = tokio::task::spawn_blocking(move || secrets.get(kind)).await.ok().flatten();
-            key_text.map(|k| providers.make(kind, k))
+            key_text.filter(|_| room).map(|k| providers.make(kind, k))
         } else {
             None
         };
@@ -870,8 +872,32 @@ mod glue {
     }
 }
 
+/// An agent summary may use the model only while the dictation's reserve stays free
+/// (spec 2026-11-10 §4.5); other providers have no shared budget.
+pub fn summary_may_use_model(provider: crate::settings::ProviderKind, budget: &crate::providers::budget::SharedBudget, now: tokio::time::Instant) -> bool {
+    use crate::providers::budget::Priority;
+    use crate::providers::defaults::GEMINI_TEXT_MODEL;
+    provider != crate::settings::ProviderKind::Gemini || budget.lock().is_ok_and(|mut b| b.try_take(GEMINI_TEXT_MODEL, Priority::Agent, now))
+}
+
 #[cfg(test)]
 mod tests {
+    #[tokio::test(start_paused = true)]
+    async fn agent_summary_leaves_the_dictation_reserve() {
+        use crate::providers::budget::{Priority, RequestBudget};
+        use crate::providers::defaults::GEMINI_TEXT_MODEL;
+        use crate::settings::ProviderKind;
+        let budget = Arc::new(Mutex::new(RequestBudget::new(14, 3)));
+        let now = tokio::time::Instant::now();
+        assert!(summary_may_use_model(ProviderKind::Gemini, &budget, now));
+        for _ in 0..10 {
+            assert!(budget.lock().unwrap().try_take(GEMINI_TEXT_MODEL, Priority::Speech, now));
+        }
+        assert!(!summary_may_use_model(ProviderKind::Gemini, &budget, now), "only the reserve is left");
+        assert!(summary_may_use_model(ProviderKind::Groq, &budget, now));
+        assert!(budget.lock().unwrap().try_take(GEMINI_TEXT_MODEL, Priority::End, now), "Groq took nothing");
+    }
+
     use super::*;
     use crate::agents::wire::{Request, Source};
     use serde_json::json;
