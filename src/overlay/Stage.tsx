@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ipc } from "../lib/ipc";
+import { agentDropCentre } from "./drop/islandMotion";
 import { AnimatePresence } from "motion/react";
 import { Island } from "./drop/Island";
 import type { Notch, View } from "./drop/islandMotion";
@@ -85,12 +87,34 @@ export function Stage({ state, rest, notch, level, now, onClick, draft = null, a
     ) : show.kind === "list" ? (
       <AgentList rows={show.rows} notch={notch} />
     ) : null;
+  // Where the window may take clicks: right over the buttons, the rows and the Drop — never the
+  // whole island, which lies over a full-screen app's title bar (the user 2026-11-10).
+  const root = useRef<HTMLDivElement>(null);
+  const sentHits = useRef("");
+  useLayoutEffect(() => {
+    const island = root.current?.querySelector("[data-island]");
+    const zones: { x: number; y: number; w: number; h: number }[] = [];
+    if (agentOpen && !visible && island) {
+      for (const el of island.querySelectorAll("[data-hit]")) {
+        const r = el.getBoundingClientRect();
+        zones.push({ x: r.left, y: r.top, w: r.width, h: r.height });
+      }
+      const box = island.getBoundingClientRect();
+      const c = agentDropCentre(notch);
+      zones.push({ x: box.left + c.x - 22, y: box.top + c.y - 22, w: 44, h: 44 });
+    }
+    const key = JSON.stringify(zones);
+    if (key !== sentHits.current) {
+      sentHits.current = key;
+      ipc.agentHitZones(zones).catch(() => {});
+    }
+  });
   const ears = show.kind === "ears" ? <AgentEars notch={notch} dot={show.dot} /> : null;
 
   return (
     <AnimatePresence custom={cancelled}>
       {(visible || rest || agentOpen) && (
-        <div key="island" onClick={onClick}>
+        <div key="island" ref={root} onClick={onClick}>
           <Island
             state={shown.current}
             level={level}

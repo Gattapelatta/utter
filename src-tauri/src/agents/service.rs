@@ -412,7 +412,7 @@ const EARS_W: f64 = 260.0;
 /// Height of the ears' strip at the top of the window.
 const EARS_H: f64 = 40.0;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 pub struct Zone {
     pub x: f64,
     pub y: f64,
@@ -431,9 +431,11 @@ impl Zone {
 /// the clicks kept them from hiding again (the user 2026-11-10).
 pub const TOP_STRIP: f64 = 36.0;
 
-/// The window takes clicks while the pointer is over the Drop's zone and below the top strip.
-pub fn takes_clicks(win: Rect, cursor: (f64, f64), over: bool) -> bool {
-    over && cursor.1 - win.y >= TOP_STRIP
+/// The window takes clicks only right over something to click — `zones`, in the window's own
+/// points, as the island page reports them — and never in the top strip.
+pub fn takes_clicks(win: Rect, cursor: (f64, f64), zones: &[Zone]) -> bool {
+    let (x, y) = (cursor.0 - win.x, cursor.1 - win.y);
+    y >= TOP_STRIP && zones.iter().any(|z| z.contains(x, y))
 }
 
 /// The island is open: a card, or the pointer over the ears with agents to list — or, with an
@@ -468,6 +470,8 @@ mod glue {
     pub struct Agents {
         pub core: Arc<Core>,
         shown: Mutex<Shown>,
+        /// What on the island can be clicked (buttons, rows, the Drop), in window points.
+        hits: Mutex<Vec<Zone>>,
     }
 
     /// What the window currently shows for the agents, so only changes go out.
@@ -510,7 +514,7 @@ mod glue {
 
     pub fn spawn(app: AppHandle) {
         let core = Arc::new(Core::default());
-        app.manage(Agents { core: core.clone(), shown: Mutex::new(Shown::default()) });
+        app.manage(Agents { core: core.clone(), shown: Mutex::new(Shown::default()), hits: Mutex::new(Vec::new()) });
         tauri::async_runtime::spawn(listen(app.clone(), core.clone()));
         tauri::async_runtime::spawn(watch(app, core));
     }
@@ -688,8 +692,8 @@ mod glue {
                 match (overlay_rest::cursor_point(), frame(&app, &frame_cache)) {
                     (Some(p), Some(win)) => {
                         let over = hover_zone(win, open).contains(p.0, p.1);
-                        // Cards too: a window taking clicks in the top strip kept the menu bar up.
-                        (over, takes_clicks(win, p, over || (card && hover_zone(win, true).contains(p.0, p.1))))
+                        let hits = agents.hits.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                        (over, takes_clicks(win, p, &hits))
                     }
                     _ => (false, false),
                 }
@@ -796,6 +800,12 @@ mod glue {
         agents.core.seen(&key);
         open_host(&app, &key);
         publish(&app);
+    }
+
+    /// The island page tells where its buttons, rows and the Drop are (window points).
+    #[tauri::command]
+    pub fn agent_hit_zones(agents: State<Agents>, zones: Vec<Zone>) {
+        *agents.hits.lock().unwrap_or_else(|e| e.into_inner()) = zones;
     }
 
     #[tauri::command]
@@ -1065,14 +1075,19 @@ mod tests {
     }
 
     #[test]
-    fn the_top_strip_never_takes_clicks() {
-        // The user 2026-11-10: a window taking clicks at the very top kept a full-screen app's
-        // menu and title bar from hiding again. Clicks only below the notch's strip.
+    fn only_the_buttons_take_clicks_never_the_top_strip() {
+        // The user 2026-11-10: a window taking clicks where a full-screen app shows its menu and
+        // title bar kept them from hiding — first at the very top, then over the open island.
+        // Clicks only right over a button, a list row or the Drop, and never in the top strip.
         let win = Rect { x: 100.0, y: 0.0, w: 420.0, h: 206.0 };
-        assert!(!takes_clicks(win, (310.0, 0.0), true));
-        assert!(!takes_clicks(win, (310.0, TOP_STRIP - 1.0), true));
-        assert!(takes_clicks(win, (310.0, TOP_STRIP), true));
-        assert!(!takes_clicks(win, (310.0, 80.0), false));
+        let button = Zone { x: 84.0, y: 120.0, w: 80.0, h: 28.0 };
+        let high = Zone { x: 84.0, y: 10.0, w: 80.0, h: 40.0 };
+        assert!(takes_clicks(win, (200.0, 130.0), &[button]));
+        assert!(!takes_clicks(win, (200.0, 100.0), &[button]));
+        assert!(!takes_clicks(win, (300.0, 130.0), &[button]));
+        assert!(!takes_clicks(win, (200.0, TOP_STRIP - 1.0), &[high]));
+        assert!(takes_clicks(win, (200.0, TOP_STRIP), &[high]));
+        assert!(!takes_clicks(win, (200.0, 130.0), &[]));
     }
 
     #[test]

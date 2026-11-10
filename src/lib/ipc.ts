@@ -40,6 +40,7 @@ export const ipc = {
   agentPermission: (id: number, choice: "allow" | "always" | "deny" | "open") => invoke<void>("agent_permission", { id, choice }),
   agentOpen: (key: SessionKey) => invoke<void>("agent_open", { key }),
   agentDismiss: () => invoke<void>("agent_dismiss"),
+  agentHitZones: (zones: { x: number; y: number; w: number; h: number }[]) => invoke<void>("agent_hit_zones", { zones }),
   agentSeen: (key: SessionKey) => invoke<void>("agent_seen", { key }),
 };
 

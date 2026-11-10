@@ -5,7 +5,8 @@ import { Stage } from "../Stage";
 import { useApp } from "../../lib/store";
 import type { AgentRow, AgentView } from "../../lib/types";
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async () => undefined) }));
+const invoke = vi.hoisted(() => vi.fn(async (..._a: unknown[]) => undefined));
+vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
 beforeEach(() => useApp.setState({ lang: "en" }));
 
@@ -24,6 +25,18 @@ describe("Stage with agents", () => {
     expect(c.querySelector("[data-island]")?.getAttribute("data-view")).toBe("agent");
     expect(c.querySelector("[data-agent-title]")?.textContent?.replace(/\s+/g, " ")).toBe("shop Codex finished");
     expect(c.querySelector("[data-draft-panel]")).toBeNull();
+  });
+
+  it("tells Utter where the buttons and the Drop are, and nothing once closed", () => {
+    // The user 2026-11-10: only right over these may the window take clicks (the stuck bar).
+    invoke.mockClear();
+    const zones = () => invoke.mock.calls.filter((c) => c[0] === "agent_hit_zones").map((c) => (c[1] as { zones: unknown[] }).zones);
+    const { rerender } = render(
+      <Stage state={hidden} rest={true} notch={notch} level={0} now={0} agents={{ rows: [row], card: { kind: "done", key: row.key }, paused: false }} />,
+    );
+    expect(zones().slice(-1)[0]).toHaveLength(3); // Open, OK, the Drop
+    rerender(<Stage state={hidden} rest={true} notch={notch} level={0} now={0} agents={{ rows: [row], card: null, paused: false }} />);
+    expect(zones().slice(-1)[0]).toEqual([]);
   });
 
   it("dots sit in the ears at rest, nothing without rows", () => {

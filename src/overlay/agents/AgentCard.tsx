@@ -147,6 +147,7 @@ function Button({ label, onClick, strong = false }: { label: string; onClick: ()
   return (
     <button
       type="button"
+      data-hit
       onClick={(e) => {
         e.stopPropagation();
         onClick();
@@ -299,6 +300,7 @@ export function AgentList({ rows, notch }: { rows: AgentRow[]; notch: Notch }) {
           <div
             key={`${r.key.agent}:${r.key.id}`}
             data-agent-row
+            data-hit
             onClick={() => ipc.agentOpen(r.key).catch(() => {})}
             style={{ cursor: "pointer", display: "flex", flexDirection: "column", marginTop: i ? `${GAP - 6}px` : 0, flex: "none" }}
           >

@@ -194,6 +194,7 @@ pub fn run() {
             agents::service::agent_permission,
             agents::service::agent_open,
             agents::service::agent_dismiss,
+            agents::service::agent_hit_zones,
             agents::service::agent_seen,
         ])
         .setup(|app| {
