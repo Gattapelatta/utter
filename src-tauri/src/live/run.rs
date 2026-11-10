@@ -3,7 +3,7 @@
 //! or tell the orchestrator to take the batch path.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -11,12 +11,21 @@ use tokio::time::Instant;
 
 use super::draft::{DraftComposer, DraftParts, DraftThrottle};
 use super::pcm::Chunker;
-use super::translate::SegmentTranslator;
+use super::process::{Kind, Models, PieceProcessor};
+use crate::pipeline::routes::RouteHealth;
+use crate::providers::budget::SharedBudget;
 use crate::providers::gemini_live::{LiveConfig, LiveConnector, LiveEvent, LiveSession};
-use crate::providers::{ProviderError, TextModel};
+use crate::providers::ProviderError;
 
 /// After release, the final pieces may take this long (spec 2026-11-04 §4.3).
 pub const FINAL_WAIT: Duration = Duration::from_millis(1_500);
+/// Dictation with cleanup: release → text ready, final pieces included (spec 2026-11-10 §4.2;
+/// the user's limit is 1 s to the paste, ~50 ms go to delivery).
+pub const DICTATION_LIMIT: Duration = Duration::from_millis(950);
+/// Translation: release → every piece translated, else the batch path (spec §4.3).
+pub const TRANSLATE_LIMIT: Duration = Duration::from_secs(4);
+/// A draft tail with no voice this long is sent for processing ahead (spec §4.1 p. 4).
+pub const GUESS_QUIET: Duration = Duration::from_millis(400);
 /// Google sends the last final piece ~0.4 s after the stream ends but no `turnComplete`
 /// (measured 2026-11-06): once a final piece leaves nothing unheard, finish this soon after.
 pub const SETTLE_AFTER_FINAL: Duration = Duration::from_millis(150);
@@ -38,9 +47,8 @@ pub const STALL_VOICE_MS: u32 = 1_500;
 pub enum Finisher {
     /// Dictation without cleanup: the pieces as heard.
     Plain,
-    /// Cleanup or translation of the pieces while speaking (`SegmentTranslator`); `backup`
-    /// races a slow or failed request at the end.
-    Text { model: Arc<dyn TextModel>, system: String, backup: Option<Arc<dyn TextModel>> },
+    /// Cleanup or translation of the pieces while speaking (`PieceProcessor`).
+    Text { models: Models, system: String, kind: Kind, budget: SharedBudget, health: Arc<Mutex<RouteHealth>> },
 }
 
 pub struct LiveRequest {
@@ -52,8 +60,9 @@ pub struct LiveRequest {
 
 #[derive(Debug, PartialEq)]
 pub enum LiveOutcome {
-    Final { text: String, raw: String, requests: u32 },
-    /// The verbatim text is there, its cleanup or translation did not come.
+    /// `partial`: some pieces went as heard (no cleanup by the deadline).
+    Final { text: String, raw: String, requests: u32, partial: bool },
+    /// Translate only: the verbatim text is there, its translation did not come.
     Unfinished { raw: String, requests: u32 },
     /// Take the batch path with the recorded audio.
     Fallback { reason: String, error: Option<ProviderError> },
@@ -207,13 +216,12 @@ async fn run(
     let mut throttle = DraftThrottle::default();
     let mut translator = match req.finisher {
         Finisher::Plain => None,
-        Finisher::Text { model, system, backup } => {
-            let t = SegmentTranslator::new(model, system);
-            Some(match backup {
-                Some(b) => t.with_backup(b),
-                None => t,
-            })
-        }
+        Finisher::Text { models, system, kind, budget, health } => Some(PieceProcessor::new(models, system, kind, budget, health)),
+    };
+    let kind = translator.as_ref().map(PieceProcessor::kind);
+    let final_wait = if kind == Some(Kind::Cleanup) { DICTATION_LIMIT } else { FINAL_WAIT };
+    let quiet_for = |log: &std::collections::VecDeque<(Instant, u32)>, d: Duration| {
+        log.iter().filter(|(t, _)| t.elapsed() < d).map(|(_, ms)| ms).sum::<u32>() < TAIL_VOICE_MS
     };
     let mut failed: Option<String> = None;
     let mut first_interim = true;
@@ -249,7 +257,7 @@ async fn run(
                 Some(LiveEvent::Segment(t)) => {
                     composer.on_segment(&t);
                     if let Some(tr) = translator.as_mut() {
-                        tr.push(t, Instant::now().into_std());
+                        tr.push(t);
                     }
                     if released_at.is_some() && composer.parts().interim.is_empty() {
                         settle_at = Some(Instant::now() + SETTLE_AFTER_FINAL);
@@ -283,6 +291,9 @@ async fn run(
                     session.finish();
                     let now = Instant::now();
                     released_at = Some(now);
+                    if let Some(tr) = translator.as_mut() {
+                        tr.release(&composer.parts().interim);
+                    }
                     if composer.parts().interim.is_empty() && quiet_tail(&last_voice) {
                         settle_at = Some(now + QUIET_AT_RELEASE);
                     }
@@ -290,6 +301,8 @@ async fn run(
                 Some(Cmd::Cancel) | None => return LiveOutcome::Cancelled,
             },
             _ = tokio::time::sleep_until(settle_at.unwrap_or_else(Instant::now)), if settle_at.is_some() => break,
+            // The wait for final pieces ends on time, not on the next 100 ms tick.
+            _ = tokio::time::sleep_until(released_at.map_or_else(Instant::now, |r| r + final_wait)), if released_at.is_some() => break,
             _ = tick.tick() => {
                 if failed.is_none() && last_event.elapsed() >= STALL_AFTER && voice_unanswered >= STALL_VOICE_MS {
                     tracing::warn!(voice_ms = voice_unanswered, "live: no answer while speaking; the connection is taken as lost");
@@ -301,9 +314,13 @@ async fn run(
                 }
                 show(&composer, &mut throttle);
                 if let Some(tr) = translator.as_mut() {
-                    tr.poll(Instant::now().into_std());
+                    let tail = composer.parts().interim;
+                    if released_at.is_none() && !tail.is_empty() && quiet_for(&last_voice, GUESS_QUIET) {
+                        tr.guess(&tail);
+                    }
+                    tr.poll();
                 }
-                if released_at.is_some_and(|r| r.elapsed() >= FINAL_WAIT) {
+                if released_at.is_some_and(|r| r.elapsed() >= final_wait) {
                     break;
                 }
             }
@@ -322,19 +339,20 @@ async fn run(
     if raw.trim().is_empty() {
         return LiveOutcome::Fallback { reason: "empty".into(), error: None };
     }
-    let Some(mut tr) = translator else {
-        return LiveOutcome::Final { text: raw.clone(), raw, requests: 0 };
+    let Some(tr) = translator else {
+        return LiveOutcome::Final { text: raw.clone(), raw, requests: 0, partial: false };
     };
     // The last draft without a final piece is the last piece.
     let tail = composer.parts().interim;
-    if !tail.is_empty() {
-        tr.push(tail, Instant::now().into_std());
-    }
+    let limit = if kind == Some(Kind::Cleanup) { DICTATION_LIMIT } else { TRANSLATE_LIMIT };
+    let deadline = released_at.unwrap_or_else(Instant::now) + limit;
     let before = tr.requests();
-    match tr.finish().await {
-        Ok((text, requests)) if !text.trim().is_empty() => LiveOutcome::Final { text, raw, requests },
-        Ok((_, requests)) => LiveOutcome::Unfinished { raw, requests },
-        Err(_) => LiveOutcome::Unfinished { raw, requests: before + 1 },
+    match (kind, tr.finish(&tail, deadline).await) {
+        (_, Ok(e)) if !e.text.trim().is_empty() => LiveOutcome::Final { text: e.text, raw, requests: e.requests, partial: e.raw_pieces > 0 },
+        // Cleanup took everything away: paste the words as heard rather than nothing.
+        (Some(Kind::Cleanup), Ok(e)) => LiveOutcome::Final { text: raw.clone(), raw, requests: e.requests, partial: true },
+        (_, Ok(e)) => LiveOutcome::Unfinished { raw, requests: e.requests },
+        (_, Err(_)) => LiveOutcome::Unfinished { raw, requests: before.max(1) },
     }
 }
 
@@ -355,7 +373,8 @@ async fn wait_for_end(rx: &mut mpsc::UnboundedReceiver<Cmd>, released: bool) {
 mod tests {
     use super::*;
     use crate::providers::gemini_live::TranscribeMode;
-    use crate::providers::Completion;
+    use crate::live::process::{Kind, Models};
+    use crate::providers::{Completion, TextModel};
     use std::sync::Mutex;
 
     /// The server's side of a fake session.
@@ -415,6 +434,14 @@ mod tests {
             tokio::time::sleep(self.delay).await;
             Ok(Completion { text: self.reply.clone(), total_tokens: 1 })
         }
+    }
+
+    /// A processing finisher over one fake model, with a fresh budget and health.
+    fn text(model: Arc<FakeModel>, kind: Kind) -> Finisher {
+        let models = Models { main: model, main_id: "main".into(), backup: None, backup_id: "backup".into() };
+        let budget = Arc::new(Mutex::new(crate::providers::budget::RequestBudget::new(14, 3)));
+        let health = Arc::new(Mutex::new(crate::pipeline::routes::RouteHealth::new(3)));
+        Finisher::Text { models, system: "sys".into(), kind, budget, health }
     }
 
     type Drafts = Arc<Mutex<Vec<(Instant, Option<DraftParts>)>>>;
@@ -480,7 +507,7 @@ mod tests {
         settle().await;
         say(&s, LiveEvent::TurnComplete);
         let out = r.outcome.await.unwrap();
-        assert_eq!(out, LiveOutcome::Final { text: "Привет, мир.".into(), raw: "Привет, мир.".into(), requests: 0 });
+        assert_eq!(out, LiveOutcome::Final { text: "Привет, мир.".into(), raw: "Привет, мир.".into(), requests: 0, partial: false });
         let drafts = r.drafts.lock().unwrap().clone();
         assert!(drafts.iter().all(|(_, p)| p.is_some()), "the orchestrator clears the window after pasting");
         let shown: Vec<_> = drafts.iter().filter(|(_, p)| p.is_some()).collect();
@@ -503,7 +530,7 @@ mod tests {
         let t = Instant::now();
         say(&s, LiveEvent::Segment("Привет, мир.".into()));
         let out = r.outcome.await.unwrap();
-        assert_eq!(out, LiveOutcome::Final { text: "Привет, мир.".into(), raw: "Привет, мир.".into(), requests: 0 });
+        assert_eq!(out, LiveOutcome::Final { text: "Привет, мир.".into(), raw: "Привет, мир.".into(), requests: 0, partial: false });
         assert!(t.elapsed() <= SETTLE_AFTER_FINAL + Duration::from_millis(20), "{:?}", t.elapsed());
     }
 
@@ -660,7 +687,7 @@ mod tests {
     async fn clean_dictation_runs_text_model() {
         let c = FakeConnector::ok();
         let model = FakeModel::new("X.", 100);
-        let r = start(c.clone(), Finisher::Text { model: model.clone(), system: "clean".into(), backup: None });
+        let r = start(c.clone(), text(model.clone(), Kind::Cleanup));
         let s = c.server().await;
         say(&s, LiveEvent::Segment("x".into()));
         settle().await;
@@ -668,7 +695,8 @@ mod tests {
         settle().await;
         say(&s, LiveEvent::TurnComplete);
         let out = r.outcome.await.unwrap();
-        let LiveOutcome::Final { text, raw, requests } = out else { panic!("{out:?}") };
+        let LiveOutcome::Final { text, raw, requests, partial } = out else { panic!("{out:?}") };
+        assert!(!partial);
         assert_eq!((text.as_str(), raw.as_str()), ("X.", "x"));
         assert!(requests >= 1);
     }
@@ -676,7 +704,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn translate_returns_model_answer() {
         let c = FakeConnector::ok();
-        let r = start(c.clone(), Finisher::Text { model: FakeModel::new("Hello.", 50), system: "translate".into(), backup: None });
+        let r = start(c.clone(), text(FakeModel::new("Hello.", 50), Kind::Translate));
         let s = c.server().await;
         say(&s, LiveEvent::Segment("Привет.".into()));
         settle().await;
@@ -739,26 +767,60 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn text_model_timeout_is_unfinished() {
+    async fn translate_without_answer_is_unfinished() {
         let c = FakeConnector::ok();
-        let r = start(c.clone(), Finisher::Text { model: FakeModel::new("never", 10_000), system: "clean".into(), backup: None });
+        let r = start(c.clone(), text(FakeModel::new("never", 10_000), Kind::Translate));
         let s = c.server().await;
         say(&s, LiveEvent::Segment("сырой текст".into()));
         settle().await;
+        let t = Instant::now();
         r.handle.release();
         settle().await;
         say(&s, LiveEvent::TurnComplete);
-        let t = Instant::now();
         let out = r.outcome.await.unwrap();
         assert!(matches!(&out, LiveOutcome::Unfinished { raw, .. } if raw == "сырой текст"), "{out:?}");
-        assert!(t.elapsed() <= Duration::from_millis(3_100), "{:?}", t.elapsed());
+        assert!(t.elapsed() <= TRANSLATE_LIMIT + Duration::from_millis(20), "{:?}", t.elapsed());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cleanup_ends_within_the_dictation_limit() {
+        let c = FakeConnector::ok();
+        let r = start(c.clone(), text(FakeModel::new("never", 10_000), Kind::Cleanup));
+        let s = c.server().await;
+        say(&s, LiveEvent::Segment("Начало, э-э, речи.".into()));
+        say(&s, LiveEvent::Interim("и хвост".into()));
+        settle().await;
+        let t = Instant::now();
+        r.handle.release();
+        let out = r.outcome.await.unwrap();
+        assert!(t.elapsed() <= DICTATION_LIMIT + Duration::from_millis(20), "{:?}", t.elapsed());
+        let LiveOutcome::Final { text, partial, .. } = out else { panic!("{out:?}") };
+        assert_eq!(text, "Начало, речи. и хвост");
+        assert!(partial);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn quiet_tail_is_guessed_before_release() {
+        let c = FakeConnector::ok();
+        let model = FakeModel::new("Давай завтра.", 100);
+        let r = start(c.clone(), text(model.clone(), Kind::Cleanup));
+        let s = c.server().await;
+        say(&s, LiveEvent::Interim("давай завтра".into()));
+        tokio::time::sleep(GUESS_QUIET + Duration::from_millis(150)).await;
+        assert_eq!(*model.calls.lock().unwrap(), 1, "sent before the key is let go");
+        r.handle.release();
+        let t = Instant::now();
+        let LiveOutcome::Final { text, partial, .. } = r.outcome.await.unwrap() else { panic!() };
+        assert_eq!(text, "Давай завтра.");
+        assert!(!partial);
+        assert!(t.elapsed() <= DICTATION_LIMIT + Duration::from_millis(20), "{:?}", t.elapsed());
     }
 
     #[tokio::test(start_paused = true)]
     async fn cancel_sends_nothing() {
         let c = FakeConnector::ok();
         let model = FakeModel::new("x", 0);
-        let r = start(c.clone(), Finisher::Text { model: model.clone(), system: "clean".into(), backup: None });
+        let r = start(c.clone(), text(model.clone(), Kind::Cleanup));
         let s = c.server().await;
         say(&s, LiveEvent::Interim("отмена".into()));
         settle().await;

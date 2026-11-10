@@ -13,7 +13,9 @@ use crate::audio::{self, dsp, segment, Captured};
 use crate::controller::{Command, Controller, HotkeyEvent, State};
 use crate::history::{EntryStatus, History, HistoryEntry};
 use crate::jobs::{JobIds, OrderedDelivery};
+use crate::live::process::{Kind as ProcessKind, Models};
 use crate::live::run::{self as live_run, Finisher, LiveHandle, LiveOutcome, LiveRequest};
+use crate::providers::budget::{RequestBudget, SharedBudget};
 use crate::output::{CopyReason, DeliveryOutcome};
 use crate::permissions::PermStatus;
 use crate::pipeline::routes::{self, AttemptOutcome, Route, RouteHealth};
@@ -171,6 +173,8 @@ pub struct Shared {
     pub data_dir: PathBuf,
     /// Onboarding trial: results go to the settings window instead of being pasted.
     pub trial: AtomicBool,
+    /// Text requests per model this minute, shared by dictations and agents (spec 2026-11-10 §5.2).
+    pub budget: SharedBudget,
 }
 
 impl Shared {
@@ -181,6 +185,7 @@ impl Shared {
             settings: Mutex::new(settings),
             data_dir,
             trial: AtomicBool::new(false),
+            budget: Arc::new(Mutex::new(RequestBudget::new(defaults::GEMINI_LITE_PER_MINUTE, defaults::END_RESERVE))),
         }
     }
 
@@ -748,11 +753,18 @@ impl Orchestrator {
             None => Finisher::Plain,
             Some(system) => {
                 let route = Route::Direct { model: defaults::GEMINI_TRANSLATE_MODEL };
-                let model: Arc<dyn TextModel> = self.deps.providers.make_route(s.provider, key.clone(), route);
-                // The other Lite model (own quota) races a slow answer (live check 2026-11-07).
+                let main: Arc<dyn TextModel> = self.deps.providers.make_route(s.provider, key.clone(), route);
+                // The other Lite model (own quota) races a slow answer while it is healthy.
                 let backup = Route::Direct { model: defaults::GEMINI_BACKUP_LITE_MODEL };
                 let backup: Arc<dyn TextModel> = self.deps.providers.make_route(s.provider, key.clone(), backup);
-                Finisher::Text { model, system, backup: Some(backup) }
+                let models = Models {
+                    main,
+                    main_id: defaults::GEMINI_TRANSLATE_MODEL.into(),
+                    backup: Some(backup),
+                    backup_id: defaults::GEMINI_BACKUP_LITE_MODEL.into(),
+                };
+                let kind = if mode == Mode::Translate { ProcessKind::Translate } else { ProcessKind::Cleanup };
+                Finisher::Text { models, system, kind, budget: self.shared.budget.clone(), health: self.route_health.clone() }
             }
         };
         let cfg = LiveConfig {
@@ -809,7 +821,7 @@ impl Orchestrator {
     fn live_done(&mut self, seq: u64, outcome: LiveOutcome) {
         let Some(job) = self.live_jobs.remove(&seq) else { return };
         match outcome {
-            LiveOutcome::Final { text, raw, requests } => {
+            LiveOutcome::Final { text, raw, requests, partial: _ } => {
                 let out = JobOutput { text, raw, degraded: false, tokens: 0, llm_used: requests > 0, direct: false };
                 let _ = self.tx.send(Input::JobDone(job.id, Box::new(job.result(Ok(out), 1 + requests))));
             }

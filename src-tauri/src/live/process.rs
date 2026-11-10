@@ -457,6 +457,10 @@ impl PieceProcessor {
         Ok(Ends { text, pieces, raw_pieces, requests: self.requests })
     }
 
+    pub fn kind(&self) -> Kind {
+        self.kind
+    }
+
     /// Requests started so far (each attempt counts in usage).
     pub fn requests(&self) -> u32 {
         self.requests

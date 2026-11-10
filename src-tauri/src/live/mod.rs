@@ -4,4 +4,3 @@ pub mod draft;
 pub mod pcm;
 pub mod process;
 pub mod run;
-pub mod translate;
