@@ -178,7 +178,8 @@ async fn run(
     };
     let mut chunker = Chunker::new(req.rate, req.channels);
     let mut held: Vec<Vec<i16>> = Vec::new();
-    let mut released = false;
+    // When the key was let go, if before the socket opened (the 1 s limit counts from it).
+    let mut released: Option<Instant> = None;
 
     // Recording goes on while the socket opens; its audio is held meanwhile.
     let connect = connector.connect(req.cfg);
@@ -189,26 +190,26 @@ async fn run(
                 Ok(s) => break s,
                 Err(e) => {
                     failed_flag.store(true, Ordering::SeqCst);
-                    wait_for_end(&mut rx, released).await;
+                    wait_for_end(&mut rx, released.is_some()).await;
                     return LiveOutcome::Fallback { reason: e.to_string(), error: Some(e) };
                 }
             },
-            cmd = rx.recv(), if !released => match cmd {
+            cmd = rx.recv(), if released.is_none() => match cmd {
                 Some(Cmd::Audio(a)) => {
                     heard(&a, voice_rate, &mut last_voice);
                     held.extend(chunker.push(&a));
                 }
-                Some(Cmd::Release) => released = true,
+                Some(Cmd::Release) => released = Some(Instant::now()),
                 Some(Cmd::Cancel) | None => return LiveOutcome::Cancelled,
             },
         }
     };
     send(&session, std::mem::take(&mut held));
     let mut released_at = None;
-    if released {
+    if released.is_some() {
         send(&session, chunker.flush().into_iter().collect());
         session.finish();
-        released_at = Some(Instant::now());
+        released_at = released;
     }
 
     let mut session = session;
@@ -390,16 +391,21 @@ mod tests {
     struct FakeConnector {
         fail: Option<ProviderError>,
         server: Mutex<Option<Server>>,
+        /// How long opening the socket takes.
+        delay: Duration,
     }
     impl FakeConnector {
         fn ok() -> Arc<Self> {
-            Arc::new(Self { fail: None, server: Mutex::new(None) })
+            Arc::new(Self { fail: None, server: Mutex::new(None), delay: Duration::ZERO })
         }
         fn failing(e: ProviderError) -> Arc<Self> {
-            Arc::new(Self { fail: Some(e), server: Mutex::new(None) })
+            Arc::new(Self { fail: Some(e), server: Mutex::new(None), delay: Duration::ZERO })
+        }
+        fn slow(ms: u64) -> Arc<Self> {
+            Arc::new(Self { fail: None, server: Mutex::new(None), delay: Duration::from_millis(ms) })
         }
         async fn server(&self) -> Server {
-            for _ in 0..100 {
+            for _ in 0..2_000 {
                 if let Some(s) = self.server.lock().unwrap().take() {
                     return s;
                 }
@@ -411,6 +417,7 @@ mod tests {
     #[async_trait::async_trait]
     impl LiveConnector for FakeConnector {
         async fn connect(&self, _: LiveConfig) -> Result<LiveSession, ProviderError> {
+            tokio::time::sleep(self.delay).await;
             if let Some(e) = &self.fail {
                 return Err(e.clone());
             }
@@ -801,6 +808,21 @@ mod tests {
         let LiveOutcome::Final { text, partial, .. } = out else { panic!("{out:?}") };
         assert_eq!(text, "Начало, речи. и хвост");
         assert!(partial);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn quick_tap_limit_counts_from_the_key() {
+        // The key is let go before the socket opens (400 ms): the 1 s limit still counts from it.
+        let c = FakeConnector::slow(400);
+        let r = start(c.clone(), text(FakeModel::new("never", 10_000), Kind::Cleanup));
+        r.handle.audio(&[0.1; 1_600]);
+        let t = Instant::now();
+        r.handle.release();
+        let s = c.server().await;
+        say(&s, LiveEvent::Interim("да".into()));
+        let out = r.outcome.await.unwrap();
+        assert!(t.elapsed() <= DICTATION_LIMIT + Duration::from_millis(20), "{:?}", t.elapsed());
+        assert!(matches!(&out, LiveOutcome::Final { text, .. } if text == "да"), "{out:?}");
     }
 
     #[tokio::test(start_paused = true)]
