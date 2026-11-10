@@ -166,7 +166,6 @@ export function Island({ state, level, now, view = "open", notch = null, cancell
           )}
         </AnimatePresence>
       </motion.div>
-      {view === "rest" && ears}
       <div className="island-row">
         <motion.div
           data-drop-place
@@ -199,6 +198,8 @@ export function Island({ state, level, now, view = "open", notch = null, cancell
           {right}
         </motion.span>
       </div>
+      {/* After the row: the agents' dots are painted over the Drop, never behind it. */}
+      {view === "rest" && ears}
     </div>
   );
 }

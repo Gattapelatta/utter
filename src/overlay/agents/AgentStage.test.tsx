@@ -35,6 +35,15 @@ describe("Stage with agents", () => {
     expect(none.querySelector("[data-agent-ears]")).toBeNull();
   });
 
+  it("the state dot is drawn in front of the Drop, not behind it", () => {
+    // The user 2026-11-10: half of the blue dot hid behind the Drop in the ear.
+    const c = stage({ rows: [{ ...row, state: "working" }], card: null, paused: false }, true);
+    const dot = c.querySelector("[data-agent-ears]") as HTMLElement;
+    const drop = c.querySelector("[data-drop-place]") as HTMLElement;
+    // Later in the tree = painted on top (both are positioned, no z-index).
+    expect(drop.compareDocumentPosition(dot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("hovering the ears opens the list", () => {
     const c = stage({ rows: [row], card: null, paused: false }, true, true);
     expect(c.querySelector("[data-island]")?.getAttribute("data-view")).toBe("window");
