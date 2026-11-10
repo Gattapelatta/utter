@@ -6,7 +6,8 @@ export type Dot = "working" | "waiting" | "done";
 /** What the island shows for the agents (spec 2026-11-09 §3.2). */
 export type AgentShow =
   | { kind: "none" }
-  | { kind: "ears"; dot: Dot; dots: Dot[]; more: boolean }
+  /** `dot`: the Drop's state dot; null when an agent is connected but nothing happens. */
+  | { kind: "ears"; dot: Dot | null; dots: Dot[]; more: boolean }
   | { kind: "list"; rows: AgentRow[] }
   | { kind: "card"; card: AgentCard };
 
@@ -27,7 +28,10 @@ export function dotOf(state: SessionState): Dot {
 export function agentShow(view: AgentView, dictation: OverlayState["kind"], hover: boolean): AgentShow {
   if (dictation !== "hidden") return { kind: "none" };
   if (view.card) return { kind: "card", card: view.card };
-  if (view.rows.length === 0) return { kind: "none" };
+  if (view.rows.length === 0) {
+    // Connected, nothing happening: the colours stay in the right ear, the Drop has no dot.
+    return view.connected && !view.paused ? { kind: "ears", dot: null, dots: [], more: false } : { kind: "none" };
+  }
   if (hover) return { kind: "list", rows: view.rows };
   const all = view.rows.map((r) => dotOf(r.state));
   const more = all.length > MAX_DOTS;

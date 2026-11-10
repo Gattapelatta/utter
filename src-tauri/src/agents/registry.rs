@@ -94,6 +94,8 @@ pub struct AgentView {
     pub rows: Vec<AgentRow>,
     pub card: Option<Card>,
     pub paused: bool,
+    /// An agent is switched on in Utter (the right ear keeps its colours; set by the service).
+    pub connected: bool,
 }
 
 struct Session {
@@ -351,12 +353,17 @@ impl Registry {
 
     pub fn view(&self) -> AgentView {
         if self.paused {
-            return AgentView { rows: Vec::new(), card: None, paused: true };
+            return AgentView { rows: Vec::new(), card: None, paused: true, connected: false };
         }
         let mut sessions: Vec<&Session> =
             self.sessions.values().filter(|s| !(s.row.state == SessionState::Done && s.row.seen)).collect();
         sessions.sort_by_key(|s| (s.row.state, std::cmp::Reverse(s.seq)));
-        AgentView { rows: sessions.into_iter().map(|s| s.row.clone()).collect(), card: self.top().cloned(), paused: false }
+        AgentView {
+            rows: sessions.into_iter().map(|s| s.row.clone()).collect(),
+            card: self.top().cloned(),
+            paused: false,
+            connected: false,
+        }
     }
 }
 

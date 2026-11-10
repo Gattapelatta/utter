@@ -23,7 +23,7 @@ const CORNER: [number, number][] = [
  * bright, the current one (the Drop's) shimmering. Beside the notch only: nothing is drawn under
  * the camera. Without a notch there is no right ear: only the state dot.
  */
-export function AgentEars({ notch, dot }: { notch: Notch; dot: Dot }) {
+export function AgentEars({ notch, dot }: { notch: Notch; dot: Dot | null }) {
   const h = notch?.height ?? 32;
   const left = notch ? BASE_W / 2 - notch.width / 2 - EAR_W / 2 : BASE_W / 2;
   const right = notch ? BASE_W / 2 + notch.width / 2 + EAR_W / 2 : null;
@@ -33,6 +33,7 @@ export function AgentEars({ notch, dot }: { notch: Notch; dot: Dot }) {
   const y0 = h / 2 - (DOT + step) / 2;
   return (
     <div data-agent-ears style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+      {dot && (
       <span
         data-agent-dot={dot}
         style={{
@@ -46,6 +47,7 @@ export function AgentEars({ notch, dot }: { notch: Notch; dot: Dot }) {
           boxShadow: "0 0 0 1.5px #000",
         }}
       />
+      )}
       {right !== null &&
         ALL.map((c, i) => (
           <span

@@ -41,6 +41,15 @@ describe("agentShow", () => {
     expect(shown).toEqual({ kind: "ears", dot: "waiting", dots: ["waiting", "working", "done"], more: false });
   });
 
+  it("connected_agent_keeps_the_colours_in_the_ear", () => {
+    // The user 2026-11-10: with Claude Code connected the right ear keeps its three colours even
+    // when no agent works; the Drop then has no dot.
+    expect(agentShow({ ...view([]), connected: true }, "hidden", false)).toEqual({ kind: "ears", dot: null, dots: [], more: false });
+    expect(agentShow({ ...view([]), connected: false }, "hidden", false)).toEqual({ kind: "none" });
+    expect(agentShow({ ...view([]), connected: true, paused: true }, "hidden", false)).toEqual({ kind: "none" });
+    expect(agentShow({ ...view([]), connected: true }, "recording", false)).toEqual({ kind: "none" });
+  });
+
   it("five_agents_show_three_dots_and_plus", () => {
     const rows = ["a", "b", "c", "d", "e"].map((id) => row(id, "working"));
     const shown = agentShow(view(rows), "hidden", false);

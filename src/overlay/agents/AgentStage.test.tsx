@@ -47,6 +47,13 @@ describe("Stage with agents", () => {
     expect(none.querySelector("[data-agent-ears]")).toBeNull();
   });
 
+  it("connected but idle: three colours in the ear, no dot on the Drop, nothing shimmers", () => {
+    const c = stage({ rows: [], card: null, paused: false, connected: true }, true);
+    expect(c.querySelectorAll("[data-agent-ear-dot]")).toHaveLength(3);
+    expect(c.querySelector("[data-agent-dot]")).toBeNull();
+    expect(c.querySelector("[data-pulse]")).toBeNull();
+  });
+
   it("the state dot is drawn in front of the Drop, not behind it", () => {
     // The user 2026-11-10: half of the blue dot hid behind the Drop in the ear.
     const c = stage({ rows: [{ ...row, state: "working" }], card: null, paused: false }, true);

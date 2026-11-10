@@ -166,4 +166,6 @@ export interface AgentView {
   rows: AgentRow[];
   card: AgentCard | null;
   paused: boolean;
+  /** An agent is switched on in Utter: the right ear keeps its colours. */
+  connected?: boolean;
 }

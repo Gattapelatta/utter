@@ -363,6 +363,13 @@ impl Core {
     }
 }
 
+/// The view as the island gets it: with whether an agent is switched on (the user 2026-11-10:
+/// the right ear keeps its three colours while one is).
+pub fn with_connection(mut view: AgentView, s: &AgentSettings) -> AgentView {
+    view.connected = s.claude_code || s.codex;
+    view
+}
+
 // ---------- How often the watcher looks ----------
 
 /// 100 ms while a card is open or the pointer is over the ears (hover must feel instant);
@@ -457,7 +464,7 @@ mod glue {
     /// Sends the view to the island if it changed.
     pub fn publish(app: &AppHandle) {
         let Some(agents) = app.try_state::<Agents>() else { return };
-        let view = agents.core.view();
+        let view = with_connection(agents.core.view(), &settings(app).agents);
         let mut shown = agents.shown.lock().unwrap_or_else(|e| e.into_inner());
         if shown.view.as_ref() != Some(&view) {
             let _ = app.emit_to(overlay::LABEL, "overlay://agents", &view);
@@ -727,8 +734,8 @@ mod glue {
     }
 
     #[tauri::command]
-    pub fn agents_view(agents: State<Agents>) -> AgentView {
-        agents.core.view()
+    pub fn agents_view(app: AppHandle, agents: State<Agents>) -> AgentView {
+        with_connection(agents.core.view(), &settings(&app).agents)
     }
 
     #[tauri::command]
@@ -953,9 +960,9 @@ mod tests {
         use crate::agents::registry::{AgentRow, SessionState};
         let key = SessionKey { agent: crate::agents::event::Agent::Codex, id: "t".into() };
         let row = AgentRow { key: key.clone(), agent: key.agent, project: "p".into(), state: SessionState::Done, steps: None, actions: vec![], summary: None, seen: false };
-        let none = AgentView { rows: vec![], card: None, paused: false };
-        let dots = AgentView { rows: vec![row.clone()], card: None, paused: false };
-        let card = AgentView { rows: vec![row], card: Some(Card::Done { key }), paused: false };
+        let none = AgentView { rows: vec![], card: None, paused: false, connected: false };
+        let dots = AgentView { rows: vec![row.clone()], card: None, paused: false, connected: false };
+        let card = AgentView { rows: vec![row], card: Some(Card::Done { key }), paused: false, connected: false };
         // An unseen green dot may stay for hours: no 10 Hz polling for it.
         assert_eq!(watch_period(&dots, false, true), Duration::from_millis(300));
         assert_eq!(watch_period(&dots, true, true), Duration::from_millis(100));
@@ -989,6 +996,14 @@ mod tests {
         apply_in(home.path(), HELPER, &on(true, false), None, BOTH);
         assert!(install::claude_installed(&std::fs::read_to_string(&claude).unwrap(), HELPER));
         assert_eq!(std::fs::metadata(&claude).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+
+    #[test]
+    fn view_says_whether_an_agent_is_connected() {
+        let core = Core::default();
+        assert!(!with_connection(core.view(), &on(false, false)).connected);
+        assert!(with_connection(core.view(), &on(true, false)).connected);
+        assert!(with_connection(core.view(), &on(false, true)).connected);
     }
 
     #[test]

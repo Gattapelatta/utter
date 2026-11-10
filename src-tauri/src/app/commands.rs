@@ -78,6 +78,10 @@ pub fn update_settings(app: &AppHandle, state: &AppState, next: Settings) -> Res
         w.0.notify_one();
     }
     let _ = app.emit("ui://settings", &next);
+    if prev.agents != next.agents {
+        // The ears show or drop the agents' colours at once.
+        crate::agents::service::publish(app);
+    }
     Ok(())
 }
 
