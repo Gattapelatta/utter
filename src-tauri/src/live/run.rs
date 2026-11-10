@@ -296,7 +296,7 @@ async fn run(
                     let now = Instant::now();
                     released_at = Some(now);
                     if let Some(tr) = translator.as_mut() {
-                        tr.release(&composer.parts().interim);
+                        tr.release(composer.current());
                     }
                     if composer.parts().interim.is_empty() && quiet_tail(&last_voice) {
                         settle_at = Some(now + QUIET_AT_RELEASE);
@@ -318,9 +318,9 @@ async fn run(
                 }
                 show(&composer, &mut throttle);
                 if let Some(tr) = translator.as_mut() {
-                    let tail = composer.parts().interim;
+                    let tail = composer.current();
                     if released_at.is_none() && !tail.is_empty() && quiet_for(&last_voice, GUESS_QUIET) {
-                        tr.guess(&tail);
+                        tr.guess(tail);
                     }
                     tr.poll();
                 }
@@ -347,7 +347,7 @@ async fn run(
         return LiveOutcome::Final { text: raw.clone(), raw, requests: 0, partial: false };
     };
     // The last draft without a final piece is the last piece.
-    let tail = composer.parts().interim;
+    let tail = composer.current().to_string();
     let limit = if kind == Some(Kind::Cleanup) { DICTATION_LIMIT } else { TRANSLATE_LIMIT };
     let deadline = released_at.unwrap_or_else(Instant::now) + limit;
     let before = tr.requests();
@@ -801,6 +801,37 @@ mod tests {
         let LiveOutcome::Final { text, partial, .. } = out else { panic!("{out:?}") };
         assert_eq!(text, "Начало, речи. и хвост");
         assert!(partial);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn growing_tail_is_processed_whole() {
+        // Google grows one interim per piece: "давай" → "давай встретимся" → "давай встретимся завтра".
+        let c = FakeConnector::ok();
+        let model = FakeModel::new("Давай встретимся завтра.", 100);
+        let r = start(c.clone(), text(model.clone(), Kind::Cleanup));
+        let s = c.server().await;
+        for t in ["давай", "давай встретимся", "давай встретимся завтра"] {
+            say(&s, LiveEvent::Interim(t.into()));
+            settle().await;
+        }
+        r.handle.release();
+        let LiveOutcome::Final { text, partial, .. } = r.outcome.await.unwrap() else { panic!() };
+        assert_eq!(text, "Давай встретимся завтра.");
+        assert!(!partial);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn growing_tail_without_answer_keeps_every_word() {
+        let c = FakeConnector::ok();
+        let r = start(c.clone(), text(FakeModel::new("never", 10_000), Kind::Cleanup));
+        let s = c.server().await;
+        for t in ["давай", "давай встретимся", "давай встретимся завтра"] {
+            say(&s, LiveEvent::Interim(t.into()));
+            settle().await;
+        }
+        r.handle.release();
+        let LiveOutcome::Final { text, .. } = r.outcome.await.unwrap() else { panic!() };
+        assert_eq!(text, "давай встретимся завтра");
     }
 
     #[tokio::test(start_paused = true)]

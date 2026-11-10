@@ -80,6 +80,11 @@ impl DraftComposer {
         }
     }
 
+    /// The whole draft of the piece being heard (white and grey words), empty after its final.
+    pub fn current(&self) -> &str {
+        self.current.trim()
+    }
+
     /// Final pieces, plus the last draft when its final never came (§4.3).
     pub fn final_text(&self) -> String {
         join(self.segments.iter().map(String::as_str).chain(std::iter::once(self.current.as_str())))
