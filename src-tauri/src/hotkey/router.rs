@@ -67,7 +67,7 @@ impl Router {
             Some(Mode::Dictation)
         } else if *key == self.bindings.translate {
             Some(Mode::Translate)
-        } else if *key == self.bindings.task {
+        } else if self.bindings.task.as_ref() == Some(key) {
             Some(Mode::Task)
         } else {
             None
@@ -160,7 +160,7 @@ mod tests {
     }
 
     fn router() -> Router {
-        Router::new(Hotkeys { dictation: KeyId::RightAlt, translate: KeyId::RightMeta, task: KeyId::RightCtrl })
+        Router::new(Hotkeys { dictation: KeyId::RightAlt, translate: KeyId::RightMeta, task: Some(KeyId::RightCtrl) })
     }
 
     #[test]
@@ -184,14 +184,14 @@ mod tests {
     fn a_letter_hotkey_never_reaches_the_app() {
         // A typing key as a hotkey (the user 2026-11-10: any key): its press and release are
         // swallowed, or holding it would type «aaaa» into the app.
-        let mut r = Router::new(Hotkeys { dictation: KeyId::RightAlt, translate: KeyId::RightMeta, task: KeyId::Raw(0) });
+        let mut r = Router::new(Hotkeys { dictation: KeyId::RightAlt, translate: KeyId::RightMeta, task: Some(KeyId::Raw(0)) });
         let t = Instant::now();
         let down = r.filter(KeyId::Raw(0), true, false, t);
         assert_eq!(down, Routed { event: Some(HotkeyEvent::Down(Mode::Task)), swallow: true });
         assert!(r.swallows_repeat(&KeyId::Raw(0)));
         assert!(r.filter(KeyId::Raw(0), false, false, t).swallow);
         // A modifier hotkey is left alone (its flag changes harm nobody).
-        let mut r = Router::new(Hotkeys { dictation: KeyId::RightAlt, translate: KeyId::RightMeta, task: KeyId::LeftCtrl });
+        let mut r = Router::new(Hotkeys { dictation: KeyId::RightAlt, translate: KeyId::RightMeta, task: Some(KeyId::LeftCtrl) });
         assert!(!r.filter(KeyId::LeftCtrl, true, false, t).swallow);
     }
 
@@ -239,7 +239,7 @@ mod tests {
 
     #[test]
     fn caps_lock_emits_tap() {
-        let mut r = Router::new(Hotkeys { dictation: KeyId::CapsLock, translate: KeyId::RightMeta, task: KeyId::RightCtrl });
+        let mut r = Router::new(Hotkeys { dictation: KeyId::CapsLock, translate: KeyId::RightMeta, task: Some(KeyId::RightCtrl) });
         assert_eq!(r.route(KeyId::CapsLock, true, true), Some(HotkeyEvent::Tap(D)));
         assert_eq!(r.route(KeyId::CapsLock, true, true), Some(HotkeyEvent::Tap(D)));
     }
@@ -248,7 +248,7 @@ mod tests {
     fn set_bindings_clears_held_keys() {
         let mut r = router();
         r.route(KeyId::RightAlt, true, false);
-        r.set_bindings(Hotkeys { dictation: KeyId::F(13), translate: KeyId::F(14), task: KeyId::F(15) });
+        r.set_bindings(Hotkeys { dictation: KeyId::F(13), translate: KeyId::F(14), task: Some(KeyId::F(15)) });
         assert_eq!(r.route(KeyId::Raw(0), true, false), None);
         assert_eq!(r.route(KeyId::F(13), true, false), Some(HotkeyEvent::Down(D)));
     }

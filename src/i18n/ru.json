@@ -238,5 +238,6 @@
   "keys.left_ctrl": "Левый ⌃",
   "keys.left_shift": "Левый ⇧",
   "keys.space": "Пробел",
-  "hotkeys.types_text": "Пока эта клавиша назначена, она не печатает"
+  "hotkeys.types_text": "Пока эта клавиша назначена, она не печатает",
+  "keys.none": "Не назначена"
 }

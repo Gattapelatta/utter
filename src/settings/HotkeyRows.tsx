@@ -51,10 +51,10 @@ export function HotkeyRows({ hints = true, translateLabel, task = true }: { hint
       const key = await ipc.captureKey();
       if (!live.current.mounted) return;
       const hotkeys = useApp.getState().settings?.hotkeys ?? s.hotkeys;
-      const other = MODES.find((m) => m.mode !== mode && hotkeys[m.field] !== undefined && sameKey(key, hotkeys[m.field]!));
+      const other = MODES.find((m) => m.mode !== mode && hotkeys[m.field] != null && sameKey(key, hotkeys[m.field]!));
       if (other) {
         setError({ mode, text: t("errors.taken", { mode: t(other.label) }) });
-      } else if (hotkeys[field] === undefined || !sameKey(key, hotkeys[field]!)) {
+      } else if (hotkeys[field] == null || !sameKey(key, hotkeys[field]!)) {
         await update({ hotkeys: { ...hotkeys, [field]: key } });
       }
     } catch (e) {
@@ -79,8 +79,7 @@ export function HotkeyRows({ hints = true, translateLabel, task = true }: { hint
                 {error.text}
               </div>
             ) : (
-              s.hotkeys[field] !== undefined &&
-              typesText(s.hotkeys[field]!) && <div className="mt-1 text-[13px] leading-snug text-text-secondary">{t("hotkeys.types_text")}</div>
+              typesText(s.hotkeys[field]) && <div className="mt-1 text-[13px] leading-snug text-text-secondary">{t("hotkeys.types_text")}</div>
             )
           }
         >
@@ -96,7 +95,7 @@ export function HotkeyRows({ hints = true, translateLabel, task = true }: { hint
               </>
             ) : (
               <>
-                <Keycap label={keyLabel(s.hotkeys[field]!, t)} pressed={pressed[mode]} />
+                <Keycap label={s.hotkeys[field] ? keyLabel(s.hotkeys[field]!, t) : t("keys.none")} pressed={pressed[mode]} />
                 <Button disabled={capturing !== null} onClick={() => capture(mode, field)}>
                   {t("common.change")}
                 </Button>

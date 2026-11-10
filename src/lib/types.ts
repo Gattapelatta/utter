@@ -36,7 +36,7 @@ export interface Settings {
   translate_style: TranslateStyle;
   provider: ProviderKind;
   /** `task`: the «Задача» key (spec 2026-11-09 §3.7); absent only in older fixtures. */
-  hotkeys: { dictation: KeyId; translate: KeyId; task?: KeyId };
+  hotkeys: { dictation: KeyId; translate: KeyId; task?: KeyId | null };
   history_enabled: boolean;
   onboarding_done: boolean;
   notch_drop: boolean;

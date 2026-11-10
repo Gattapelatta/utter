@@ -110,6 +110,15 @@ describe("general, hotkeys and translation sections", () => {
     expect(screen.getByText("Пока эта клавиша назначена, она не печатает")).toBeTruthy();
   });
 
+  it("newcomers have no task key until they pick one", async () => {
+    useApp.setState({ settings: { ...base, hotkeys: { dictation: "RightAlt", translate: "RightMeta", task: null } } });
+    render(<Hotkeys />);
+    expect(screen.getByText("Не назначена")).toBeTruthy();
+    captureResult = async () => ({ F: 7 });
+    await act(async () => fireEvent.click(screen.getAllByText("Изменить")[2]));
+    expect(last()?.hotkeys.task).toEqual({ F: 7 });
+  });
+
   it("left Control can be the task key", async () => {
     useApp.setState({ settings: { ...base, hotkeys: { dictation: "RightAlt", translate: "RightMeta", task: "RightCtrl" } } });
     captureResult = async () => "LeftCtrl";

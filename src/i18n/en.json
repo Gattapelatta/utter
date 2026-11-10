@@ -238,5 +238,6 @@
   "keys.left_ctrl": "Left ⌃",
   "keys.left_shift": "Left ⇧",
   "keys.space": "Space",
-  "hotkeys.types_text": "While this key is assigned, it does not type"
+  "hotkeys.types_text": "While this key is assigned, it does not type",
+  "keys.none": "Not set"
 }

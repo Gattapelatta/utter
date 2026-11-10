@@ -38,6 +38,6 @@ export function keyLabel(k: KeyId, t: T): string {
 }
 
 /** A key that types text: as a hotkey it stops typing (Utter swallows it). */
-export const typesText = (k: KeyId) => typeof k === "object" && "Raw" in k;
+export const typesText = (k: KeyId | null | undefined) => !!k && typeof k === "object" && "Raw" in k;
 
 export const sameKey = (a: KeyId, b: KeyId) => JSON.stringify(a) === JSON.stringify(b);

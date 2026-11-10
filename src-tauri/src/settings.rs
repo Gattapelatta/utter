@@ -55,26 +55,17 @@ pub enum UiLanguage {
 pub struct Hotkeys {
     pub dictation: KeyId,
     pub translate: KeyId,
-    /// «Задача» (spec 2026-11-09 §3.7); files from before it get the default.
-    #[serde(default = "default_task_key")]
-    pub task: KeyId,
-}
-
-/// Keys «Задача» may take by default, in order: the first one the other two do not use.
-const TASK_KEYS: [KeyId; 3] = [KeyId::RightCtrl, KeyId::RightShift, KeyId::CapsLock];
-
-fn default_task_key() -> KeyId {
-    TASK_KEYS[0].clone()
+    /// «Задача» (spec 2026-11-09 §3.7). None: not assigned — newcomers pick their own key
+    /// (the user 2026-11-10: a MacBook has no right ⌃).
+    #[serde(default)]
+    pub task: Option<KeyId>,
 }
 
 impl Hotkeys {
-    /// A task key that collides with dictation or translation (an old file whose user already put
-    /// one of them on right ⌃) moves to the first free default.
+    /// A task key on dictation's or translation's key could never fire: it is dropped.
     fn fix_task_key(&mut self) {
-        if self.task == self.dictation || self.task == self.translate {
-            if let Some(free) = TASK_KEYS.iter().find(|k| **k != self.dictation && **k != self.translate) {
-                self.task = free.clone();
-            }
+        if self.task.as_ref().is_some_and(|k| *k == self.dictation || *k == self.translate) {
+            self.task = None;
         }
     }
 }
@@ -156,12 +147,12 @@ impl Default for Settings {
 
 #[cfg(not(windows))]
 fn default_hotkeys() -> Hotkeys {
-    Hotkeys { dictation: KeyId::RightAlt, translate: KeyId::RightMeta, task: KeyId::RightCtrl }
+    Hotkeys { dictation: KeyId::RightAlt, translate: KeyId::RightMeta, task: None }
 }
 
 #[cfg(windows)]
 fn default_hotkeys() -> Hotkeys {
-    Hotkeys { dictation: KeyId::RightAlt, translate: KeyId::RightCtrl, task: KeyId::RightShift }
+    Hotkeys { dictation: KeyId::RightAlt, translate: KeyId::RightCtrl, task: None }
 }
 
 /// Loads settings; a missing or unreadable file yields defaults.
@@ -297,7 +288,8 @@ mod tests {
         std::fs::write(&path, r#"{"hotkeys":{"dictation":"CapsLock","translate":"RightMeta"}}"#).unwrap();
         let s = load(&path, None);
         assert_eq!(s.hotkeys.dictation, KeyId::CapsLock);
-        assert_eq!(s.hotkeys.task, KeyId::RightCtrl);
+        // The user 2026-11-10: newcomers get no task key; each one picks their own.
+        assert_eq!(s.hotkeys.task, None);
         // The file was not taken for a corrupt one.
         assert!(!dir.path().join("settings.json.bak").exists());
     }
@@ -306,10 +298,12 @@ mod tests {
     fn task_key_moves_off_a_taken_key() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
-        std::fs::write(&path, r#"{"hotkeys":{"dictation":"RightCtrl","translate":"RightMeta"}}"#).unwrap();
+        std::fs::write(&path, r#"{"hotkeys":{"dictation":"RightCtrl","translate":"RightMeta","task":"RightCtrl"}}"#).unwrap();
         let s = load(&path, None);
-        assert_ne!(s.hotkeys.task, KeyId::RightCtrl);
-        assert_ne!(s.hotkeys.task, KeyId::RightMeta);
+        // A task key on another mode's key is dropped (it could never fire).
+        assert_eq!(s.hotkeys.task, None);
+        std::fs::write(&path, r#"{"hotkeys":{"dictation":"RightAlt","translate":"RightMeta","task":"LeftCtrl"}}"#).unwrap();
+        assert_eq!(load(&path, None).hotkeys.task, Some(KeyId::LeftCtrl));
     }
 
     #[test]
