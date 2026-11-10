@@ -73,10 +73,18 @@ fn remove_ours(settings: &mut Map<String, Value>) -> Result<(), InstallError> {
     Ok(())
 }
 
-fn to_text(settings: Map<String, Value>) -> String {
+/// The file's text; it ends with a newline only if the user's did (a new file does), so turning
+/// Utter off gives back the very same bytes (live check 2026-11-10).
+fn to_text(settings: Map<String, Value>, newline: bool) -> String {
     let mut out = serde_json::to_string_pretty(&Value::Object(settings)).unwrap_or_default();
-    out.push('\n');
+    if newline {
+        out.push('\n');
+    }
     out
+}
+
+fn ends_line(current: Option<&str>) -> bool {
+    current.is_none_or(|t| t.trim().is_empty() || t.ends_with('\n'))
 }
 
 /// Adds Utter's hook to every event in `CLAUDE_EVENTS` (replacing an older one, e.g. after the app moved).
@@ -100,13 +108,13 @@ pub fn claude_install(current: Option<&str>, helper: &str) -> Result<String, Ins
             .ok_or_else(|| InstallError::Corrupt(format!("`hooks.{event}` is not a list")))?
             .push(group);
     }
-    Ok(to_text(settings))
+    Ok(to_text(settings, ends_line(current)))
 }
 
 pub fn claude_uninstall(current: &str) -> Result<String, InstallError> {
     let mut settings = parse_settings(Some(current))?;
     remove_ours(&mut settings)?;
-    Ok(to_text(settings))
+    Ok(to_text(settings, ends_line(Some(current))))
 }
 
 /// Every event has Utter's hook with exactly this helper path.
@@ -403,6 +411,17 @@ mod tests {
         // Nothing but ours → the `hooks` key goes away.
         let out = json_of(&claude_uninstall(&claude_install(Some("{\"a\":1}"), HELPER).unwrap()).unwrap());
         assert_eq!(out, json!({"a": 1}));
+    }
+
+    #[test]
+    fn a_file_without_a_final_newline_comes_back_without_one() {
+        // Live check 2026-11-10: off → the user's file came back with one extra newline.
+        let current = "{\n  \"model\": \"opus\"\n}";
+        let installed = claude_install(Some(current), HELPER).unwrap();
+        assert!(!installed.ends_with('\n'));
+        assert_eq!(claude_uninstall(&installed).unwrap(), current);
+        // A new file ends with a newline, like any text file.
+        assert!(claude_install(None, HELPER).unwrap().ends_with('\n'));
     }
 
     #[test]

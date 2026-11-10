@@ -342,6 +342,18 @@ impl Core {
         self.reg().view().paused
     }
 
+    /// Agents switched off: their sessions, cards and waiting requests go.
+    pub fn forget_disabled(&self, s: &AgentSettings) {
+        use crate::agents::event::Agent;
+        for (agent, on) in [(Agent::ClaudeCode, s.claude_code), (Agent::Codex, s.codex)] {
+            if !on {
+                for id in self.reg().forget_agent(agent) {
+                    self.broker.answer(id, Reply::NoDecision);
+                }
+            }
+        }
+    }
+
     pub fn set_summary(&self, key: &SessionKey, s: Option<String>) {
         self.reg().set_summary(key, s);
     }
@@ -475,6 +487,14 @@ mod glue {
 
     fn settings(app: &AppHandle) -> Settings {
         app.try_state::<AppState>().map(|s| s.shared.settings()).unwrap_or_default()
+    }
+
+    /// The agents part of the settings changed: forget what was switched off, show the rest.
+    pub fn settings_changed(app: &AppHandle, s: &AgentSettings) {
+        if let Some(agents) = app.try_state::<Agents>() {
+            agents.core.forget_disabled(s);
+        }
+        publish(app);
     }
 
     /// Sends the view to the island if it changed.

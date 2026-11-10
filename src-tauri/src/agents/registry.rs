@@ -243,6 +243,25 @@ impl Registry {
         id
     }
 
+    /// The agent was switched off in Utter: its sessions and cards go. Returns its open
+    /// permission requests, to be answered «no decision».
+    pub fn forget_agent(&mut self, agent: Agent) -> Vec<u64> {
+        let ids: Vec<u64> = self
+            .permissions
+            .iter()
+            .filter_map(|c| match c {
+                Card::Permission { id, key, .. } if key.agent == agent => Some(*id),
+                _ => None,
+            })
+            .collect();
+        self.sessions.retain(|k, _| k.agent != agent);
+        self.permissions.retain(|c| c.key().is_none_or(|k| k.agent != agent));
+        self.notices.retain(|c| c.key().is_none_or(|k| k.agent != agent));
+        self.missed.retain(|k| k.agent != agent);
+        self.shown = None;
+        ids
+    }
+
     /// Ids of the session's open permission requests.
     pub fn permission_ids(&self, key: &SessionKey) -> Vec<u64> {
         self.permissions
@@ -648,6 +667,21 @@ mod tests {
         r.apply(permission("perm", false), t);
         let ids: Vec<String> = r.view().rows.iter().map(|r| r.key.id.clone()).collect();
         assert_eq!(ids, ["perm", "wait", "work", "done"]);
+    }
+
+    #[test]
+    fn forgetting_an_agent_drops_its_sessions_and_cards() {
+        // Live check 2026-11-10: Claude Code switched off, its dots stayed.
+        let t = Instant::now();
+        let mut r = Registry::default();
+        r.apply(ev("a", EventKind::Started), t);
+        let id = r.apply(permission("b", true), t).unwrap();
+        let codex = SessionKey { agent: Agent::Codex, id: "c".into() };
+        r.apply(AgentEvent { key: codex.clone(), project: "p".into(), kind: EventKind::Finished { last_message: "x".into() } }, t);
+        assert_eq!(r.forget_agent(Agent::ClaudeCode), vec![id]);
+        let v = r.view();
+        assert_eq!(v.rows.iter().map(|r| r.key.clone()).collect::<Vec<_>>(), vec![codex.clone()]);
+        assert_eq!(v.card, Some(Card::Done { key: codex }));
     }
 
     #[test]
