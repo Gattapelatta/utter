@@ -35,6 +35,14 @@ describe("Stage with agents", () => {
     expect(ear.map((d) => d.getAttribute("data-agent-ear-dot"))).toEqual(["working", "waiting", "done"]);
     expect(ear.map((d) => d.hasAttribute("data-pulse"))).toEqual([false, false, true]);
     expect(ear.every((d) => d.style.opacity === "" || d.style.opacity === "1")).toBe(true);
+    // A corner (the user 2026-11-10): the second right of the first, the third under the first.
+    const at = ear.map((d) => [parseFloat(d.style.left), parseFloat(d.style.top)]);
+    expect(at[1][0]).toBeGreaterThan(at[0][0]);
+    expect(at[1][1]).toBe(at[0][1]);
+    expect(at[2][0]).toBe(at[0][0]);
+    expect(at[2][1]).toBeGreaterThan(at[0][1]);
+    // Smaller, so it does not cover the Drop's eye.
+    expect((c.querySelector("[data-agent-dot]") as HTMLElement).style.width).toBe("7px");
     const none = stage({ rows: [], card: null, paused: false }, true);
     expect(none.querySelector("[data-agent-ears]")).toBeNull();
   });
