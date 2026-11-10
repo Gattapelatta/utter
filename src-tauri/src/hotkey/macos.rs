@@ -41,10 +41,10 @@ const FLAG_FN: u64 = 0x0080_0000;
 pub fn decode_flags_changed(keycode: u16, flags: u64) -> Option<Decoded> {
     let (key, mask) = match keycode {
         54 => (KeyId::RightMeta, NX_RCMD),
-        55 => (KeyId::Raw(55), NX_LCMD),
-        56 => (KeyId::Raw(56), NX_LSHIFT),
-        58 => (KeyId::Raw(58), NX_LALT),
-        59 => (KeyId::Raw(59), NX_LCTL),
+        55 => (KeyId::LeftMeta, NX_LCMD),
+        56 => (KeyId::LeftShift, NX_LSHIFT),
+        58 => (KeyId::LeftAlt, NX_LALT),
+        59 => (KeyId::LeftCtrl, NX_LCTL),
         60 => (KeyId::RightShift, NX_RSHIFT),
         61 => (KeyId::RightAlt, NX_RALT),
         62 => (KeyId::RightCtrl, NX_RCTL),
@@ -222,8 +222,16 @@ mod tests {
     }
 
     #[test]
+    fn decode_left_modifiers() {
+        assert_eq!(decode_flags_changed(59, 0x0004_0001).map(|d| (d.key, d.down)), Some((KeyId::LeftCtrl, true)));
+        assert_eq!(decode_flags_changed(59, 0).map(|d| (d.key, d.down)), Some((KeyId::LeftCtrl, false)));
+        assert_eq!(decode_flags_changed(55, 0x0010_0008).map(|d| d.key), Some(KeyId::LeftMeta));
+        assert_eq!(decode_flags_changed(56, 0x0002_0002).map(|d| d.key), Some(KeyId::LeftShift));
+    }
+
+    #[test]
     fn decode_left_option_is_not_right() {
-        assert_eq!(decode_flags_changed(58, 0x0008_0020), Some(Decoded { key: KeyId::Raw(58), down: true, tap_only: false }));
+        assert_eq!(decode_flags_changed(58, 0x0008_0020), Some(Decoded { key: KeyId::LeftAlt, down: true, tap_only: false }));
     }
 
     #[test]

@@ -13,6 +13,10 @@ export type KeyId =
   | "RightMeta"
   | "RightCtrl"
   | "RightShift"
+  | "LeftAlt"
+  | "LeftMeta"
+  | "LeftCtrl"
+  | "LeftShift"
   | "CapsLock"
   | "Fn"
   | "Escape"
@@ -120,6 +124,10 @@ export function keyLabel(k: KeyId): string {
     RightMeta: "Right ⌘ Command",
     RightCtrl: "Right ⌃ Control",
     RightShift: "Right ⇧ Shift",
+    LeftAlt: "Left ⌥ Option",
+    LeftMeta: "Left ⌘ Command",
+    LeftCtrl: "Left ⌃ Control",
+    LeftShift: "Left ⇧ Shift",
     CapsLock: "Caps Lock",
     Fn: "fn",
     Escape: "Esc",

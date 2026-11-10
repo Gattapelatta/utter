@@ -103,11 +103,27 @@ describe("general, hotkeys and translation sections", () => {
     expect(last()?.hotkeys).toEqual({ dictation: "RightAlt", translate: "RightMeta", task: { F: 6 } });
   });
 
+  it("a letter as a hotkey is allowed, with a warning that it stops typing", async () => {
+    useApp.setState({ settings: { ...base, hotkeys: { dictation: "RightAlt", translate: "RightMeta", task: { Raw: 0 } } } });
+    render(<Hotkeys />);
+    expect(screen.getByText("A")).toBeTruthy();
+    expect(screen.getByText("Пока эта клавиша назначена, она не печатает")).toBeTruthy();
+  });
+
+  it("left Control can be the task key", async () => {
+    useApp.setState({ settings: { ...base, hotkeys: { dictation: "RightAlt", translate: "RightMeta", task: "RightCtrl" } } });
+    captureResult = async () => "LeftCtrl";
+    render(<Hotkeys />);
+    await act(async () => fireEvent.click(screen.getAllByText("Изменить")[2]));
+    expect(last()?.hotkeys.task).toBe("LeftCtrl");
+    expect(screen.getByText("Левый ⌃")).toBeTruthy();
+  });
+
   it("shows the assignable-keys hint on not_assignable", async () => {
     captureResult = () => Promise.reject("not_assignable");
     render(<Hotkeys />);
     await act(async () => fireEvent.click(screen.getAllByText("Изменить")[1]));
-    expect(screen.getByText(/Подойдёт правый модификатор/)).toBeTruthy();
+    expect(screen.getByText(/Подойдёт любая клавиша, кроме Esc/)).toBeTruthy();
   });
 
   it("cancels capture on unmount", async () => {

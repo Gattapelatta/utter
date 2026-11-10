@@ -28,7 +28,7 @@
   "errors.region_blocked": "Gemini isn't available in your region — use a VPN",
   "errors.hotkeys_unavailable": "Keys aren't active yet — Accessibility access needed",
   "errors.timeout": "Timed out — try again",
-  "errors.not_assignable": "Use a right-side modifier (⌥ ⌘ ⌃ ⇧), Fn, Caps Lock or an F-key",
+  "errors.not_assignable": "Any key but Esc will do",
   "errors.taken": "This key is already used for {mode}",
   "common.next": "Next",
   "common.back": "Back",
@@ -232,5 +232,11 @@
   "agents.after_pause_waiting_few": "{n} waiting for you",
   "agents.after_pause_waiting_many": "{n} waiting for you",
   "agents.after_pause_waiting_other": "{n} waiting for you",
-  "agents.free": "All agents are free"
+  "agents.free": "All agents are free",
+  "keys.left_alt": "Left ⌥",
+  "keys.left_meta": "Left ⌘",
+  "keys.left_ctrl": "Left ⌃",
+  "keys.left_shift": "Left ⇧",
+  "keys.space": "Space",
+  "hotkeys.types_text": "While this key is assigned, it does not type"
 }

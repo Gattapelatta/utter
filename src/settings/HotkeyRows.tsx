@@ -4,7 +4,7 @@ import { useT } from "../i18n";
 import { events, ipc } from "../lib/ipc";
 import { useApp } from "../lib/store";
 import type { Mode } from "../lib/types";
-import { keyLabel, sameKey } from "./keys";
+import { keyLabel, sameKey, typesText } from "./keys";
 import { Button } from "./ui/Button";
 import { Keycap } from "./ui/Keycap";
 import { Row } from "./ui/Row";
@@ -73,11 +73,14 @@ export function HotkeyRows({ hints = true, translateLabel, task = true }: { hint
           label={mode === "Translate" && translateLabel ? translateLabel : t(label)}
           description={hints ? t(hint) : undefined}
           note={
-            error?.mode === mode && (
+            error?.mode === mode ? (
               <div role="alert" className="mt-1.5 flex items-start gap-1.5 text-[13px] leading-snug text-text">
                 <WarningCircle data-accent size={16} className="mt-px shrink-0 text-danger" aria-hidden />
                 {error.text}
               </div>
+            ) : (
+              s.hotkeys[field] !== undefined &&
+              typesText(s.hotkeys[field]!) && <div className="mt-1 text-[13px] leading-snug text-text-secondary">{t("hotkeys.types_text")}</div>
             )
           }
         >

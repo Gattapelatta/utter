@@ -89,7 +89,9 @@ impl Router {
 
     /// Routes a key transition and decides whether the focused app may see it.
     pub fn filter(&mut self, key: KeyId, down: bool, tap_only: bool, now: Instant) -> Routed {
-        if !down && self.swallowed.remove(&key) {
+        // A typing key that is a hotkey never reaches the app; its release still ends the recording.
+        let bound_typing = key.types_text() && self.mode_of(&key).is_some();
+        if !down && self.swallowed.remove(&key) && !bound_typing {
             return Routed { event: None, swallow: true };
         }
         let was_idle = self.held.is_empty();
@@ -108,8 +110,8 @@ impl Router {
             Some(HotkeyEvent::OtherKey) => held_long,
             _ => false,
         };
-        let swallow = down && self.recording && consumable;
-        if swallow {
+        let swallow = (down && self.recording && consumable) || bound_typing;
+        if swallow && down {
             self.swallowed.insert(key);
         }
         Routed { event, swallow }
@@ -176,6 +178,21 @@ mod tests {
         assert_eq!(r.route(KeyId::RightAlt, true, false), Some(HotkeyEvent::Down(D)));
         assert_eq!(r.route(KeyId::RightAlt, false, false), Some(HotkeyEvent::Up(D)));
         assert_eq!(r.route(KeyId::RightMeta, true, false), Some(HotkeyEvent::Down(T)));
+    }
+
+    #[test]
+    fn a_letter_hotkey_never_reaches_the_app() {
+        // A typing key as a hotkey (the user 2026-11-10: any key): its press and release are
+        // swallowed, or holding it would type «aaaa» into the app.
+        let mut r = Router::new(Hotkeys { dictation: KeyId::RightAlt, translate: KeyId::RightMeta, task: KeyId::Raw(0) });
+        let t = Instant::now();
+        let down = r.filter(KeyId::Raw(0), true, false, t);
+        assert_eq!(down, Routed { event: Some(HotkeyEvent::Down(Mode::Task)), swallow: true });
+        assert!(r.swallows_repeat(&KeyId::Raw(0)));
+        assert!(r.filter(KeyId::Raw(0), false, false, t).swallow);
+        // A modifier hotkey is left alone (its flag changes harm nobody).
+        let mut r = Router::new(Hotkeys { dictation: KeyId::RightAlt, translate: KeyId::RightMeta, task: KeyId::LeftCtrl });
+        assert!(!r.filter(KeyId::LeftCtrl, true, false, t).swallow);
     }
 
     #[test]

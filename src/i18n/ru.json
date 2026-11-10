@@ -28,7 +28,7 @@
   "errors.region_blocked": "Gemini недоступен в твоём регионе — нужен VPN",
   "errors.hotkeys_unavailable": "Клавиши ещё не работают — нужен доступ Accessibility",
   "errors.timeout": "Время вышло — попробуй ещё раз",
-  "errors.not_assignable": "Подойдёт правый модификатор (⌥ ⌘ ⌃ ⇧), Fn, Caps Lock или F-клавиша",
+  "errors.not_assignable": "Подойдёт любая клавиша, кроме Esc",
   "errors.taken": "Эта клавиша уже назначена на {mode}",
   "common.next": "Далее",
   "common.back": "Назад",
@@ -232,5 +232,11 @@
   "agents.after_pause_waiting_few": "{n} ждут тебя",
   "agents.after_pause_waiting_many": "{n} ждут тебя",
   "agents.after_pause_waiting_other": "{n} ждут тебя",
-  "agents.free": "Все агенты свободны"
+  "agents.free": "Все агенты свободны",
+  "keys.left_alt": "Левый ⌥",
+  "keys.left_meta": "Левый ⌘",
+  "keys.left_ctrl": "Левый ⌃",
+  "keys.left_shift": "Левый ⇧",
+  "keys.space": "Пробел",
+  "hotkeys.types_text": "Пока эта клавиша назначена, она не печатает"
 }
