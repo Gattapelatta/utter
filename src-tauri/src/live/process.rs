@@ -12,7 +12,7 @@ use tokio::time::Instant;
 
 use crate::pipeline::fillers::strip_fillers;
 use crate::pipeline::routes::RouteHealth;
-use crate::pipeline::{postprocess, user_message};
+use crate::pipeline::{normalize, postprocess, user_message};
 use crate::providers::budget::{Priority, SharedBudget};
 use crate::providers::defaults::BACKUP_LITE_ROUTE;
 use crate::providers::{ProviderError, TextModel};
@@ -58,6 +58,52 @@ struct Job {
     last_sent: Instant,
 }
 
+/// The tail sent ahead (spec §4.1 p. 4): becomes its piece's request when the final piece
+/// has the same words.
+struct Guess {
+    key: String,
+    job: Job,
+    answer: Option<String>,
+}
+
+/// What one look at a request's attempts found.
+#[derive(Default)]
+struct Look {
+    answer: Option<String>,
+    errors: Vec<(bool, ProviderError)>,
+    slow_backup: bool,
+}
+
+fn look(attempts: &mut [Attempt], now: Instant) -> Look {
+    let mut l = Look::default();
+    for a in attempts.iter_mut().filter(|a| !a.over) {
+        match a.reply.try_recv() {
+            Ok(Ok(text)) => {
+                l.answer = Some(text);
+                break;
+            }
+            Ok(Err(e)) => {
+                a.over = true;
+                l.errors.push((a.backup, e));
+            }
+            Err(oneshot::error::TryRecvError::Closed) => a.over = true,
+            Err(oneshot::error::TryRecvError::Empty) => {
+                if a.backup && !a.judged && now.saturating_duration_since(a.sent) >= RETRY_AFTER {
+                    a.judged = true;
+                    l.slow_backup = true;
+                }
+            }
+        }
+    }
+    l
+}
+
+fn abort(attempts: &[Attempt]) {
+    for a in attempts {
+        a.task.abort();
+    }
+}
+
 pub struct PieceProcessor {
     models: Models,
     system: String,
@@ -72,6 +118,7 @@ pub struct PieceProcessor {
     jobs: Vec<Job>,
     /// Answers by the first piece they cover: (end of the range, text).
     done: BTreeMap<usize, (usize, String)>,
+    guess: Option<Guess>,
     requests: u32,
 }
 
@@ -87,14 +134,32 @@ impl PieceProcessor {
             assigned: Vec::new(),
             jobs: Vec::new(),
             done: BTreeMap::new(),
+            guess: None,
             requests: 0,
         }
     }
 
     /// A final piece from the recogniser.
     pub fn push(&mut self, segment: String) {
+        let i = self.segments.len();
+        let key = normalize(&segment);
         self.segments.push(segment);
         self.assigned.push(false);
+        if let Some(g) = self.guess.take() {
+            let hit = g.key == key;
+            tracing::info!(hit, "timing: live guess");
+            if hit {
+                self.assigned[i] = true;
+                match g.answer {
+                    Some(text) => {
+                        self.done.insert(i, (i + 1, text));
+                    }
+                    None => self.jobs.push(Job { pieces: i..i + 1, ..g.job }),
+                }
+            } else {
+                abort(&g.job.attempts);
+            }
+        }
         self.poll();
     }
 
@@ -146,24 +211,20 @@ impl PieceProcessor {
         let mut errors: Vec<(bool, ProviderError)> = Vec::new();
         let mut slow_backup = false;
         for (ji, job) in self.jobs.iter_mut().enumerate() {
-            for a in job.attempts.iter_mut().filter(|a| !a.over) {
-                match a.reply.try_recv() {
-                    Ok(Ok(text)) => {
-                        answered.push((ji, text));
-                        break;
-                    }
-                    Ok(Err(e)) => {
-                        a.over = true;
-                        errors.push((a.backup, e));
-                    }
-                    Err(oneshot::error::TryRecvError::Closed) => a.over = true,
-                    Err(oneshot::error::TryRecvError::Empty) => {
-                        if a.backup && !a.judged && now.saturating_duration_since(a.sent) >= RETRY_AFTER {
-                            a.judged = true;
-                            slow_backup = true;
-                        }
-                    }
-                }
+            let l = look(&mut job.attempts, now);
+            errors.extend(l.errors);
+            slow_backup |= l.slow_backup;
+            if let Some(text) = l.answer {
+                answered.push((ji, text));
+            }
+        }
+        if let Some(g) = self.guess.as_mut().filter(|g| g.answer.is_none()) {
+            let l = look(&mut g.job.attempts, now);
+            errors.extend(l.errors);
+            slow_backup |= l.slow_backup;
+            if l.answer.is_some() {
+                abort(&g.job.attempts);
+                g.answer = l.answer;
             }
         }
         for (backup, e) in errors {
@@ -182,9 +243,7 @@ impl PieceProcessor {
         }
         for (ji, text) in answered.into_iter().rev() {
             let job = self.jobs.remove(ji);
-            for a in &job.attempts {
-                a.task.abort();
-            }
+            abort(&job.attempts);
             tracing::info!(
                 piece_ms = now.saturating_duration_since(job.first_sent).as_millis() as u64,
                 attempts = job.attempts.len(),
@@ -245,6 +304,23 @@ impl PieceProcessor {
         self.segments[pieces.clone()].iter().map(|s| s.trim()).filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" ")
     }
 
+    /// Sends the tail (the draft of the last piece) ahead, before its final piece comes.
+    pub fn guess(&mut self, tail: &str) {
+        let key = normalize(tail);
+        if key.is_empty() || self.guess.as_ref().is_some_and(|g| g.key == key) {
+            return;
+        }
+        if let Some(old) = self.guess.take() {
+            abort(&old.job.attempts);
+        }
+        let text = tail.trim().to_string();
+        if let Some(a) = self.attempt(&text, false, Priority::End) {
+            let now = Instant::now();
+            let job = Job { pieces: 0..0, text, attempts: vec![a], first_sent: now, last_sent: now };
+            self.guess = Some(Guess { key, job, answer: None });
+        }
+    }
+
     /// Requests started so far (each attempt counts in usage).
     pub fn requests(&self) -> u32 {
         self.requests
@@ -274,9 +350,10 @@ impl PieceProcessor {
 impl Drop for PieceProcessor {
     fn drop(&mut self) {
         for j in &self.jobs {
-            for a in &j.attempts {
-                a.task.abort();
-            }
+            abort(&j.attempts);
+        }
+        if let Some(g) = &self.guess {
+            abort(&g.job.attempts);
         }
     }
 }
@@ -507,6 +584,69 @@ mod tests {
         drop(r.p);
         tokio::time::sleep(Duration::from_secs(2)).await;
         assert_eq!(main.finished(), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn guess_hit_needs_no_new_request() {
+        let main = Fake::new(&[]);
+        let mut r = rig(&main, None);
+        r.p.guess("давай завтра");
+        drive(&mut r.p, 50).await;
+        r.p.push("Давай завтра.".into());
+        drive(&mut r.p, 200).await;
+        assert_eq!(r.p.requests(), 1);
+        assert_eq!(answer(&r.p, 0).as_deref(), Some("EN[давай завтра]"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn guess_miss_never_uses_guess_text() {
+        let main = Fake::new(&[]);
+        let mut r = rig(&main, None);
+        r.p.guess("по продам");
+        drive(&mut r.p, 10).await;
+        r.p.push("по продажам".into());
+        drive(&mut r.p, 300).await;
+        assert_eq!(main.inputs(), vec!["по продам", "по продажам"]);
+        assert_eq!(r.p.assemble(), ("EN[по продажам]".to_string(), 0));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn same_tail_is_guessed_once() {
+        let main = Fake::new(&[]);
+        let mut r = rig(&main, None);
+        r.p.guess("давай завтра");
+        r.p.guess("Давай, завтра!");
+        drive(&mut r.p, 300).await;
+        assert_eq!(main.inputs().len(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn changed_tail_replaces_the_guess() {
+        let main = Fake::new(&[1_000, 100]);
+        let mut r = rig(&main, None);
+        r.p.guess("давай");
+        drive(&mut r.p, 50).await;
+        r.p.guess("давай завтра");
+        r.p.push("давай завтра".into());
+        drive(&mut r.p, 2_000).await;
+        assert_eq!(main.inputs(), vec!["давай", "давай завтра"]);
+        assert_eq!(main.finished(), 1, "the old guess is cancelled");
+        assert_eq!(r.p.requests(), 2);
+        assert_eq!(answer(&r.p, 0).as_deref(), Some("EN[давай завтра]"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn guess_counts_in_end_priority() {
+        let main = Fake::new(&[]);
+        let mut r = rig(&main, None);
+        let now = Instant::now();
+        for _ in 0..11 {
+            assert!(r.budget.lock().unwrap().try_take("main", Priority::Speech, now));
+        }
+        r.p.guess("давай");
+        assert_eq!(main.inputs().len(), 0, "spawned, not yet run");
+        drive(&mut r.p, 50).await;
+        assert_eq!(main.inputs(), vec!["давай"]);
     }
 
     #[tokio::test(start_paused = true)]
