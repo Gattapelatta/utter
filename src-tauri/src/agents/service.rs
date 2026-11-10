@@ -414,6 +414,22 @@ impl Zone {
     }
 }
 
+/// The strip at the top of the screen (the notch's height, with a little slack) where the window
+/// never takes clicks: there a full-screen app shows its menu and title bar, and a window taking
+/// the clicks kept them from hiding again (the user 2026-11-10).
+pub const TOP_STRIP: f64 = 36.0;
+
+/// The window takes clicks while the pointer is over the Drop's zone and below the top strip.
+pub fn takes_clicks(win: Rect, cursor: (f64, f64), over: bool) -> bool {
+    over && cursor.1 - win.y >= TOP_STRIP
+}
+
+/// The island is open: a card, or the pointer over the ears with agents to list — or, with an
+/// agent connected, an empty list («Агенты свободны») so the Drop can still be poked.
+pub fn opens(connected: bool, rows: bool, card: bool, hover: bool) -> bool {
+    card || (hover && (rows || connected))
+}
+
 /// The ears (closed) or the whole open island, in the window's screen frame (top-left points).
 pub fn hover_zone(win: Rect, open: bool) -> Zone {
     if open {
@@ -646,19 +662,20 @@ mod glue {
             }
             let ears = ears_shown(&app);
             let card = view.card.is_some();
-            // Hovering opens the list only when there are agents; otherwise the ears stay ears.
-            let open = card || (hover && !view.rows.is_empty());
-            let over = if needs_pointer(&view, ears) {
+            let connected = with_connection(view.clone(), &settings(&app).agents).connected;
+            let open = opens(connected, !view.rows.is_empty(), card, hover);
+            let (over, clickable) = if needs_pointer(&view, ears) {
                 match (overlay_rest::cursor_point(), frame(&app, &frame_cache)) {
-                    (Some((x, y)), Some(win)) => hover_zone(win, open).contains(x, y),
-                    _ => false,
+                    (Some(p), Some(win)) => {
+                        let over = hover_zone(win, open).contains(p.0, p.1);
+                        // Cards too: a window taking clicks in the top strip kept the menu bar up.
+                        (over, takes_clicks(win, p, over || (card && hover_zone(win, true).contains(p.0, p.1))))
+                    }
+                    _ => (false, false),
                 }
             } else {
-                false
+                (false, false)
             };
-            // AfterPause has no buttons; everything else on a card does.
-            let buttons = matches!(view.card, Some(Card::Permission { .. } | Card::Done { .. } | Card::Waiting { .. }));
-            let clickable = over || buttons;
             // Decide under the lock, act after it.
             let (hover_changed, clickable_changed, force_show, force_hide) = {
                 let mut shown = agents.shown.lock().unwrap_or_else(|e| e.into_inner());
@@ -678,6 +695,7 @@ mod glue {
                 (hover_changed, clickable_changed, force_show, force_hide)
             };
             if hover_changed {
+                tracing::info!(over, "agents hover");
                 let _ = app.emit_to(overlay::LABEL, "overlay://agent-hover", serde_json::json!({ "over": over }));
             }
             if clickable_changed {
@@ -1024,6 +1042,26 @@ mod tests {
         assert_eq!(last_message, "All done.");
         assert_eq!(core.ancestors(&key), Some(vec![10, 1]));
         assert!(matches!(core.receive(request("Nope", json!({"session_id":"s"})), Lang::En, t), Incoming::Ignored));
+    }
+
+    #[test]
+    fn the_top_strip_never_takes_clicks() {
+        // The user 2026-11-10: a window taking clicks at the very top kept a full-screen app's
+        // menu and title bar from hiding again. Clicks only below the notch's strip.
+        let win = Rect { x: 100.0, y: 0.0, w: 420.0, h: 206.0 };
+        assert!(!takes_clicks(win, (310.0, 0.0), true));
+        assert!(!takes_clicks(win, (310.0, TOP_STRIP - 1.0), true));
+        assert!(takes_clicks(win, (310.0, TOP_STRIP), true));
+        assert!(!takes_clicks(win, (310.0, 80.0), false));
+    }
+
+    #[test]
+    fn hovering_bare_ears_opens_the_island_when_an_agent_is_connected() {
+        assert!(opens(true, false, false, true));
+        assert!(!opens(false, false, false, true));
+        assert!(opens(false, true, false, true));
+        assert!(opens(false, false, true, false));
+        assert!(!opens(true, true, false, false));
     }
 
     #[test]

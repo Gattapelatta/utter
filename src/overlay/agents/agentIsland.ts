@@ -29,8 +29,10 @@ export function agentShow(view: AgentView, dictation: OverlayState["kind"], hove
   if (dictation !== "hidden") return { kind: "none" };
   if (view.card) return { kind: "card", card: view.card };
   if (view.rows.length === 0) {
-    // Connected, nothing happening: the colours stay in the right ear, the Drop has no dot.
-    return view.connected && !view.paused ? { kind: "ears", dot: null, dots: [], more: false } : { kind: "none" };
+    // Connected, nothing happening: the colours stay in the right ear, the Drop has no dot;
+    // hovering opens «Все агенты свободны» (there the Drop can be poked).
+    if (!view.connected || view.paused) return { kind: "none" };
+    return hover ? { kind: "list", rows: [] } : { kind: "ears", dot: null, dots: [], more: false };
   }
   if (hover) return { kind: "list", rows: view.rows };
   const all = view.rows.map((r) => dotOf(r.state));

@@ -231,5 +231,6 @@
   "agents.after_pause_waiting_one": "{n} ждёт тебя",
   "agents.after_pause_waiting_few": "{n} ждут тебя",
   "agents.after_pause_waiting_many": "{n} ждут тебя",
-  "agents.after_pause_waiting_other": "{n} ждут тебя"
+  "agents.after_pause_waiting_other": "{n} ждут тебя",
+  "agents.free": "Все агенты свободны"
 }

@@ -231,5 +231,6 @@
   "agents.after_pause_waiting_one": "{n} waiting for you",
   "agents.after_pause_waiting_few": "{n} waiting for you",
   "agents.after_pause_waiting_many": "{n} waiting for you",
-  "agents.after_pause_waiting_other": "{n} waiting for you"
+  "agents.after_pause_waiting_other": "{n} waiting for you",
+  "agents.free": "All agents are free"
 }

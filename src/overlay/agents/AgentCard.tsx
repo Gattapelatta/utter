@@ -52,7 +52,7 @@ const lines = (s: string, per: number, max: number) => Math.min(max, Math.max(1,
 
 function items(show: Shown): number[] {
   if ("note" in show) return [2 * LINE_H];
-  if ("rows" in show) return show.rows.slice(0, 3).map((r) => TITLE_H + Math.min(2, r.actions.length) * LINE_H);
+  if ("rows" in show) return show.rows.length ? show.rows.slice(0, 3).map((r) => TITLE_H + Math.min(2, r.actions.length) * LINE_H) : [TITLE_H];
   const c = show.card;
   const buttons = BUTTONS_TOP + BUTTONS_H;
   switch (c.kind) {
@@ -291,6 +291,7 @@ export function AgentList({ rows, notch }: { rows: AgentRow[]; notch: Notch }) {
   const name = useAgentName();
   return (
     <Panel notch={notch} dot={rows[0] ? dotOf(rows[0].state) : null}>
+      {rows.length === 0 && <div style={{ color: DIM, lineHeight: `${TITLE_H}px` }}>{t("agents.free")}</div>}
       {rows.slice(0, 3).map((r, i) => {
         const steps = r.steps ? ` · ${t("agents.step", { n: r.steps[0], m: r.steps[1] })}` : "";
         const [older, newest] = r.actions.length > 1 ? [r.actions[r.actions.length - 2], r.actions[r.actions.length - 1]] : [null, r.actions[0] ?? null];

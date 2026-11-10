@@ -50,6 +50,12 @@ describe("agentShow", () => {
     expect(agentShow({ ...view([]), connected: true }, "recording", false)).toEqual({ kind: "none" });
   });
 
+  it("hovering_bare_ears_opens_an_empty_list_when_connected", () => {
+    // So the Drop can be poked there: the top strip itself never takes clicks (the stuck menu bar).
+    expect(agentShow({ ...view([]), connected: true }, "hidden", true)).toEqual({ kind: "list", rows: [] });
+    expect(agentShow({ ...view([]), connected: false }, "hidden", true)).toEqual({ kind: "none" });
+  });
+
   it("five_agents_show_three_dots_and_plus", () => {
     const rows = ["a", "b", "c", "d", "e"].map((id) => row(id, "working"));
     const shown = agentShow(view(rows), "hidden", false);

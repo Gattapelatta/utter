@@ -122,6 +122,11 @@ describe("AgentCard", () => {
     expect(parseFloat(panel.style.left)).toBeGreaterThanOrEqual(24 + 44);
   });
 
+  it("an empty list says the agents are free", () => {
+    render(<AgentList rows={[]} notch={notch} />);
+    expect(screen.getByText("All agents are free")).toBeTruthy();
+  });
+
   it("list_rows_show_step_and_actions_and_open", () => {
     render(<AgentList rows={[{ ...row, state: "working" }]} notch={notch} />);
     expect(title()).toBe("shop Claude Code · step 2 of 4");
