@@ -30,7 +30,11 @@ describe("Stage with agents", () => {
     const c = stage({ rows: [row], card: null, paused: false }, true);
     expect(c.querySelector("[data-island]")?.getAttribute("data-view")).toBe("rest");
     expect(c.querySelector("[data-agent-dot='done']")).not.toBeNull();
-    expect(c.querySelectorAll("[data-agent-ear-dot]")).toHaveLength(1);
+    // The user 2026-11-10: the right ear always shows all three colours, the current one shimmers.
+    const ear = [...c.querySelectorAll("[data-agent-ear-dot]")] as HTMLElement[];
+    expect(ear.map((d) => d.getAttribute("data-agent-ear-dot"))).toEqual(["working", "waiting", "done"]);
+    expect(ear.map((d) => d.hasAttribute("data-pulse"))).toEqual([false, false, true]);
+    expect(ear.every((d) => d.style.opacity === "" || d.style.opacity === "1")).toBe(true);
     const none = stage({ rows: [], card: null, paused: false }, true);
     expect(none.querySelector("[data-agent-ears]")).toBeNull();
   });

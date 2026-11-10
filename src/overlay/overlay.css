@@ -93,3 +93,24 @@ body,
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* The current agent colour in the right ear shimmers (the user 2026-11-10). Plain keyframes on
+   opacity: WebKit runs them on the compositor (a linear() easing would cost main-thread time). */
+.agent-pulse {
+  animation: agent-pulse 1.6s ease-in-out infinite;
+  will-change: opacity;
+}
+@keyframes agent-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-pulse {
+    animation: none;
+  }
+}

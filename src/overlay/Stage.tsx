@@ -67,7 +67,7 @@ export function Stage({ state, rest, notch, level, now, onClick, draft = null, a
     ) : show.kind === "list" ? (
       <AgentList rows={show.rows} notch={notch} />
     ) : null;
-  const ears = show.kind === "ears" ? <AgentEars notch={notch} dot={show.dot} dots={show.dots} more={show.more} /> : null;
+  const ears = show.kind === "ears" ? <AgentEars notch={notch} dot={show.dot} /> : null;
 
   return (
     <AnimatePresence custom={cancelled}>
