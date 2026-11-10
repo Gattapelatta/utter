@@ -218,6 +218,10 @@ async fn run(
         Finisher::Plain => None,
         Finisher::Text { models, system, kind, budget, health } => Some(PieceProcessor::new(models, system, kind, budget, health)),
     };
+    // Let go before the socket opened (a quick tap): pieces coming now are the end already.
+    if let Some(tr) = translator.as_mut().filter(|_| released_at.is_some()) {
+        tr.release("");
+    }
     let kind = translator.as_ref().map(PieceProcessor::kind);
     let final_wait = if kind == Some(Kind::Cleanup) { DICTATION_LIMIT } else { FINAL_WAIT };
     let quiet_for = |log: &std::collections::VecDeque<(Instant, u32)>, d: Duration| {

@@ -422,7 +422,10 @@ impl PieceProcessor {
     /// `Err(Timeout)` at the deadline.
     pub async fn finish(mut self, tail: &str, deadline: Instant) -> Result<Ends, ProviderError> {
         let released = Instant::now();
-        self.released = true;
+        // A quick tap ends before the socket opens: the release never reached us.
+        if !self.released {
+            self.release(tail);
+        }
         let key = normalize(tail);
         self.guess_twice(tail);
         loop {
@@ -877,6 +880,19 @@ mod tests {
         let ends = r.p.finish("И в три.", t + LIMIT).await.unwrap();
         assert!(t.elapsed() < Duration::from_millis(10));
         assert_eq!((ends.text.as_str(), ends.raw_pieces), ("EN[и в три]", 0));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn finish_without_release_races_like_release() {
+        // A quick tap: the key was let go before the socket opened, so `release` never ran.
+        let main = Fake::new(&[10_000]);
+        let backup = Fake::tagged("B:", &[50]);
+        let mut r = rig(&main, Some(&backup));
+        r.p.push("раз".into());
+        let t = Instant::now();
+        let ends = r.p.finish("", t + LIMIT).await.unwrap();
+        assert_eq!(ends.text, "B:EN[раз]");
+        assert!(t.elapsed() < Duration::from_millis(100), "{:?}", t.elapsed());
     }
 
     #[tokio::test(start_paused = true)]
