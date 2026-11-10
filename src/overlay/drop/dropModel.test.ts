@@ -199,3 +199,26 @@ describe("dizzy (easter egg, spec 2026-11-09 §3.6)", () => {
     expect(f.dizzy).toBe(0);
   });
 });
+
+describe("tickle (each poke, the user 2026-11-10)", () => {
+  it("smiles and wiggles for a moment, then settles again", () => {
+    const m = createModel(0);
+    const idle: ModelInput = { mood: "idle", level: 0, translate: false, reduced: false };
+    for (let i = 1; i <= 60; i++) stepModel(m, idle, (i * 1000) / 60);
+    const at = 1000;
+    let smile = 0;
+    let rot = 0;
+    for (let i = 1; i <= 30; i++) {
+      const f = stepModel(m, { ...idle, tickle: at }, at + (i * 1000) / 60);
+      smile = Math.max(smile, f.smile);
+      rot = Math.max(rot, Math.abs(f.rot));
+      expect(f.settled).toBe(false);
+    }
+    expect(smile).toBeGreaterThan(0.5);
+    expect(rot).toBeGreaterThan(1.5);
+    let last: Frame | null = null;
+    for (let i = 31; i <= 240; i++) last = stepModel(m, { ...idle, tickle: at }, at + (i * 1000) / 60);
+    expect(last!.smile).toBeLessThan(0.05);
+    expect(Math.abs(last!.rot)).toBeLessThan(0.05);
+  });
+});

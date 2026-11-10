@@ -100,6 +100,18 @@ describe("easter egg through the stage", () => {
     }
   });
 
+  it("every poke tickles the Drop, and clicking never selects the island's text", () => {
+    const c = stage({ rows: [], card: null, paused: false }, true);
+    const island = c.querySelector("[data-island]") as HTMLElement;
+    expect(island.style.userSelect).toBe("none");
+    const drop = c.querySelector("[data-drop-place]") as HTMLElement;
+    expect(drop.getAttribute("data-tickle")).toBe("0");
+    fireEvent.click(drop);
+    expect(drop.getAttribute("data-tickle")).toBe("1");
+    fireEvent.click(drop);
+    expect(drop.getAttribute("data-tickle")).toBe("2");
+  });
+
   it("pokes during a recording do nothing", () => {
     const rec = { kind: "recording", mode: "Dictation", style: "Business", started_at_ms: 0, warn: false, pending: 0 } as const;
     const c = render(<Stage state={rec} rest={true} notch={notch} level={0} now={0} />).container;

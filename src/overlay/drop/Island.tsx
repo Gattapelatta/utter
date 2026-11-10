@@ -56,6 +56,8 @@ interface Props {
   mood?: Mood;
   /** The agents' island height (the "agent" view). */
   agentH?: number;
+  /** Pokes so far and when the last one was (`performance.now()`): each one tickles the Drop. */
+  tickle?: { n: number; at: number };
 }
 
 /**
@@ -63,7 +65,7 @@ interface Props {
  * (§4.2). The shape is a clip of the island; the Drop flies between its place on the island
  * and the left ear.
  */
-export function Island({ state, level, now, view = "open", notch = null, cancelled = false, draft = null, agent = null, ears = null, onPoke, mood, agentH = 150 }: Props) {
+export function Island({ state, level, now, view = "open", notch = null, cancelled = false, draft = null, agent = null, ears = null, onPoke, mood, agentH = 150, tickle }: Props) {
   const t = useT();
   const reduced = useMemo(prefersReducedMotion, []);
   // While leaving, the props are those of the last render; AnimatePresence passes the fresh "cancelled".
@@ -141,10 +143,15 @@ export function Island({ state, level, now, view = "open", notch = null, cancell
   useEffect(() => {
     if (view !== "rest") setHanded(false);
   }, [view]);
+  // A poke takes the Drop back from the compositor-driven one in the ear, so it can giggle.
+  useEffect(() => {
+    if (tickle?.n) setHanded(false);
+  }, [tickle?.n]);
   const inEar = view === "rest" && handed;
 
   return (
-    <div data-island data-view={view} className="island" data-clickable={state.kind === "error" && state.action ? "" : undefined}>
+    // Many quick clicks must never select the island's text (the user 2026-11-10).
+    <div data-island data-view={view} className="island" style={{ userSelect: "none", WebkitUserSelect: "none" }} data-clickable={state.kind === "error" && state.action ? "" : undefined}>
       <motion.div data-shape className="island-shape" initial={at("folded").shape} animate={at(view).shape} exit={at("folded").shape} />
       {/* The field is cut by the island's own shape: while the window shrinks back into the island,
           a fading field must not hang below it. */}
@@ -175,6 +182,7 @@ export function Island({ state, level, now, view = "open", notch = null, cancell
           animate={at(view).drop}
           exit={at("folded").drop}
           onClick={onPoke}
+          data-tickle={tickle ? tickle.n : undefined}
           style={onPoke ? { pointerEvents: "auto" } : undefined}
         >
           {inEar ? (
@@ -186,6 +194,7 @@ export function Island({ state, level, now, view = "open", notch = null, cancell
               level={level}
               translate={translate.current}
               task={task.current}
+              tickle={tickle?.at}
               reduced={reduced}
               startGaze={() => gaze.current}
               onSettle={(g) => {

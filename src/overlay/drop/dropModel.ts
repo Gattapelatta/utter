@@ -13,6 +13,8 @@ export interface ModelInput {
   gaze?: { x: number; y: number } | null;
   /** Living in the notch's ear while idle (§4.2a): calmer looks, an occasional smile, no glow. */
   rest?: boolean;
+  /** When the user last poked the Drop (same clock as `now`): it giggles as if tickled. */
+  tickle?: number;
 }
 
 /** Everything the SVG needs for one frame. */
@@ -77,6 +79,11 @@ const LOOK_THINK: [number, number][] = [[-6, -5.5], [6, -5.5], [0, -6], [-8, -2]
 
 type Springs = Record<"close" | "blink" | "smile" | "y" | "rot" | "ex" | "ey" | "env" | "fx" | "glow" | "cool" | "dizzy", Spring>;
 
+/** A poke: a smile and a fading wiggle (±5° at 7 Hz) for 0.45 s (the user 2026-11-10). */
+const TICKLE_S = 0.45;
+const TICKLE_DEG = 5;
+const TICKLE_HZ = 7;
+
 /** Dizzy sway: ±6° at 2 Hz. */
 const DIZZY_DEG = 6;
 const DIZZY_HZ = 2;
@@ -94,6 +101,8 @@ export interface Model {
   smileUntil: number;
   last: number;
   random: () => number;
+  /** A tickle is under way (its smile must be taken back when it ends). */
+  tickled: boolean;
 }
 
 /** `gaze` starts the eyes looking there (handed over from the Drop in the notch). */
@@ -124,6 +133,7 @@ export function createModel(now: number, random: () => number = Math.random, gaz
     smileUntil: 0,
     last: now,
     random,
+    tickled: false,
   };
 }
 
@@ -221,7 +231,24 @@ export function stepModel(m: Model, input: ModelInput, now: number): Frame {
     if (mood === "idle") P.smile.t = 0;
     m.smileUntil = 0;
   }
+  const since_tickle = input.tickle !== undefined && !still ? (now - input.tickle) / 1000 : Infinity;
+  const tickling = since_tickle >= 0 && since_tickle < TICKLE_S && mood !== "dizzy";
+  if (tickling) {
+    P.smile.t = 1;
+    P.y.t = -2;
+    m.tickled = true;
+  } else if (m.tickled) {
+    m.tickled = false;
+    P.y.t = 0;
+    if (mood === "idle" && !m.smileUntil) P.smile.t = 0;
+  }
   for (const s of Object.values(P)) stepSpring(s, dt);
+  if (tickling) {
+    const w = 2 * Math.PI * TICKLE_HZ;
+    const fade = 1 - since_tickle / TICKLE_S;
+    P.rot.x = Math.sin(w * since_tickle) * TICKLE_DEG * fade;
+    P.rot.v = Math.cos(w * since_tickle) * TICKLE_DEG * fade * w;
+  }
   if (mood === "dizzy" && !still) {
     // Driven directly: a 2 Hz sway is faster than the head's spring could follow. Position and
     // speed both, so the spring carries on smoothly when the mood ends.
@@ -247,7 +274,7 @@ export function stepModel(m: Model, input: ModelInput, now: number): Frame {
     good: mood === "happy" && !still ? since : Infinity,
     bad: mood === "sad" && !still ? since : Infinity,
     dizzy: clamp(P.dizzy.x),
-    settled: (mood === "idle" || mood === "thinking") && Object.entries(P).every(([k, s]) => {
+    settled: (mood === "idle" || mood === "thinking") && !tickling && Object.entries(P).every(([k, s]) => {
         const tol = POSITIONS.has(k) ? STILL_POS : STILL;
         return Math.abs(s.x - s.t) < tol && Math.abs(s.v) < tol * 4;
       }),

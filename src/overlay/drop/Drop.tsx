@@ -16,6 +16,8 @@ interface Props {
   translate: boolean;
   /** The «Задача» recording: its own colour (spec 2026-11-09 §3.7). */
   task?: boolean;
+  /** `performance.now()` of the last poke: the Drop giggles. */
+  tickle?: number;
   reduced: boolean;
   /** Width in px (the pill's 48 by default). */
   size?: number;
@@ -69,19 +71,19 @@ const VIOLET = [162, 89, 255];
  * The «Капля» character (docs/design/drop-prototype.html). The SVG is rendered once;
  * every frame mutates attributes directly so React does not re-render at 60–120 fps.
  */
-export function Drop({ mood, level, translate, task = false, reduced, size = 48, follow = false, look = null, frozen = false, rest = false, startGaze, onSettle }: Props) {
+export function Drop({ mood, level, translate, task = false, tickle, reduced, size = 48, follow = false, look = null, frozen = false, rest = false, startGaze, onSettle }: Props) {
   const svg = useRef<SVGSVGElement>(null);
   // The model only knows "coloured or not"; which colour is the Drop's own business.
   const tinted = translate || task;
-  const input = useRef({ mood, level, translate: tinted, task, reduced, look, frozen, rest, onSettle });
-  input.current = { mood, level, translate: tinted, task, reduced, look, frozen, rest, onSettle };
+  const input = useRef({ mood, level, translate: tinted, task, tickle, reduced, look, frozen, rest, onSettle });
+  input.current = { mood, level, translate: tinted, task, tickle, reduced, look, frozen, rest, onSettle };
   const start = useRef(startGaze);
   const pointer = useRef<{ x: number; y: number } | null>(null);
   /** Restarts a sleeping frame loop (set by the loop's effect). */
   const wake = useRef(() => {});
 
   // Anything that changes what the character does must not wait for the sleeping loop.
-  useEffect(() => wake.current(), [mood, tinted, task, reduced, look?.x, look?.y, frozen, rest]);
+  useEffect(() => wake.current(), [mood, tinted, task, tickle, reduced, look?.x, look?.y, frozen, rest]);
 
   useEffect(() => {
     if (!follow) return;

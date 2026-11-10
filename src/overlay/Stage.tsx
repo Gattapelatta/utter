@@ -41,6 +41,7 @@ export function Stage({ state, rest, notch, level, now, onClick, draft = null, a
   const t = useT();
   // The easter egg (§3.6): 5 pokes in 2 s make the Drop dizzy for 3 s; never over a dictation.
   const pokeTimes = useRef<number[]>([]);
+  const [tickle, setTickle] = useState({ n: 0, at: 0 });
   const [dizzySince, setDizzySince] = useState<number | null>(null);
   useEffect(() => {
     if (dizzySince === null) return;
@@ -51,6 +52,7 @@ export function Stage({ state, rest, notch, level, now, onClick, draft = null, a
   const onPoke = () => {
     if (state.kind !== "hidden" || dizzy) return;
     const at = Date.now();
+    setTickle((t) => ({ n: t.n + 1, at: performance.now() }));
     pokeTimes.current = [...pokeTimes.current.filter((p) => at - p < 2000), at];
     if (pokes(pokeTimes.current, at)) {
       pokeTimes.current = [];
@@ -102,6 +104,7 @@ export function Stage({ state, rest, notch, level, now, onClick, draft = null, a
             onPoke={visible ? undefined : onPoke}
             mood={dizzy ? "dizzy" : undefined}
             agentH={agentH}
+            tickle={tickle}
           />
         </div>
       )}
