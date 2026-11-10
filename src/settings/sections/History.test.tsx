@@ -58,6 +58,15 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+describe("task entries", () => {
+  it("history_labels_task", async () => {
+    entries = [entry(1, { mode: "Task", text: "Починить округление" })];
+    render(<History />);
+    await settle();
+    expect(screen.getByText("Задача")).toBeTruthy();
+  });
+});
+
 describe("history section", () => {
   it("lists entries newest first with mode labels", async () => {
     const { container } = render(<History />);

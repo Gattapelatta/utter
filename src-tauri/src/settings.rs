@@ -55,6 +55,35 @@ pub enum UiLanguage {
 pub struct Hotkeys {
     pub dictation: KeyId,
     pub translate: KeyId,
+    /// «Задача» (spec 2026-11-09 §3.7). None: not assigned — newcomers pick their own key
+    /// (the user 2026-11-10: a MacBook has no right ⌃).
+    #[serde(default)]
+    pub task: Option<KeyId>,
+}
+
+impl Hotkeys {
+    /// A task key on dictation's or translation's key could never fire: it is dropped.
+    fn fix_task_key(&mut self) {
+        if self.task.as_ref().is_some_and(|k| *k == self.dictation || *k == self.translate) {
+            self.task = None;
+        }
+    }
+}
+
+/// Which AI agents the Drop watches (spec 2026-11-09).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentSettings {
+    pub claude_code: bool,
+    pub codex: bool,
+    /// «Итог одной строкой»: the provider writes the summary line.
+    pub summary: bool,
+}
+
+impl Default for AgentSettings {
+    fn default() -> Self {
+        AgentSettings { claude_code: false, codex: false, summary: true }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -77,6 +106,9 @@ pub struct Settings {
     pub onboarding_done: bool,
     /// The Drop lives in the camera notch while idle (§4.2a).
     pub notch_drop: bool,
+    pub agents: AgentSettings,
+    /// Codex`s own `notify` command before Utter chained itself in front of it.
+    pub agents_codex_prev_notify: Option<Vec<String>>,
 }
 
 impl Settings {
@@ -101,6 +133,8 @@ impl Settings {
             history_enabled: true,
             onboarding_done: false,
             notch_drop: true,
+            agents: AgentSettings::default(),
+            agents_codex_prev_notify: None,
         }
     }
 }
@@ -113,12 +147,12 @@ impl Default for Settings {
 
 #[cfg(not(windows))]
 fn default_hotkeys() -> Hotkeys {
-    Hotkeys { dictation: KeyId::RightAlt, translate: KeyId::RightMeta }
+    Hotkeys { dictation: KeyId::RightAlt, translate: KeyId::RightMeta, task: None }
 }
 
 #[cfg(windows)]
 fn default_hotkeys() -> Hotkeys {
-    Hotkeys { dictation: KeyId::RightAlt, translate: KeyId::RightCtrl }
+    Hotkeys { dictation: KeyId::RightAlt, translate: KeyId::RightCtrl, task: None }
 }
 
 /// Loads settings; a missing or unreadable file yields defaults.
@@ -140,8 +174,11 @@ pub fn load(path: &Path, system_lang: Option<&str>) -> Settings {
                     map.insert(k, v);
                 }
             }
-            match serde_json::from_value(base) {
-                Ok(s) => s,
+            match serde_json::from_value::<Settings>(base) {
+                Ok(mut s) => {
+                    s.hotkeys.fix_task_key();
+                    s
+                }
                 Err(e) => {
                     backup_corrupt(path, &e.to_string());
                     defaults
@@ -164,6 +201,18 @@ fn backup_corrupt(path: &Path, _reason: &str) {
 pub fn save(path: &Path, s: &Settings) -> std::io::Result<()> {
     let bytes = serde_json::to_vec_pretty(s).map_err(std::io::Error::other)?;
     write_atomic(path, &bytes)
+}
+
+/// `write_atomic`, keeping the file's permission bits (`mode`) when given.
+pub fn write_atomic_mode(path: &Path, bytes: &[u8], mode: Option<u32>) -> std::io::Result<()> {
+    let Some(mode) = mode else { return write_atomic(path, bytes) };
+    use std::os::unix::fs::PermissionsExt;
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".mode.tmp");
+    let tmp = std::path::PathBuf::from(tmp);
+    write_atomic(&tmp, bytes)?;
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(mode))?;
+    std::fs::rename(&tmp, path)
 }
 
 /// Writes to a sibling temp file, syncs it, then renames over `path`.
@@ -217,6 +266,44 @@ mod tests {
         let s = load(&path, None);
         assert!(s.notch_drop);
         assert!(s.autostart);
+    }
+
+    #[test]
+    fn old_settings_get_agents_off_and_summary_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"{"schema_version":1}"#).unwrap();
+        let s = load(&path, None);
+        assert_eq!(s.agents, AgentSettings { claude_code: false, codex: false, summary: true });
+        assert_eq!(s.agents_codex_prev_notify, None);
+        // A file that has only some agent fields keeps the rest at their defaults.
+        std::fs::write(&path, r#"{"agents":{"codex":true}}"#).unwrap();
+        assert_eq!(load(&path, None).agents, AgentSettings { claude_code: false, codex: true, summary: true });
+    }
+
+    #[test]
+    fn old_settings_get_default_task_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"{"hotkeys":{"dictation":"CapsLock","translate":"RightMeta"}}"#).unwrap();
+        let s = load(&path, None);
+        assert_eq!(s.hotkeys.dictation, KeyId::CapsLock);
+        // The user 2026-11-10: newcomers get no task key; each one picks their own.
+        assert_eq!(s.hotkeys.task, None);
+        // The file was not taken for a corrupt one.
+        assert!(!dir.path().join("settings.json.bak").exists());
+    }
+
+    #[test]
+    fn task_key_moves_off_a_taken_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"{"hotkeys":{"dictation":"RightCtrl","translate":"RightMeta","task":"RightCtrl"}}"#).unwrap();
+        let s = load(&path, None);
+        // A task key on another mode's key is dropped (it could never fire).
+        assert_eq!(s.hotkeys.task, None);
+        std::fs::write(&path, r#"{"hotkeys":{"dictation":"RightAlt","translate":"RightMeta","task":"LeftCtrl"}}"#).unwrap();
+        assert_eq!(load(&path, None).hotkeys.task, Some(KeyId::LeftCtrl));
     }
 
     #[test]

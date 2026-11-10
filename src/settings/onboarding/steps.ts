@@ -1,7 +1,12 @@
 import type { PermissionsStatus } from "../../lib/types";
 
-export type StepId = "welcome" | "microphone" | "accessibility" | "provider" | "key" | "trial";
-export const STEPS: StepId[] = ["welcome", "microphone", "accessibility", "provider", "key", "trial"];
+export type StepId = "welcome" | "microphone" | "accessibility" | "provider" | "key" | "agents" | "trial";
+export const STEPS: StepId[] = ["welcome", "microphone", "accessibility", "provider", "key", "agents", "trial"];
+
+/** «Подключи агентов» is offered only when Claude Code or Codex is on this Mac (spec 2026-11-09 §3.1). */
+export function stepsFor(agentsFound: boolean): StepId[] {
+  return agentsFound ? STEPS : STEPS.filter((s) => s !== "agents");
+}
 
 /** Where the Drop stands (§4.4): centred on steps 1–3 and 6, at the top while there is more to show. */
 export function dropAt(s: StepId): "center" | "top" {

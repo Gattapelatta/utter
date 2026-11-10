@@ -1,0 +1,1 @@
+{"type":"agent-turn-complete","thread-id":"th_42","turn-id":"tu_7","cwd":"/Users/me/Projects/shop","client":"codex-tui","input-messages":["fix the bug"],"last-assistant-message":"Fixed the rounding bug in billing.ts."}

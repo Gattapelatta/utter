@@ -11,12 +11,14 @@ let perms: PermissionsStatus = { microphone: "Granted", accessibility: true, hot
 let mask: string | null = null;
 let clipboard: string | null = null;
 let verify: () => Promise<void> = async () => {};
+let detected = { claude_code: false, codex: false };
 const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>): Promise<unknown> => {
   if (cmd === "permissions_status") return { ...perms };
   if (cmd === "api_key_mask") return mask;
   if (cmd === "clipboard_key") return clipboard;
   if (cmd === "set_api_key") mask = (args as { key: string }).key ? "AIza••••" : null;
   if (cmd === "verify_key") return verify();
+  if (cmd === "agents_status") return { detected, claude_code: { kind: "off" }, codex: { kind: "off" } };
   if (cmd === "save_settings") useApp.setState({ settings: (args as { settings: Settings }).settings });
   return undefined;
 });
@@ -78,6 +80,7 @@ beforeEach(() => {
   mask = null;
   clipboard = null;
   verify = async () => {};
+  detected = { claude_code: false, codex: false };
   useApp.setState({ settings: { ...base }, lang: "ru", theme: "dark", systemDark: true });
 });
 afterEach(cleanup);
@@ -98,7 +101,8 @@ describe("onboarding logic", () => {
   });
 
   it("drop waits at the centre on steps 1-3 and 6", () => {
-    expect(STEPS.map(dropAt)).toEqual(["center", "center", "center", "top", "top", "center"]);
+    expect(STEPS).toEqual(["welcome", "microphone", "accessibility", "provider", "key", "agents", "trial"]);
+    expect(STEPS.map(dropAt)).toEqual(["center", "center", "center", "top", "top", "center", "center"]);
   });
 
   it("the centred group sits in the middle of the whole window", () => {
@@ -275,6 +279,35 @@ describe("onboarding flow", { timeout: 30_000 }, () => {
     mask = "AIza••••";
     await mount(); // keys step
     expect(screen.getByText("Пропустить")).toBeTruthy();
+  });
+
+  it("onboarding_skips_agents_step_when_nothing_detected", async () => {
+    mask = "AIza••••";
+    await mount(); // keys step
+    expect(document.querySelectorAll("footer .dot")).toHaveLength(6);
+    await act(async () => fireEvent.click(next()));
+    await movedOn();
+    expect(heading()).not.toBe("Подключи агентов");
+    expect(calls("set_trial").slice(-1)[0]).toEqual({ on: true });
+  });
+
+  it("onboarding_shows_agents_step_between_key_and_trial", async () => {
+    mask = "AIza••••";
+    detected = { claude_code: true, codex: false };
+    await mount(); // keys step
+    await until(() => document.querySelectorAll("footer .dot").length === 7, "the agents step to be counted");
+    await act(async () => fireEvent.click(next()));
+    await movedOn();
+    expect(heading()).toBe("Подключи агентов");
+    expect(screen.getByText("Капля будет следить за ними и скажет, когда они закончат")).toBeTruthy();
+    // Only what is on this Mac is offered.
+    expect(screen.getByRole("switch", { name: "Claude Code" })).toBeTruthy();
+    expect(screen.queryByRole("switch", { name: "Codex" })).toBeNull();
+    await act(async () => fireEvent.click(screen.getByRole("switch", { name: "Claude Code" })));
+    expect((calls("save_settings").slice(-1)[0] as { settings: Settings }).settings.agents?.claude_code).toBe(true);
+    await act(async () => fireEvent.click(next()));
+    await movedOn();
+    expect(calls("set_trial").slice(-1)[0]).toEqual({ on: true });
   });
 
   it("trial mode is on only while the trial step is shown", async () => {

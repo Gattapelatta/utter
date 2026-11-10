@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { DraftParts, FreeLimits, HistoryEntry, KeyId, Mode, OverlayState, PermissionsStatus, ProviderKind, Settings, TrialOutcome, UpdateState, UsageDay } from "./types";
+import type { AgentsStatus, AgentView, DraftParts, SessionKey, FreeLimits, HistoryEntry, KeyId, Mode, OverlayState, PermissionsStatus, ProviderKind, Settings, TrialOutcome, UpdateState, UsageDay } from "./types";
 
 export const ipc = {
   getSettings: () => invoke<Settings>("get_settings"),
@@ -35,6 +35,13 @@ export const ipc = {
   installUpdate: () => invoke<void>("install_update"),
   overlayFrames: (avg: number, p95: number, max: number, count: number) =>
     invoke<void>("overlay_frames", { avg, p95, max, count }),
+  agentsView: () => invoke<AgentView>("agents_view"),
+  agentsStatus: () => invoke<AgentsStatus>("agents_status"),
+  agentPermission: (id: number, choice: "allow" | "always" | "deny" | "open") => invoke<void>("agent_permission", { id, choice }),
+  agentOpen: (key: SessionKey) => invoke<void>("agent_open", { key }),
+  agentDismiss: () => invoke<void>("agent_dismiss"),
+  agentHitZones: (zones: { x: number; y: number; w: number; h: number }[]) => invoke<void>("agent_hit_zones", { zones }),
+  agentSeen: (key: SessionKey) => invoke<void>("agent_seen", { key }),
 };
 
 export const events = {
@@ -48,6 +55,9 @@ export const events = {
     listen<DraftParts | null>("overlay://draft", (e) => cb(e.payload)),
   overlayRest: (cb: (r: { shown: boolean }) => void): Promise<UnlistenFn> =>
     listen<{ shown: boolean }>("overlay://rest", (e) => cb(e.payload)),
+  agents: (cb: (v: AgentView) => void): Promise<UnlistenFn> => listen<AgentView>("overlay://agents", (e) => cb(e.payload)),
+  agentHover: (cb: (h: { over: boolean }) => void): Promise<UnlistenFn> =>
+    listen<{ over: boolean }>("overlay://agent-hover", (e) => cb(e.payload)),
   update: (cb: (s: UpdateState) => void): Promise<UnlistenFn> => listen<UpdateState>("ui://update", (e) => cb(e.payload)),
   hotkey: (cb: (e: { mode: Mode; down: boolean }) => void): Promise<UnlistenFn> =>
     listen<{ mode: Mode; down: boolean }>("ui://hotkey", (e) => cb(e.payload)),

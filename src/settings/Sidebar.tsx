@@ -1,4 +1,4 @@
-import { ClockCounterClockwise, Info, Key, Keyboard, SlidersHorizontal, Translate, type Icon } from "@phosphor-icons/react";
+import { ClockCounterClockwise, Info, Key, Keyboard, Robot, SlidersHorizontal, Translate, type Icon } from "@phosphor-icons/react";
 import { useT } from "../i18n";
 import { Logo } from "./Logo";
 import { NAV_ROUTES, type Route } from "./routes";
@@ -8,6 +8,7 @@ const ICONS: Partial<Record<Route, Icon>> = {
   hotkeys: Keyboard,
   translate: Translate,
   provider: Key,
+  agents: Robot,
   history: ClockCounterClockwise,
   about: Info,
 };

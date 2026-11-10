@@ -8,6 +8,7 @@ import { Onboarding } from "./onboarding/Onboarding";
 import { revealPage } from "./reveal";
 import { parseRoute, type Route } from "./routes";
 import { About } from "./sections/About";
+import { Agents } from "./sections/Agents";
 import { General } from "./sections/General";
 import { History } from "./sections/History";
 import { Hotkeys } from "./sections/Hotkeys";
@@ -68,6 +69,8 @@ function Page({ route, go, finishOnboarding }: { route: Route; go: (r: Route) =>
       return <Translate />;
     case "provider":
       return <Provider />;
+    case "agents":
+      return <Agents />;
     case "history":
       return <History />;
     case "about":

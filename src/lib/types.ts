@@ -1,6 +1,6 @@
 // Mirrors of the Rust types that cross the IPC boundary.
 
-export type Mode = "Dictation" | "Translate";
+export type Mode = "Dictation" | "Translate" | "Task";
 export type TranslateStyle = "Business" | "Casual";
 export type RecordMode = "Hold" | "Toggle";
 export type InsertMethod = "Paste" | "Type";
@@ -13,6 +13,10 @@ export type KeyId =
   | "RightMeta"
   | "RightCtrl"
   | "RightShift"
+  | "LeftAlt"
+  | "LeftMeta"
+  | "LeftCtrl"
+  | "LeftShift"
   | "CapsLock"
   | "Fn"
   | "Escape"
@@ -31,10 +35,31 @@ export interface Settings {
   ui_language: UiLanguage;
   translate_style: TranslateStyle;
   provider: ProviderKind;
-  hotkeys: { dictation: KeyId; translate: KeyId };
+  /** `task`: the «Задача» key (spec 2026-11-09 §3.7); absent only in older fixtures. */
+  hotkeys: { dictation: KeyId; translate: KeyId; task?: KeyId | null };
   history_enabled: boolean;
   onboarding_done: boolean;
   notch_drop: boolean;
+  /** Absent only in fixtures older than the agents (spec 2026-11-09); Utter always sends them. */
+  agents?: AgentSettings;
+  agents_codex_prev_notify?: string[] | null;
+}
+
+export interface AgentSettings {
+  claude_code: boolean;
+  codex: boolean;
+  summary: boolean;
+}
+
+export const AGENTS_OFF: AgentSettings = { claude_code: false, codex: false, summary: true };
+
+/** Rust `agents::service::Link`. */
+export type AgentLink = { kind: "off" } | { kind: "on" } | { kind: "missing" } | { kind: "broken"; message: string };
+
+export interface AgentsStatus {
+  detected: { claude_code: boolean; codex: boolean };
+  claude_code: AgentLink;
+  codex: AgentLink;
 }
 
 export type OverlayState =
@@ -99,6 +124,10 @@ export function keyLabel(k: KeyId): string {
     RightMeta: "Right ⌘ Command",
     RightCtrl: "Right ⌃ Control",
     RightShift: "Right ⇧ Shift",
+    LeftAlt: "Left ⌥ Option",
+    LeftMeta: "Left ⌘ Command",
+    LeftCtrl: "Left ⌃ Control",
+    LeftShift: "Left ⇧ Shift",
     CapsLock: "Caps Lock",
     Fn: "fn",
     Escape: "Esc",
@@ -116,3 +145,35 @@ export type UpdateState =
   | { kind: "waiting_for_idle" }
   | { kind: "ready" }
   | { kind: "failed" };
+
+/** Agents the Drop watches (Rust `agents::*`, spec 2026-11-09). */
+export type AgentKind = "claude_code" | "codex";
+export type SessionKey = { agent: AgentKind; id: string };
+export type SessionState = "permission" | "waiting" | "working" | "done";
+
+export interface AgentRow {
+  key: SessionKey;
+  agent: AgentKind;
+  project: string;
+  state: SessionState;
+  steps: [number, number] | null;
+  /** At most two, the newest last. */
+  actions: string[];
+  summary: string | null;
+  seen: boolean;
+}
+
+export type AgentCard =
+  /** `rule`: what «Всегда» allows from now on, in words. */
+  | { kind: "permission"; id: number; key: SessionKey; tool: string; detail: string; can_always: boolean; rule?: string | null }
+  | { kind: "done"; key: SessionKey }
+  | { kind: "waiting"; key: SessionKey }
+  | { kind: "after_pause"; done: number; waiting: number };
+
+export interface AgentView {
+  rows: AgentRow[];
+  card: AgentCard | null;
+  paused: boolean;
+  /** An agent is switched on in Utter: the right ear keeps its colours. */
+  connected?: boolean;
+}

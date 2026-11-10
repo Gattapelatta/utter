@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { minimumSystemProblem, parseCodesign, parseLipo, parseLeaf } from "./inspect";
+import { helperProblem, minimumSystemProblem, parseCodesign, parseLipo, parseLeaf } from "./inspect";
 
 const signed = `Executable=/tmp/Utter.app/Contents/MacOS/utter
 Identifier=app.utter.desktop
@@ -44,5 +44,13 @@ designated => identifier "app.utter.desktop" and certificate leaf = H"543970408e
     expect(minimumSystemProblem("13.0")).toBeNull();
     expect(minimumSystemProblem("10.13")).toMatch(/10\.13/);
     expect(minimumSystemProblem(null)).toMatch(/не указана/);
+  });
+
+  // Agents run utter-agent from inside the app: without it, or without one architecture, the Drop
+  // silently hears nothing on half of the Macs.
+  it("helperProblem wants utter-agent for both architectures", () => {
+    expect(helperProblem(["x86_64", "arm64"])).toBeNull();
+    expect(helperProblem(null)).toMatch(/utter-agent/);
+    expect(helperProblem(["arm64"])).toMatch(/x86_64/);
   });
 });

@@ -9,6 +9,7 @@ const TITLES: Record<Route, string> = {
   hotkeys: "nav.hotkeys",
   translate: "nav.translate",
   provider: "nav.provider",
+  agents: "nav.agents",
   history: "nav.history",
   about: "nav.about",
 };

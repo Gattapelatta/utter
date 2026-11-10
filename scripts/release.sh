@@ -57,6 +57,14 @@ if [ "$DRY" = 0 ]; then
 fi
 
 step "Сборка для всех Mac (Apple Silicon + Intel)"
+# Tauri bundles every binary of the crate, but for a universal build it glues (lipo) only the main
+# one: utter-agent must already be in the universal folder when the bundler copies it.
+for T in aarch64-apple-darwin x86_64-apple-darwin; do
+  cargo build --manifest-path src-tauri/Cargo.toml --release --bin utter-agent --target "$T" --quiet
+done
+mkdir -p src-tauri/target/universal-apple-darwin/release
+lipo -create -output src-tauri/target/universal-apple-darwin/release/utter-agent \
+  src-tauri/target/aarch64-apple-darwin/release/utter-agent src-tauri/target/x86_64-apple-darwin/release/utter-agent
 pnpm tauri build --target universal-apple-darwin --bundles app
 BUNDLE=src-tauri/target/universal-apple-darwin/release/bundle/macos
 APP="$BUNDLE/Utter.app"

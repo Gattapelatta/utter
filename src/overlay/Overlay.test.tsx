@@ -22,12 +22,14 @@ vi.mock("../lib/ipc", () => {
       overlayScreen: none,
       overlayRest: none,
       overlayDraft: none,
+      agents: none,
+      agentHover: none,
       overlayLevel: (cb: (l: number) => void) => {
         handlers.level = cb;
         return Promise.resolve(() => {});
       },
     },
-    ipc: { overlayReady: () => Promise.resolve(), uiLog: () => Promise.resolve(), overlayPainted: () => Promise.resolve() },
+    ipc: { agentsView: () => new Promise(() => {}), overlayReady: () => Promise.resolve(), uiLog: () => Promise.resolve(), overlayPainted: () => Promise.resolve() },
   };
 });
 

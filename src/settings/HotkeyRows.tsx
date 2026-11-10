@@ -4,14 +4,16 @@ import { useT } from "../i18n";
 import { events, ipc } from "../lib/ipc";
 import { useApp } from "../lib/store";
 import type { Mode } from "../lib/types";
-import { keyLabel, sameKey } from "./keys";
+import { keyLabel, sameKey, typesText } from "./keys";
 import { Button } from "./ui/Button";
 import { Keycap } from "./ui/Keycap";
 import { Row } from "./ui/Row";
 
-const MODES: { mode: Mode; field: "dictation" | "translate"; label: string; hint: string }[] = [
+type Field = "dictation" | "translate" | "task";
+const MODES: { mode: Mode; field: Field; label: string; hint: string }[] = [
   { mode: "Dictation", field: "dictation", label: "hotkeys.dictation", hint: "hotkeys.dictation_hint" },
   { mode: "Translate", field: "translate", label: "hotkeys.translate", hint: "hotkeys.translate_hint" },
+  { mode: "Task", field: "task", label: "hotkeys.task", hint: "hotkeys.task_hint" },
 ];
 
 /**
@@ -19,13 +21,13 @@ const MODES: { mode: Mode; field: "dictation" | "translate"; label: string; hint
  * the onboarding keys step. `hints: false` hides the descriptions; `translateLabel` renames
  * the second row.
  */
-export function HotkeyRows({ hints = true, translateLabel }: { hints?: boolean; translateLabel?: string }) {
+export function HotkeyRows({ hints = true, translateLabel, task = true }: { hints?: boolean; translateLabel?: string; task?: boolean }) {
   const t = useT();
   const s = useApp((a) => a.settings);
   const update = useApp((a) => a.update);
   const [capturing, setCapturing] = useState<Mode | null>(null);
   const [error, setError] = useState<{ mode: Mode; text: string } | null>(null);
-  const [pressed, setPressed] = useState<Record<Mode, boolean>>({ Dictation: false, Translate: false });
+  const [pressed, setPressed] = useState<Record<Mode, boolean>>({ Dictation: false, Translate: false, Task: false });
   const live = useRef({ mounted: true, capturing: false });
 
   useEffect(() => {
@@ -41,18 +43,18 @@ export function HotkeyRows({ hints = true, translateLabel }: { hints?: boolean; 
 
   if (!s) return null;
 
-  const capture = async (mode: Mode, field: "dictation" | "translate") => {
+  const capture = async (mode: Mode, field: Field) => {
     setError(null);
     setCapturing(mode);
     live.current.capturing = true;
     try {
       const key = await ipc.captureKey();
       if (!live.current.mounted) return;
-      const other = MODES.find((m) => m.mode !== mode)!;
       const hotkeys = useApp.getState().settings?.hotkeys ?? s.hotkeys;
-      if (sameKey(key, hotkeys[other.field])) {
+      const other = MODES.find((m) => m.mode !== mode && hotkeys[m.field] != null && sameKey(key, hotkeys[m.field]!));
+      if (other) {
         setError({ mode, text: t("errors.taken", { mode: t(other.label) }) });
-      } else if (!sameKey(key, hotkeys[field])) {
+      } else if (hotkeys[field] == null || !sameKey(key, hotkeys[field]!)) {
         await update({ hotkeys: { ...hotkeys, [field]: key } });
       }
     } catch (e) {
@@ -65,17 +67,19 @@ export function HotkeyRows({ hints = true, translateLabel }: { hints?: boolean; 
 
   return (
     <>
-      {MODES.map(({ mode, field, label, hint }) => (
+      {MODES.filter((m) => m.field !== "task" || (task && s.hotkeys.task !== undefined)).map(({ mode, field, label, hint }) => (
         <Row
           key={mode}
           label={mode === "Translate" && translateLabel ? translateLabel : t(label)}
           description={hints ? t(hint) : undefined}
           note={
-            error?.mode === mode && (
+            error?.mode === mode ? (
               <div role="alert" className="mt-1.5 flex items-start gap-1.5 text-[13px] leading-snug text-text">
                 <WarningCircle data-accent size={16} className="mt-px shrink-0 text-danger" aria-hidden />
                 {error.text}
               </div>
+            ) : (
+              typesText(s.hotkeys[field]) && <div className="mt-1 text-[13px] leading-snug text-text-secondary">{t("hotkeys.types_text")}</div>
             )
           }
         >
@@ -91,7 +95,7 @@ export function HotkeyRows({ hints = true, translateLabel }: { hints?: boolean; 
               </>
             ) : (
               <>
-                <Keycap label={keyLabel(s.hotkeys[field], t)} pressed={pressed[mode]} />
+                <Keycap label={s.hotkeys[field] ? keyLabel(s.hotkeys[field]!, t) : t("keys.none")} pressed={pressed[mode]} />
                 <Button disabled={capturing !== null} onClick={() => capture(mode, field)}>
                   {t("common.change")}
                 </Button>

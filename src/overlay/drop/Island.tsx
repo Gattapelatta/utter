@@ -46,6 +46,18 @@ interface Props {
   cancelled?: boolean;
   /** The live draft shown in the window view. */
   draft?: DraftParts | null;
+  /** An agent card or list (spec 2026-11-09): shown in the window view instead of the draft. */
+  agent?: React.ReactNode;
+  /** The agents' dots in the ears at rest. */
+  ears?: React.ReactNode;
+  /** A click on the Drop (the easter egg counts them). */
+  onPoke?: () => void;
+  /** Overrides the Drop's mood (dizzy). */
+  mood?: Mood;
+  /** The agents' island height (the "agent" view). */
+  agentH?: number;
+  /** Pokes so far and when the last one was (`performance.now()`): each one tickles the Drop. */
+  tickle?: { n: number; at: number };
 }
 
 /**
@@ -53,7 +65,7 @@ interface Props {
  * (§4.2). The shape is a clip of the island; the Drop flies between its place on the island
  * and the left ear.
  */
-export function Island({ state, level, now, view = "open", notch = null, cancelled = false, draft = null }: Props) {
+export function Island({ state, level, now, view = "open", notch = null, cancelled = false, draft = null, agent = null, ears = null, onPoke, mood, agentH = 150, tickle }: Props) {
   const t = useT();
   const reduced = useMemo(prefersReducedMotion, []);
   // While leaving, the props are those of the last render; AnimatePresence passes the fresh "cancelled".
@@ -62,7 +74,11 @@ export function Island({ state, level, now, view = "open", notch = null, cancell
   const fast = present ? cancelled : (leaving ?? cancelled);
   // Non-recording states keep the colour of the recording they belong to.
   const translate = useRef(false);
-  if (state.kind === "recording") translate.current = state.mode === "Translate";
+  const task = useRef(false);
+  if (state.kind === "recording") {
+    translate.current = state.mode === "Translate";
+    task.current = state.mode === "Task";
+  }
   // This recording opened the draft window: its timer stays in the wing until it leaves with the field.
   const windowed = useRef(false);
   if (view === "window") windowed.current = true;
@@ -106,12 +122,15 @@ export function Island({ state, level, now, view = "open", notch = null, cancell
     right = <span className="island-text">{t(key, { provider: state.provider ?? "", n: state.minutes ?? 0 })}</span>;
   }
 
+  // The agents own the open island: no timer or dictation message beside the Drop.
+  if (agent) right = null;
+
   const folded = { notch, fast, reduced };
   const at = (v: View) => ({
-    shape: shapeTarget(v, folded.notch, folded.fast, folded.reduced),
-    drop: dropTarget(v, folded.notch, folded.fast, folded.reduced),
+    shape: shapeTarget(v, folded.notch, folded.fast, folded.reduced, agentH),
+    drop: dropTarget(v, folded.notch, folded.fast, folded.reduced, agentH),
   });
-  const open = view === "open" || view === "window";
+  const open = view === "open" || view === "window" || view === "agent";
   const content = contentTarget(open ? "open" : "rest");
   const timer = timerTarget(view === "window" ? "window" : "open");
   const slot = fieldLeaving
@@ -124,30 +143,58 @@ export function Island({ state, level, now, view = "open", notch = null, cancell
   useEffect(() => {
     if (view !== "rest") setHanded(false);
   }, [view]);
+  // A poke takes the Drop back from the compositor-driven one in the ear, so it can giggle.
+  useEffect(() => {
+    if (tickle?.n) setHanded(false);
+  }, [tickle?.n]);
   const inEar = view === "rest" && handed;
 
   return (
-    <div data-island data-view={view} className="island" data-clickable={state.kind === "error" && state.action ? "" : undefined}>
+    // Many quick clicks must never select the island's text (the user 2026-11-10).
+    <div data-island data-view={view} className="island" style={{ userSelect: "none", WebkitUserSelect: "none" }} data-clickable={state.kind === "error" && state.action ? "" : undefined}>
       <motion.div data-shape className="island-shape" initial={at("folded").shape} animate={at(view).shape} exit={at("folded").shape} />
       {/* The field is cut by the island's own shape: while the window shrinks back into the island,
           a fading field must not hang below it. */}
       <motion.div data-draft-clip className="island-shape-clip" initial={at("folded").shape} animate={at(view).shape} exit={at("folded").shape}>
         <AnimatePresence>
-          {(view === "window" || state.kind === "recording") && (
-            <DraftPanel key="draft" draft={view === "window" ? draft : null} shown={view === "window"} />
+          {agent ? (
+            <motion.div
+              key="agent"
+              data-agent-content
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1, transition: { delay: 0.06, duration: 0.16 } }}
+              exit={{ opacity: 0, transition: { duration: 0.15 } }}
+              style={{ position: "absolute", inset: 0, willChange: "opacity" }}
+            >
+              {agent}
+            </motion.div>
+          ) : (
+            (view === "window" || state.kind === "recording") && (
+              <DraftPanel key="draft" draft={view === "window" ? draft : null} shown={view === "window"} />
+            )
           )}
         </AnimatePresence>
       </motion.div>
       <div className="island-row">
-        <motion.div data-drop-place initial={at("folded").drop} animate={at(view).drop} exit={at("folded").drop}>
+        <motion.div
+          data-drop-place
+          initial={at("folded").drop}
+          animate={at(view).drop}
+          exit={at("folded").drop}
+          onClick={onPoke}
+          data-tickle={tickle ? tickle.n : undefined}
+          style={onPoke ? { pointerEvents: "auto" } : undefined}
+        >
           {inEar ? (
             <RestDrop start={gaze.current} reduced={reduced} gazeRef={gaze} />
           ) : (
             <Drop
-              mood={open ? moodFor(state) : "idle"}
+              mood={mood ?? (open && !agent ? moodFor(state) : "idle")}
               rest={view === "rest"}
               level={level}
               translate={translate.current}
+              task={task.current}
+              tickle={tickle?.at}
               reduced={reduced}
               startGaze={() => gaze.current}
               onSettle={(g) => {
@@ -162,6 +209,8 @@ export function Island({ state, level, now, view = "open", notch = null, cancell
           {right}
         </motion.span>
       </div>
+      {/* After the row: the agents' dots are painted over the Drop, never behind it. */}
+      {view === "rest" && ears}
     </div>
   );
 }

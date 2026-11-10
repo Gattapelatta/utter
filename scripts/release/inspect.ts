@@ -22,3 +22,10 @@ export function minimumSystemProblem(value: string | null): string | null {
   if (value === null) return `В приложении не указана минимальная macOS (нужна ${MIN_MACOS}).`;
   return value.trim() === MIN_MACOS ? null : `Приложение пускает на macOS ${value.trim()}, а работает с ${MIN_MACOS}.`;
 }
+
+/** Agents run `Contents/MacOS/utter-agent`; `archs` is its `lipo -archs` (null = the file is missing). */
+export function helperProblem(archs: string[] | null): string | null {
+  if (archs === null) return "В приложении нет utter-agent (Капля не услышит агентов).";
+  const missing = ["x86_64", "arm64"].filter((a) => !archs.includes(a));
+  return missing.length ? `В utter-agent нет архитектуры ${missing.join(" и ")}.` : null;
+}

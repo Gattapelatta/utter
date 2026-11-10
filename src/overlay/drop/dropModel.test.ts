@@ -165,3 +165,60 @@ describe("drop in the notch (rest)", () => {
     expect(f.glow).toBeGreaterThan(0.7);
   });
 });
+
+describe("dizzy (easter egg, spec 2026-11-09 §3.6)", () => {
+  const dizzy: ModelInput = { mood: "dizzy", level: 0, translate: false, reduced: false };
+
+  it("sways ±6° at 2 Hz with spiral eyes and blush on", () => {
+    const m = createModel(0);
+    let max = 0;
+    let crossings = 0;
+    let prev = 0;
+    let last: Frame | null = null;
+    for (let i = 1; i <= 120; i++) {
+      const f = stepModel(m, dizzy, (i * 1000) / 60);
+      if (i > 30) {
+        max = Math.max(max, Math.abs(f.rot));
+        if (Math.sign(f.rot) !== Math.sign(prev) && prev !== 0) crossings++;
+      }
+      prev = f.rot;
+      last = f;
+    }
+    // 1.5 s at 2 Hz: ~6 zero crossings; the spring reaches most of the ±6°.
+    expect(max).toBeGreaterThan(4);
+    expect(max).toBeLessThanOrEqual(6.5);
+    expect(crossings).toBeGreaterThanOrEqual(5);
+    expect(crossings).toBeLessThanOrEqual(7);
+    expect(last!.dizzy).toBeGreaterThan(0.95);
+    expect(last!.settled).toBe(false);
+  });
+
+  it("other moods have no spirals", () => {
+    const m = createModel(0);
+    const f = stepModel(m, { mood: "idle", level: 0, translate: false, reduced: false }, 16);
+    expect(f.dizzy).toBe(0);
+  });
+});
+
+describe("tickle (each poke, the user 2026-11-10)", () => {
+  it("smiles and wiggles for a moment, then settles again", () => {
+    const m = createModel(0);
+    const idle: ModelInput = { mood: "idle", level: 0, translate: false, reduced: false };
+    for (let i = 1; i <= 60; i++) stepModel(m, idle, (i * 1000) / 60);
+    const at = 1000;
+    let smile = 0;
+    let rot = 0;
+    for (let i = 1; i <= 30; i++) {
+      const f = stepModel(m, { ...idle, tickle: at }, at + (i * 1000) / 60);
+      smile = Math.max(smile, f.smile);
+      rot = Math.max(rot, Math.abs(f.rot));
+      expect(f.settled).toBe(false);
+    }
+    expect(smile).toBeGreaterThan(0.5);
+    expect(rot).toBeGreaterThan(1.5);
+    let last: Frame | null = null;
+    for (let i = 31; i <= 240; i++) last = stepModel(m, { ...idle, tickle: at }, at + (i * 1000) / 60);
+    expect(last!.smile).toBeLessThan(0.05);
+    expect(Math.abs(last!.rot)).toBeLessThan(0.05);
+  });
+});

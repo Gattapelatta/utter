@@ -57,7 +57,7 @@ function Entry({ e }: { e: HistoryEntry }) {
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-2 text-[12px] text-text-secondary">
           <span className="font-mono tabular-nums">{when}</span>
-          <span>{e.mode === "Translate" ? t("history.translate") : t("history.dictation")}</span>
+          <span>{e.mode === "Translate" ? t("history.translate") : e.mode === "Task" ? t("history.task") : t("history.dictation")}</span>
           {note && (
             <span className="flex items-center gap-1">
               <span aria-hidden>·</span>

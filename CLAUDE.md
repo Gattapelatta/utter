@@ -4,10 +4,11 @@ Free, open-source voice-to-text for macOS (Windows later): hold a hotkey, speak,
 
 **Start of every session:** read `docs/superpowers/HANDOFF.md` — current status, decisions made along the way, deferred issues, and how to begin the next plan. The spec is `docs/superpowers/specs/2026-10-06-utter-design.md`; plans live in `docs/superpowers/plans/`.
 
-## Current focus (2026-11-08) — when the user says «продолжаем работу над utter»
+## Current focus (2026-11-10) — when the user says «продолжаем работу над utter»
 
 1. Read `docs/superpowers/HANDOFF.md` («С чего начать следующую сессию»).
-2. Plans 1–3 are done. Utter is **public** (github.com/Gattapelatta/utter); v0.2.0 and v0.2.1 are released, live auto-update 0.2.0 → 0.2.1 passed (`docs/superpowers/plans/2026-11-08-mac-public-release-summary.md`). Next is the user's choice: Windows (Plan 4), the deferred minors, or the Drop watching AI agents (README roadmap). Start with brainstorming on a new `feat/*` branch.
+2. Plans 1–3 are done; Utter is **public**, v0.2.1 released. «Капля и ИИ-агенты» is done and checked live on `feat/agent-drop` (spec `2026-11-09-agent-drop-design.md` §8) — merge only with the user's OK.
+3. **First next: the dictation paste is often slow** (3–7 s on 2026-11-10, all in the live cleanup request) — the user's request; numbers in HANDOFF. Then Windows (Plan 4) or the deferred minors.
 
 ## Working with the user
 
@@ -63,4 +64,6 @@ open src-tauri/target/release/bundle/macos/Utter.app
 - The Drop's per-frame logic is a pure model (`overlay/drop/dropModel.ts`) driving SVG attributes via refs — no React re-render per frame.
 - Starting an opacity/transform animation on an element without its own layer mid-animation costs a frame in WebKit (draft window, 2026-11-07): give such elements `will-change` up front.
 - WebKit does not hand a `linear(…)` easing to the compositor: it resolves it on the main thread every frame (measured 2 % CPU vs 0.01 % for the same spring as keyframes). For anything that runs while idle, give springs as sampled keyframes (`overlay/drop/restMotion.ts`).
+- Agents: Claude Code hooks (`~/.claude/settings.json`) fire live, also in an open session; `UserPromptSubmit` stdout becomes context, so `utter-agent` prints only the permission decision. Tauri bundles every `[[bin]]` into `Contents/MacOS`, but a universal build lipos only the main binary — `scripts/release.sh` lipos `utter-agent` itself.
+- The overlay window must not take clicks where a full-screen app shows its menu and title bar (the top strip, and the open island lying over it): macOS then never hides them. It takes clicks only over the hit zones the island page reports (`agent_hit_zones`) and never in the top 36 pt (`agents::service::takes_clicks`).
 - The overlay window stays on screen while idle (the Drop in the notch, §4.2a): `app/overlay_rest.rs` decides it; it is ordered out only when the ears are off (setting, full-screen app, locked, display asleep). Synthetic key presses from a helper do not reach Utter — a dictation for a video check needs the user.

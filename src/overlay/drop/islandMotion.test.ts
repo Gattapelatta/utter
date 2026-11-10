@@ -1,10 +1,42 @@
 import { describe, expect, it } from "vitest";
-import { clip, contentTarget, dropTarget, foldedBox, ISLAND_BOX, leaveTarget, restBox, restDropOffset, shapeTarget, timerTarget, WINDOW_BOX } from "./islandMotion";
+import { agentBox, agentDropCentre, clip, contentTarget, dropTarget, foldedBox, ISLAND_BOX, leaveTarget, restBox, restDropOffset, shapeTarget, timerTarget, WINDOW_BOX } from "./islandMotion";
 
 const notch = { width: 185, height: 32 };
 /** The same string with every number replaced: Motion only interpolates matching templates. */
 const template = (s: string) => s.replace(/-?\d+(\.\d+)?(e-?\d+)?/g, "#");
 type T = { transition: { type?: string; duration?: number; ease?: number[]; bounce?: number } };
+
+describe("agent island (the user's mockup 2026-11-09, asked for again 2026-11-10)", () => {
+  it("opens at once and quickly (the user 2026-11-10: no waiting on hover)", () => {
+    const shape = shapeTarget("agent", notch, false, false, 150) as unknown as T;
+    expect(shape.transition.duration).toBeLessThanOrEqual(0.3);
+    expect(shape.transition.bounce).toBe(0);
+    const drop = dropTarget("agent", notch, false, false, 150) as unknown as T;
+    expect(drop.transition.duration).toBeLessThanOrEqual(0.3);
+    const content = contentTarget("agent") as unknown as { transition: { delay: number; duration: number } };
+    expect(content.transition.delay).toBeLessThanOrEqual(0.08);
+    // The dictation island keeps its own, approved timing.
+    expect((shapeTarget("open", notch, false, false) as unknown as T).transition.duration).toBe(0.5);
+  });
+
+  it("is as wide as the draft window and as tall as its content", () => {
+    expect(agentBox(150)).toEqual({ w: 420, h: 150, r: 30 });
+    // Never taller than the window it is cut from.
+    expect(agentBox(400).h).toBe(206);
+  });
+
+  it("the big Drop sits on the left, beside the notch and below its top", () => {
+    const c = agentDropCentre(notch);
+    // 44 pt Drop: its left edge 24 pt from the island's edge, far left of the notch (117.5…302.5).
+    expect(c.x).toBe(24 + 22);
+    expect(c.x + 22).toBeLessThan(210 - notch.width / 2);
+    expect(c.y - 22).toBeGreaterThanOrEqual(notch.height + 12);
+    const t = dropTarget("agent", notch, false, false, 150).transform;
+    expect(template(t)).toBe(template(dropTarget("open", notch, false, false).transform));
+    expect(shapeTarget("agent", notch, false, false, 150).clipPath).toBe(clip(agentBox(150)));
+    expect(contentTarget("agent").opacity).toBe(1);
+  });
+});
 
 describe("island geometry", () => {
   it("ears are the notch widened by 36 pt each side, as tall as the notch", () => {
