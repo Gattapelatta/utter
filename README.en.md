@@ -17,8 +17,10 @@ It also translates: speak in your own language and get English pasted instead. P
 - **You see what it hears.** While you talk, the words show up right under the notch. Let go of the key and a moment later the clean version is pasted.
 - **Cleans up, doesn't rewrite.** It drops the "um"s, "uh"s and repeats and adds the commas and periods. The meaning stays yours. Always.
 - **The Drop.** A tiny character living by the notch. One look and you know what's going on: listening, thinking, or all done.
+- **The Drop watches your AI agents.** Turn on Claude Code or Codex in **Settings → Agents** — once, and the Drop sees every session. You went to another window and the agent finished or is waiting for you — the Drop tells you by the notch, with a short line of what got done. When Claude Code asks for permission, hit "Allow" right on the island, no switching. No notifications to turn on.
+- **A task for your agent, by voice.** Give the **Task** key a key in Settings, ramble with all the "um"s — out comes a neat task: the gist and the points.
 
-You can change both keys in Settings. And yes, you can talk for a long time: Utter works on the recording while you're still speaking, so the text is ready almost as soon as you stop.
+You can change the keys in Settings — any key but Esc will do. And yes, you can talk for a long time: Utter works on the recording while you're still speaking, so the text is ready almost as soon as you stop.
 
 ## How to install
 
@@ -34,6 +36,7 @@ Works on macOS 13 and newer, on any Mac — Apple Silicon or Intel.
 
 - Your voice goes straight from your Mac to the speech service you picked: Google Gemini by default, or Groq, or OpenAI. And it goes **with your own key**. Utter has no servers of its own. None.
 - The key lives in the macOS Keychain. Your dictation history stays on your Mac, and you can turn it off.
+- With AI agents connected, only the agent's last message goes to your service — to make the short "what got done" line. Turn it off in **Settings → Agents** and the line comes straight from the message, on your Mac.
 - Heads-up: on Gemini's free tier Google may use requests to improve its products. On a paid tier it doesn't. More in [Google's terms](https://ai.google.dev/gemini-api/terms).
 
 ## FAQ
@@ -54,7 +57,7 @@ It should: Utter is built for both Apple Silicon and Intel. But I've only tested
 
 - A Windows version.
 - A paid Apple signature, so the first launch doesn't send you into Settings.
-- The Drop for AI agents — it tells you when ChatGPT or Claude has finished a task.
+- The Drop for the regular Claude and ChatGPT chats — for now it watches Claude Code and Codex.
 
 ## Want to help?
 
