@@ -447,3 +447,52 @@ async fn cleanup_latency_spread() {
     stat(rows.iter().map(|r| r.0.min(r.1)).collect(), "first of both Lite");
     stat(rows.iter().filter_map(|r| r.2).collect(), "3.6-flash");
 }
+
+/// Round-trip floor (a request with no model work) and the speed of candidate fast text models
+/// on the last phrase of a dictation: cleanup and business translation.
+/// Run: cargo test --release --lib -- --ignored fast_text_candidates --nocapture
+#[tokio::test]
+#[ignore = "live: ~50 short requests with the user's key"]
+async fn fast_text_candidates() {
+    let key = KeychainStore::new().get(ProviderKind::Gemini).expect("Gemini key in Keychain");
+    let bench = Bench { http: reqwest::Client::new(), key };
+    let models: Value = bench.http.get(format!("{BASE}/models?pageSize=200")).header("x-goog-api-key", &bench.key).send().await.unwrap().json().await.unwrap();
+    let gemma: Vec<String> = models["models"].as_array().into_iter().flatten()
+        .filter_map(|m| m["name"].as_str()).filter(|n| n.contains("gemma")).map(|n| n.trim_start_matches("models/").to_string()).collect();
+    println!("gemma models: {}", gemma.join(", "));
+    let mut rtt = Vec::new();
+    for _ in 0..6 {
+        let t = Instant::now();
+        let _ = bench.http.get(format!("{BASE}/models/gemini-3.5-flash-lite")).header("x-goog-api-key", &bench.key).send().await.map(|r| r.status());
+        rtt.push(t.elapsed().as_millis());
+    }
+    println!("round trip (GET model info, warm): {rtt:?} ms");
+    let opts = PipelineOptions { language: Some("ru".into()), cleanup: true, paragraphs: false, style: TranslateStyle::Business };
+    let cleanup = system_prompt(Mode::Dictation, &opts, 0.0).unwrap();
+    let translate = system_prompt(Mode::Translate, &opts, 0.0).unwrap();
+    let phrase = "ну и в общем давай завтра созвонимся часа в три";
+    let mut candidates: Vec<(String, Option<&str>)> = vec![("gemini-3.5-flash-lite".into(), Some("minimal"))];
+    for g in gemma.iter().filter(|g| g.starts_with("gemma-4")) {
+        candidates.push((g.clone(), None));
+    }
+    let mut times: Vec<Vec<u128>> = vec![Vec::new(); candidates.len()];
+    for round in 0..8 {
+        let started = Instant::now();
+        let (label, sys) = if round % 2 == 0 { ("cleanup", &cleanup) } else { ("translate", &translate) };
+        for (i, (model, level)) in candidates.iter().enumerate() {
+            let body = json!({"model": model, "store": false, "system_instruction": sys, "input": user_message(phrase), "generation_config": thinking(*level)});
+            let (d, out) = bench.interact(body).await;
+            match out {
+                Ok(t) => { times[i].push(d.as_millis()); println!("round {round} {label:<9} {model:<28} {:>5} ms → {}", d.as_millis(), t.trim().replace('\n', " ")); }
+                Err(e) => println!("round {round} {label:<9} {model:<28} ERROR after {} ms: {}", d.as_millis(), e.chars().take(160).collect::<String>()),
+            }
+        }
+        let spent = started.elapsed();
+        if spent < Duration::from_millis(4500) { tokio::time::sleep(Duration::from_millis(4500) - spent).await; }
+    }
+    for ((model, _), mut t) in candidates.iter().zip(times) {
+        t.sort();
+        if t.is_empty() { println!("{model}: no answers"); continue; }
+        println!("{model:<28} n={} median {} ms, max {} ms, ≤1 s {}", t.len(), t[t.len() / 2], t[t.len() - 1], t.iter().filter(|&&x| x <= 1000).count());
+    }
+}
