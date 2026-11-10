@@ -15,9 +15,16 @@ const BOTTOM = 14;
 const TITLE_H = 18;
 const LINE_H = 16;
 const BUTTONS_H = 28;
-const GAP = 8;
+/** Between the lines of the column (flex gap). */
+const GAP = 6;
+/** Extra air above the buttons. */
+const BUTTONS_TOP = 4;
+/** The rule line under the command. */
+const RULE_H = 14;
 /** Characters of the command per line in the mono box (300 pt at 12 px). */
-const MONO_PER_LINE = 44;
+const MONO_PER_LINE = 40;
+/** Characters of plain 13 px text per line in the column. */
+const TEXT_PER_LINE = 46;
 const MONO_LINES = 3;
 
 const TEXT = "#e6e8ea";
@@ -39,18 +46,34 @@ function rgb(hex: string): string {
 
 const detailLines = (detail: string) => Math.min(MONO_LINES, Math.max(1, Math.ceil(detail.length / MONO_PER_LINE)));
 
-/** How tall the island opens for this card or list. */
-export function agentHeight(show: { card: Card } | { rows: AgentRow[] } | { note: true }, notch: Notch): number {
-  let h = top(notch);
-  if ("note" in show) h += 2 * LINE_H;
-  else if ("rows" in show) h += show.rows.slice(0, 3).reduce((s, r, i) => s + (i ? GAP : 0) + TITLE_H + Math.min(2, r.actions.length) * LINE_H, 0);
-  else {
-    const c = show.card;
-    if (c.kind === "after_pause") h += 2 * LINE_H;
-    else if (c.kind === "permission") h += TITLE_H + 6 + detailLines(c.detail || c.tool) * LINE_H + 12 + (c.can_always && c.rule ? 18 : 0) + GAP + BUTTONS_H;
-    else h += TITLE_H + (c.kind === "done" ? 2 * LINE_H + 4 : 0) + GAP + BUTTONS_H;
+/** Heights of the column's items, in order (the column flows from the top; the island is cut to fit). */
+type Shown = { card: Card; summary?: string | null } | { rows: AgentRow[] } | { note: true };
+const lines = (s: string, per: number, max: number) => Math.min(max, Math.max(1, Math.ceil(s.length / per)));
+
+function items(show: Shown): number[] {
+  if ("note" in show) return [2 * LINE_H];
+  if ("rows" in show) return show.rows.slice(0, 3).map((r) => TITLE_H + Math.min(2, r.actions.length) * LINE_H);
+  const c = show.card;
+  const buttons = BUTTONS_TOP + BUTTONS_H;
+  switch (c.kind) {
+    case "after_pause":
+      return [2 * LINE_H];
+    case "permission":
+      return [TITLE_H, detailLines(c.detail || c.tool) * LINE_H + 12, ...(c.can_always && c.rule ? [lines(`«Всегда» разрешит: ${c.rule}`, 52, 3) * RULE_H] : []), buttons];
+    case "done": {
+      const s = "summary" in show ? show.summary : null;
+      return s ? [TITLE_H, lines(s, TEXT_PER_LINE, 2) * LINE_H, buttons] : [TITLE_H, buttons];
+    }
+    case "waiting":
+      return [TITLE_H, buttons];
   }
-  return Math.max(minHeight(notch), h + BOTTOM);
+}
+
+/** How tall the island opens for this card or list. */
+export function agentHeight(show: Shown, notch: Notch): number {
+  const list = items(show);
+  const column = list.reduce((s, h) => s + h, 0) + GAP * (list.length - 1);
+  return Math.max(minHeight(notch), top(notch) + column + BOTTOM);
 }
 
 /** The state's colour washing in from the bottom-right corner (the mockup's «отлив»). */
@@ -64,7 +87,7 @@ function Tint({ dot }: { dot: Dot | null }) {
         position: "absolute",
         inset: 0,
         pointerEvents: "none",
-        background: `radial-gradient(120% 140% at 100% 100%, rgba(${c}, 0.42) 0%, rgba(${c}, 0.12) 45%, rgba(${c}, 0) 70%)`,
+        background: `radial-gradient(130% 160% at 100% 100%, rgba(${c}, 0.55) 0%, rgba(${c}, 0.18) 45%, rgba(${c}, 0) 75%)`,
       }}
     />
   );
@@ -102,7 +125,6 @@ function Panel({ notch, dot, children }: { notch: Notch; dot: Dot | null; childr
           left: `${TEXT_LEFT}px`,
           right: `${TEXT_RIGHT}px`,
           top: `${top(notch)}px`,
-          bottom: `${BOTTOM}px`,
           color: TEXT,
           fontFamily: "var(--font)",
           fontSize: "13px",
@@ -162,7 +184,7 @@ function Title({ project, rest }: { project: string; rest: string }) {
 }
 
 const Buttons = ({ children }: { children: React.ReactNode }) => (
-  <div style={{ display: "flex", gap: "8px", marginTop: "auto", flex: "none" }}>{children}</div>
+  <div style={{ display: "flex", gap: "8px", marginTop: `${BUTTONS_TOP}px`, flex: "none" }}>{children}</div>
 );
 
 /** «Правит billing.ts» → «Поправил billing.ts»: a finished step reads in the past. */

@@ -63,7 +63,16 @@ export function Stage({ state, rest, notch, level, now, onClick, draft = null, a
   const agentH = dizzy
     ? agentHeight({ note: true }, notch)
     : show.kind === "card"
-      ? agentHeight({ card: show.card }, notch)
+      ? agentHeight(
+          {
+            card: show.card,
+            summary:
+              show.card.kind === "done"
+                ? agents.rows.find((r) => show.card.kind === "done" && r.key.id === show.card.key.id && r.key.agent === show.card.key.agent)?.summary
+                : null,
+          },
+          notch,
+        )
       : show.kind === "list"
         ? agentHeight({ rows: show.rows }, notch)
         : 150;
