@@ -256,6 +256,7 @@ async fn live_phrase_latency() {
         });
         let mut released: Option<Instant> = None;
         let mut first_interim = None;
+        let mut last_interim = String::new();
         let mut segments = Vec::new();
         let mut feeder = Some(feeder);
         loop {
@@ -269,6 +270,7 @@ async fn live_phrase_latency() {
             match tokio::time::timeout(wait, s.events.recv()).await {
                 Ok(Some(LiveEvent::Ready)) => println!("  ready {} ms", t0.elapsed().as_millis()),
                 Ok(Some(LiveEvent::Interim(t))) => {
+                    last_interim = t.clone();
                     if first_interim.is_none() {
                         first_interim = Some(t0.elapsed().as_millis());
                         println!("  first interim {} ms: {t}", t0.elapsed().as_millis());
@@ -276,7 +278,10 @@ async fn live_phrase_latency() {
                 }
                 Ok(Some(LiveEvent::Segment(t))) => {
                     let after = released.map(|r| r.elapsed().as_millis() as i64).unwrap_or(-1);
+                    println!("  last interim: {last_interim}");
                     println!("  segment (release→ {after} ms): {t}");
+                    let (a, b) = (crate::pipeline::normalize(&last_interim), crate::pipeline::normalize(&t));
+                    println!("  same words: {} | interim «{a}» | final «{b}»", a == b);
                     segments.push(t);
                 }
                 Ok(Some(LiveEvent::TurnComplete)) => println!("  turnComplete"),
