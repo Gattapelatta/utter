@@ -25,6 +25,49 @@ const MAX_ATTEMPTS: usize = 4;
 /// After release a translation still unanswered this long gets a fresh request to the main
 /// model (spec §4.3).
 const TRANSLATE_LADDER: Duration = Duration::from_secs(1);
+/// Google keeps the last word or two out of its drafts until the final piece (measured
+/// 2026-11-11): a guess may miss this many words at its end and still serve its piece.
+const GUESS_MISSING_WORDS: usize = 3;
+
+/// The words of `final_text` after a guess's words: `Some("")` when they are the same,
+/// `Some(rest)` when the guess is its start and only a few words are missing (cleanup only:
+/// a translation cannot take Russian words), else `None`.
+fn rest_after_guess(guess_key: &str, final_text: &str, kind: Kind) -> Option<String> {
+    let g: Vec<&str> = guess_key.split_whitespace().collect();
+    let f_key = normalize(final_text);
+    let f: Vec<&str> = f_key.split_whitespace().collect();
+    if g.is_empty() || !f.starts_with(&g) {
+        return None;
+    }
+    if f.len() == g.len() {
+        return Some(String::new());
+    }
+    if kind == Kind::Translate {
+        return None;
+    }
+    let words: Vec<&str> = final_text.split_whitespace().collect();
+    let mut seen = 0;
+    for (i, w) in words.iter().enumerate() {
+        seen += normalize(w).split_whitespace().count();
+        if seen == g.len() {
+            let rest = &words[i + 1..];
+            return (rest.len() <= GUESS_MISSING_WORDS).then(|| rest.join(" "));
+        }
+        if seen > g.len() {
+            return None;
+        }
+    }
+    None
+}
+
+/// A guess's answer with the words it missed, as heard (without filler sounds).
+fn with_rest(answer: &str, rest: &str) -> String {
+    let rest = strip_fillers(rest);
+    if rest.is_empty() {
+        return answer.to_string();
+    }
+    format!("{} {rest}", answer.trim_end().trim_end_matches(['.', '!', '?', '…', ',', ';', ':']))
+}
 
 pub struct Models {
     pub main: Arc<dyn TextModel>,
@@ -56,6 +99,8 @@ struct Attempt {
 struct Job {
     pieces: Range<usize>,
     text: String,
+    /// Words of the piece its guess missed, added to the answer as heard.
+    rest: String,
     attempts: Vec<Attempt>,
     first_sent: Instant,
     last_sent: Instant,
@@ -132,6 +177,10 @@ pub struct PieceProcessor {
     done: BTreeMap<usize, (usize, String)>,
     guess: Option<Guess>,
     released: bool,
+    /// `finish` runs: a translation's tail without a final piece may be sent now.
+    finishing: bool,
+    /// The budget said no; logged once until a request goes again.
+    budget_full: bool,
     requests: u32,
 }
 
@@ -149,6 +198,8 @@ impl PieceProcessor {
             done: BTreeMap::new(),
             guess: None,
             released: false,
+            finishing: false,
+            budget_full: false,
             requests: 0,
         }
     }
@@ -156,22 +207,23 @@ impl PieceProcessor {
     /// A final piece from the recogniser.
     pub fn push(&mut self, segment: String) {
         let i = self.segments.len();
-        let key = normalize(&segment);
         self.segments.push(segment);
         self.assigned.push(false);
         if let Some(g) = self.guess.take() {
-            let hit = g.key == key;
-            tracing::info!(hit, "timing: live guess");
-            if hit {
-                self.assigned[i] = true;
-                match g.answer {
-                    Some(text) => {
-                        self.done.insert(i, (i + 1, text));
+            let rest = rest_after_guess(&g.key, &self.segments[i], self.kind);
+            let missing = rest.as_deref().map_or(0, |r| r.split_whitespace().count());
+            tracing::info!(hit = rest.is_some(), missing, "timing: live guess");
+            match rest {
+                Some(rest) => {
+                    self.assigned[i] = true;
+                    match g.answer {
+                        Some(text) => {
+                            self.done.insert(i, (i + 1, with_rest(&text, &rest)));
+                        }
+                        None => self.jobs.push(Job { pieces: i..i + 1, rest, ..g.job }),
                     }
-                    None => self.jobs.push(Job { pieces: i..i + 1, ..g.job }),
                 }
-            } else {
-                abort(&g.job.attempts);
+                None => abort(&g.job.attempts),
             }
         }
         self.poll();
@@ -219,8 +271,13 @@ impl PieceProcessor {
         };
         let now = Instant::now();
         if !self.budget.lock().is_ok_and(|mut b| b.try_take(id, p, now)) {
+            if !self.budget_full {
+                self.budget_full = true;
+                tracing::info!(model = id, priority = ?p, "timing: live budget full");
+            }
             return None;
         }
+        self.budget_full = false;
         let (tx, reply) = oneshot::channel();
         let (system, user) = (self.system.clone(), user_message(text));
         let task = tokio::spawn(async move {
@@ -283,7 +340,7 @@ impl PieceProcessor {
                 chars = job.text.chars().count(),
                 "timing: live piece processed"
             );
-            self.done.insert(job.pieces.start, (job.pieces.end, text));
+            self.done.insert(job.pieces.start, (job.pieces.end, with_rest(&text, &job.rest)));
         }
     }
 
@@ -343,7 +400,7 @@ impl PieceProcessor {
             }
             self.assigned[pieces.clone()].iter_mut().for_each(|x| *x = true);
             let now = Instant::now();
-            self.jobs.push(Job { pieces, text, attempts, first_sent: now, last_sent: now });
+            self.jobs.push(Job { pieces, text, rest: String::new(), attempts, first_sent: now, last_sent: now });
         }
     }
 
@@ -353,6 +410,11 @@ impl PieceProcessor {
 
     /// Sends the tail (the draft of the last piece) ahead, before its final piece comes.
     pub fn guess(&mut self, tail: &str) {
+        // A translation's guess never matches (the last word comes only with the final piece);
+        // only a tail still without a final piece at the end is sent.
+        if self.kind == Kind::Translate && !self.finishing {
+            return;
+        }
         let key = normalize(tail);
         if key.is_empty() || self.guess.as_ref().is_some_and(|g| g.key == key) {
             return;
@@ -364,7 +426,7 @@ impl PieceProcessor {
         // While speaking a guess is a piece like the others: the reserve stays for the end.
         if let Some(a) = self.attempt(&text, false, self.priority()) {
             let now = Instant::now();
-            let job = Job { pieces: 0..0, text, attempts: vec![a], first_sent: now, last_sent: now };
+            let job = Job { pieces: 0..0, text, rest: String::new(), attempts: vec![a], first_sent: now, last_sent: now };
             self.guess = Some(Guess { key, job, answer: None });
         }
     }
@@ -411,11 +473,22 @@ impl PieceProcessor {
         }
     }
 
+    /// The tail's text from an answered guess (with the words it missed), if there is one.
+    fn tail_answer(&self, tail: &str) -> Option<String> {
+        let g = self.guess.as_ref()?;
+        let answer = g.answer.as_ref()?;
+        rest_after_guess(&g.key, tail, self.kind).map(|rest| with_rest(answer, &rest))
+    }
+
     /// Every piece answered, and the tail too (by a guess with its words).
-    fn complete(&self, tail_key: &str) -> bool {
-        self.jobs.is_empty()
-            && self.assigned.iter().all(|&a| a)
-            && (tail_key.is_empty() || self.guess.as_ref().is_some_and(|g| g.key == tail_key && g.answer.is_some()))
+    fn complete(&self, tail: &str) -> bool {
+        self.jobs.is_empty() && self.assigned.iter().all(|&a| a) && (normalize(tail).is_empty() || self.tail_answer(tail).is_some())
+    }
+
+    /// Requests still waiting for an answer.
+    fn running(&self) -> usize {
+        let open = |j: &Job| j.attempts.iter().filter(|a| !a.over).count();
+        self.jobs.iter().map(open).sum::<usize>() + self.guess.as_ref().filter(|g| g.answer.is_none()).map_or(0, |g| open(&g.job))
     }
 
     /// Waits for the answers until `deadline`. Cleanup: pieces without an answer go as heard
@@ -427,15 +500,18 @@ impl PieceProcessor {
         if !self.released {
             self.release(tail);
         }
+        self.finishing = true;
         let key = normalize(tail);
         self.guess_twice(tail);
         loop {
             self.poll();
-            if self.complete(&key) {
+            if self.complete(tail) {
                 break;
             }
             let now = Instant::now();
-            if now >= deadline {
+            // Nothing is running and nothing could be sent (budget, failures): no answer will come.
+            let stuck = self.running() == 0;
+            if now >= deadline || stuck {
                 if self.kind == Kind::Translate {
                     return Err(ProviderError::Timeout);
                 }
@@ -445,7 +521,7 @@ impl PieceProcessor {
         }
         let (mut text, mut raw_pieces) = self.assemble();
         if !key.is_empty() {
-            let tail_text = match self.guess.as_ref().filter(|g| g.key == key).and_then(|g| g.answer.clone()) {
+            let tail_text = match self.tail_answer(tail) {
                 Some(answer) => answer.trim().to_string(),
                 None => {
                     raw_pieces += 1;
@@ -783,6 +859,81 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn guess_missing_the_last_words_still_counts() {
+        // Google keeps the last word out of its drafts: «…бюджет на» → final «…бюджет на рекламу.»
+        let main = Fake::new(&[300]);
+        let mut r = rig(&main, None);
+        r.p.guess("обсудим бюджет на");
+        drive(&mut r.p, 10).await;
+        r.p.push("Обсудим бюджет на рекламу.".into());
+        drive(&mut r.p, 400).await;
+        assert_eq!(r.p.requests(), 1);
+        assert_eq!(r.p.assemble(), ("EN[обсудим бюджет на] рекламу.".to_string(), 0));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn answered_guess_gets_the_last_words_too() {
+        let main = Arc::new(Fake { reply: Some("Обсудим бюджет на."), ..Fake::with(&[50]) });
+        let mut r = rig(&main, None);
+        r.p.guess("обсудим бюджет на");
+        drive(&mut r.p, 100).await;
+        r.p.push("обсудим бюджет на 10:00, э-э.".into());
+        assert_eq!(r.p.assemble(), ("Обсудим бюджет на 10:00.".to_string(), 0));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn guess_far_from_the_final_is_a_miss() {
+        let main = Fake::new(&[]);
+        let mut r = rig(&main, None);
+        r.p.guess("давай");
+        drive(&mut r.p, 10).await;
+        r.p.push("давай встретимся завтра в три".into());
+        drive(&mut r.p, 300).await;
+        assert_eq!(main.inputs(), vec!["давай", "давай встретимся завтра в три"]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn translation_makes_no_guesses() {
+        // A guess sent before the last word never matches, and Russian words cannot be added
+        // to an English answer: translation waits for the final piece.
+        let main = Fake::new(&[]);
+        let mut r = rig_kind(&main, None, Kind::Translate);
+        r.p.guess("давай");
+        r.p.release("давай");
+        drive(&mut r.p, 50).await;
+        assert!(main.inputs().is_empty());
+        r.p.push("Давай завтра.".into());
+        drive(&mut r.p, 50).await;
+        assert_eq!(main.inputs(), vec!["Давай завтра.", "Давай завтра."]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn translation_sends_a_tail_without_final_at_the_end() {
+        let main = Fake::new(&[]);
+        let mut r = rig_kind(&main, None, Kind::Translate);
+        r.p.release("давай");
+        let t = Instant::now();
+        let ends = r.p.finish("давай", t + Duration::from_secs(4)).await.unwrap();
+        assert_eq!(ends.text, "EN[давай]");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn nothing_to_send_ends_translation_at_once() {
+        let main = Fake::new(&[]);
+        let mut r = rig_kind(&main, None, Kind::Translate);
+        let now = Instant::now();
+        for _ in 0..14 {
+            assert!(r.budget.lock().unwrap().try_take("main", Priority::End, now));
+        }
+        r.p.push("раз".into());
+        r.p.release("");
+        let t = Instant::now();
+        let out = r.p.finish("", t + Duration::from_secs(4)).await;
+        assert_eq!(out, Err(ProviderError::Timeout));
+        assert!(t.elapsed() < Duration::from_millis(20), "{:?}", t.elapsed());
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn guess_while_speaking_leaves_the_end_reserve() {
         let main = Fake::new(&[]);
         let mut r = rig(&main, None);
@@ -868,7 +1019,7 @@ mod tests {
         let t = Instant::now();
         let ends = r.p.finish("и в три", t + LIMIT).await.unwrap();
         assert!(main.inputs().is_empty());
-        assert_eq!(t.elapsed(), LIMIT);
+        assert!(t.elapsed() < Duration::from_millis(20), "nothing can be sent: no wait, {:?}", t.elapsed());
         assert_eq!(ends, Ends { text: "Ну, давай. и в три".into(), pieces: 2, raw_pieces: 2, requests: 0 });
     }
 
