@@ -2439,8 +2439,11 @@ mod tests {
         let (mut r, _) = live_rig(heard("привет мир"));
         r.shared.settings.lock().unwrap().cleanup = true;
         let now = tokio::time::Instant::now();
-        for _ in 0..defaults::GEMINI_LITE_PER_MINUTE {
-            assert!(r.shared.budget.lock().unwrap().try_take(defaults::GEMINI_TRANSLATE_MODEL, crate::providers::budget::Priority::End, now));
+        // Both Lite models are out of room (the backup takes the overflow of the main one).
+        for model in [defaults::GEMINI_TRANSLATE_MODEL, defaults::GEMINI_BACKUP_LITE_MODEL] {
+            for _ in 0..defaults::GEMINI_LITE_PER_MINUTE {
+                assert!(r.shared.budget.lock().unwrap().try_take(model, crate::providers::budget::Priority::End, now));
+            }
         }
         r.orch.set_provider_factory(Arc::new(FakeFactory(Arc::new(FakeProvider::new(Ok("x".into()), Ok("x".into()))))));
         r.record(Mode::Dictation, speech(1.0), Instant::now(), 1).await;

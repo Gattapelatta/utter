@@ -262,6 +262,12 @@ impl PieceProcessor {
         }
     }
 
+    /// A first attempt: the main model, or the healthy backup (its own budget) when the main
+    /// model's minute is full.
+    fn first_attempt(&mut self, text: &str, p: Priority) -> Option<Attempt> {
+        self.attempt(text, false, p).or_else(|| if self.backup_healthy() { self.attempt(text, true, p) } else { None })
+    }
+
     /// Starts one attempt of `text` on the main or the backup model if the budget allows.
     fn attempt(&mut self, text: &str, backup: bool, p: Priority) -> Option<Attempt> {
         let (model, id) = if backup {
@@ -349,9 +355,13 @@ impl PieceProcessor {
     fn race(&mut self) {
         let now = Instant::now();
         let (p, every) = (self.priority(), self.retry_every());
+        let released = self.released;
         let due = |j: &Job| {
             let running = j.attempts.iter().filter(|a| !a.over).count();
-            (running == 0 || now.saturating_duration_since(j.last_sent) >= every) && j.attempts.len() < MAX_ATTEMPTS
+            // While speaking there is time: a silent request is not sent again (each one costs a
+            // slot of the minute's budget); only a failed one is.
+            let late = released && now.saturating_duration_since(j.last_sent) >= every;
+            (running == 0 || late) && j.attempts.len() < MAX_ATTEMPTS
         };
         for ji in 0..self.jobs.len() {
             let job = &self.jobs[ji];
@@ -392,11 +402,12 @@ impl PieceProcessor {
             }
             let pieces = start..i;
             let text = self.joined(&pieces);
-            let Some(a) = self.attempt(&text, false, p) else { return };
+            let Some(a) = self.first_attempt(&text, p) else { return };
+            let tried_backup = a.backup;
             let mut attempts = vec![a];
             // After release: two attempts at once (spec §4.2 p. 2).
             if self.released {
-                attempts.extend(self.one_more(false, &text, p));
+                attempts.extend(self.one_more(tried_backup, &text, p));
             }
             self.assigned[pieces.clone()].iter_mut().for_each(|x| *x = true);
             let now = Instant::now();
@@ -424,7 +435,7 @@ impl PieceProcessor {
         }
         let text = tail.trim().to_string();
         // While speaking a guess is a piece like the others: the reserve stays for the end.
-        if let Some(a) = self.attempt(&text, false, self.priority()) {
+        if let Some(a) = self.first_attempt(&text, self.priority()) {
             let now = Instant::now();
             let job = Job { pieces: 0..0, text, rest: String::new(), attempts: vec![a], first_sent: now, last_sent: now };
             self.guess = Some(Guess { key, job, answer: None });
@@ -730,14 +741,26 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn unanswered_piece_is_sent_again_after_2_5_s() {
+    async fn slow_piece_is_not_sent_again_while_speaking() {
+        // There is time while the user speaks: a re-send would only burn the minute's budget.
         let main = Fake::new(&[10_000]);
         let backup = Fake::tagged("B:", &[100]);
         let mut r = rig(&main, Some(&backup));
-        let t0 = Instant::now();
         r.p.push("раз".into());
-        drive(&mut r.p, 2_700).await;
-        near(backup.times(t0), &[2_500]);
+        drive(&mut r.p, 5_000).await;
+        assert_eq!(r.p.requests(), 1);
+        assert!(backup.inputs().is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn slow_piece_gets_the_backup_at_release() {
+        let main = Fake::new(&[10_000]);
+        let backup = Fake::tagged("B:", &[100]);
+        let mut r = rig(&main, Some(&backup));
+        r.p.push("раз".into());
+        drive(&mut r.p, 3_000).await;
+        r.p.release("");
+        drive(&mut r.p, 200).await;
         assert_eq!(answer(&r.p, 0).as_deref(), Some("B:EN[раз]"));
         assert_eq!(r.p.requests(), 2);
         drive(&mut r.p, 10_000).await;
@@ -751,7 +774,8 @@ mod tests {
         let mut r = rig(&main, Some(&backup));
         r.health.lock().unwrap().punish(BACKUP_LITE_ROUTE, Instant::now().into_std());
         r.p.push("раз".into());
-        drive(&mut r.p, 2_700).await;
+        r.p.release("");
+        drive(&mut r.p, 200).await;
         assert_eq!(main.inputs().len(), 2);
         assert!(backup.inputs().is_empty());
         assert_eq!(answer(&r.p, 0).as_deref(), Some("EN[раз]"));
@@ -763,8 +787,39 @@ mod tests {
         let backup = Fake::new(&[10_000]);
         let mut r = rig(&main, Some(&backup));
         r.p.push("раз".into());
-        drive(&mut r.p, 5_100).await;
+        r.p.release("");
+        drive(&mut r.p, 2_600).await;
         assert!(!r.health.lock().unwrap().healthy(BACKUP_LITE_ROUTE, Instant::now().into_std()));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn full_main_window_overflows_to_a_healthy_backup() {
+        let main = Fake::new(&[]);
+        let backup = Fake::tagged("B:", &[]);
+        let mut r = rig(&main, Some(&backup));
+        let now = Instant::now();
+        for _ in 0..11 {
+            assert!(r.budget.lock().unwrap().try_take("main", Priority::Speech, now));
+        }
+        r.p.push("раз".into());
+        drive(&mut r.p, 200).await;
+        assert!(main.inputs().is_empty());
+        assert_eq!(answer(&r.p, 0).as_deref(), Some("B:EN[раз]"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn sick_backup_takes_no_overflow() {
+        let main = Fake::new(&[]);
+        let backup = Fake::new(&[]);
+        let mut r = rig(&main, Some(&backup));
+        let now = Instant::now();
+        for _ in 0..11 {
+            assert!(r.budget.lock().unwrap().try_take("main", Priority::Speech, now));
+        }
+        r.health.lock().unwrap().punish(BACKUP_LITE_ROUTE, now.into_std());
+        r.p.push("раз".into());
+        drive(&mut r.p, 200).await;
+        assert!(main.inputs().is_empty() && backup.inputs().is_empty());
     }
 
     #[tokio::test(start_paused = true)]
@@ -959,6 +1014,7 @@ mod tests {
         let now = Instant::now();
         for _ in 0..11 {
             assert!(r.budget.lock().unwrap().try_take("main", Priority::Speech, now));
+            assert!(r.budget.lock().unwrap().try_take("backup", Priority::Speech, now));
         }
         r.p.push("раз".into());
         r.p.push("два".into());
