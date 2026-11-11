@@ -92,6 +92,7 @@
   "translate.example_source": "Привет, можешь скинуть отчёт до пятницы? Спасибо!",
   "translate.example_business": "Hi, could you please send me the report by Friday? Thank you.",
   "translate.example_casual": "Hey, can you send me the report by Friday? Thanks!",
+  "translate.wait_note": "Перевод ждёт ответа Google: обычно 1–3 секунды, но на бесплатном ключе бывает и дольше — Google иногда отвечает медленно.",
   "provider.title": "Провайдер",
   "provider.subtitle": "Речь распознаётся в облаке выбранного сервиса по твоему ключу. Наших серверов нет.",
   "provider.gemini_caption": "Бесплатно, вход через Google-аккаунт",

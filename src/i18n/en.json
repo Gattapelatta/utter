@@ -92,6 +92,7 @@
   "translate.example_source": "Hola, ¿me puedes mandar el informe antes del viernes? ¡Gracias!",
   "translate.example_business": "Hi, could you please send me the report by Friday? Thank you.",
   "translate.example_casual": "Hey, can you send me the report by Friday? Thanks!",
+  "translate.wait_note": "Translation waits for Google: usually 1–3 seconds, sometimes longer on a free key — Google is slow at times.",
   "provider.title": "Provider",
   "provider.subtitle": "Speech is recognised in the chosen service's cloud with your own key. There are no Utter servers.",
   "provider.gemini_caption": "Free, sign in with Google",
