@@ -762,6 +762,12 @@ impl Orchestrator {
                     main_id: defaults::GEMINI_TRANSLATE_MODEL.into(),
                     backup: Some(backup),
                     backup_id: defaults::GEMINI_BACKUP_LITE_MODEL.into(),
+                    // Translation cannot paste the words as heard: late pieces race the whole text
+                    // on a third model too (3.6 Flash, its own quota; spec 2026-11-10 §4.3).
+                    last: (mode == Mode::Translate).then(|| -> Arc<dyn TextModel> {
+                        self.deps.providers.make_route(s.provider, key.clone(), Route::Direct { model: defaults::GEMINI_BACKUP_MODEL })
+                    }),
+                    last_id: defaults::GEMINI_BACKUP_MODEL.into(),
                 };
                 let kind = if mode == Mode::Translate { ProcessKind::Translate } else { ProcessKind::Cleanup };
                 Finisher::Text { models, system, kind, budget: self.shared.budget.clone(), health: self.route_health.clone() }
@@ -2412,6 +2418,21 @@ mod tests {
         r.settle(1).await;
         assert_eq!(r.provider.stt_calls.load(Ordering::SeqCst), 1, "the recording went the batch way");
         assert!(r.out.0.lock().unwrap().len() == 1);
+    }
+
+    #[tokio::test]
+    async fn slow_live_translation_is_raced_on_the_third_model() {
+        // Live check 2026-11-11: the Lite models translated pieces in 5 s; after 2 s the whole
+        // text also goes to 3.6 Flash.
+        let (mut r, _) = live_rig(heard("Привет."));
+        let slow = Duration::from_secs(20);
+        let f = RouteFactory::texts(vec![(slow, "Lite."), (slow, "Backup."), (Duration::from_millis(50), "Hi.")]);
+        r.orch.set_provider_factory(f.clone());
+        let started = std::time::Instant::now();
+        r.record(Mode::Translate, speech(1.0), Instant::now(), 1).await;
+        r.settle(1).await;
+        assert_eq!(*r.out.0.lock().unwrap(), vec!["Hi.".to_string()]);
+        assert!(started.elapsed() < Duration::from_millis(2_600), "{:?}", started.elapsed());
     }
 
     #[tokio::test]

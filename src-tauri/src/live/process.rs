@@ -25,6 +25,11 @@ const MAX_ATTEMPTS: usize = 4;
 /// After release a translation still unanswered this long gets a fresh request to the main
 /// model (spec §4.3).
 const TRANSLATE_LADDER: Duration = Duration::from_secs(1);
+/// A translation still incomplete this long after release races its whole text (spec §4.3).
+pub const RACE_AFTER: Duration = Duration::from_secs(2);
+/// How long `finish` waits for a translation in tests (the live run passes its own limit).
+#[cfg(test)]
+const TRANSLATE_WAIT: Duration = Duration::from_secs(5);
 /// Google keeps the last word or two out of its drafts until the final piece (measured
 /// 2026-11-11): a guess may miss this many words at its end and still serve its piece.
 const GUESS_MISSING_WORDS: usize = 3;
@@ -74,6 +79,9 @@ pub struct Models {
     pub main_id: String,
     pub backup: Option<Arc<dyn TextModel>>,
     pub backup_id: String,
+    /// Translation only: a third model raced with the whole text when the pieces are late.
+    pub last: Option<Arc<dyn TextModel>>,
+    pub last_id: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -176,7 +184,11 @@ pub struct PieceProcessor {
     /// Answers by the first piece they cover: (end of the range, text).
     done: BTreeMap<usize, (usize, String)>,
     guess: Option<Guess>,
+    /// Translation: the whole text raced on three models when the pieces are late.
+    whole: Option<Guess>,
+    raced: bool,
     released: bool,
+    released_at: Option<Instant>,
     /// `finish` runs: a translation's tail without a final piece may be sent now.
     finishing: bool,
     /// The budget said no; logged once until a request goes again.
@@ -197,7 +209,10 @@ impl PieceProcessor {
             jobs: Vec::new(),
             done: BTreeMap::new(),
             guess: None,
+            whole: None,
+            raced: false,
             released: false,
+            released_at: None,
             finishing: false,
             budget_full: false,
             requests: 0,
@@ -271,10 +286,14 @@ impl PieceProcessor {
     /// Starts one attempt of `text` on the main or the backup model if the budget allows.
     fn attempt(&mut self, text: &str, backup: bool, p: Priority) -> Option<Attempt> {
         let (model, id) = if backup {
-            (self.models.backup.clone()?, self.models.backup_id.as_str())
+            (self.models.backup.clone()?, self.models.backup_id.clone())
         } else {
-            (self.models.main.clone(), self.models.main_id.as_str())
+            (self.models.main.clone(), self.models.main_id.clone())
         };
+        self.attempt_on(model, &id, backup, text, p)
+    }
+
+    fn attempt_on(&mut self, model: Arc<dyn TextModel>, id: &str, backup: bool, text: &str, p: Priority) -> Option<Attempt> {
         let now = Instant::now();
         if !self.budget.lock().is_ok_and(|mut b| b.try_take(id, p, now)) {
             if !self.budget_full {
@@ -314,7 +333,7 @@ impl PieceProcessor {
                 answered.push((ji, text));
             }
         }
-        if let Some(g) = self.guess.as_mut().filter(|g| g.answer.is_none()) {
+        for g in [self.guess.as_mut(), self.whole.as_mut()].into_iter().flatten().filter(|g| g.answer.is_none()) {
             let l = look(&mut g.job.attempts, now);
             errors.extend(l.errors);
             slow_backup |= l.slow_backup;
@@ -445,6 +464,7 @@ impl PieceProcessor {
     /// The key is released: what waits goes now, twice; requests in flight get one more attempt.
     pub fn release(&mut self, tail: &str) {
         self.released = true;
+        self.released_at.get_or_insert_with(Instant::now);
         self.collect();
         let in_flight = self.jobs.len();
         self.send_waiting();
@@ -499,7 +519,34 @@ impl PieceProcessor {
     /// Requests still waiting for an answer.
     fn running(&self) -> usize {
         let open = |j: &Job| j.attempts.iter().filter(|a| !a.over).count();
-        self.jobs.iter().map(open).sum::<usize>() + self.guess.as_ref().filter(|g| g.answer.is_none()).map_or(0, |g| open(&g.job))
+        let pending = |g: &Option<Guess>| g.as_ref().filter(|g| g.answer.is_none()).map_or(0, |g| open(&g.job));
+        self.jobs.iter().map(open).sum::<usize>() + pending(&self.guess) + pending(&self.whole)
+    }
+
+    /// The whole text (every piece and the tail) as one request on every model at once:
+    /// a translation whose pieces are late (spec §4.3).
+    fn race_whole(&mut self, tail: &str) {
+        self.raced = true;
+        let all = 0..self.segments.len();
+        let text = [self.joined(&all), tail.trim().to_string()].into_iter().filter(|t| !t.is_empty()).collect::<Vec<_>>().join(" ");
+        if text.is_empty() {
+            return;
+        }
+        let mut attempts: Vec<Attempt> = Vec::new();
+        attempts.extend(self.attempt(&text, false, Priority::End));
+        if self.backup_healthy() {
+            attempts.extend(self.attempt(&text, true, Priority::End));
+        }
+        if let Some(last) = self.models.last.clone() {
+            let id = self.models.last_id.clone();
+            attempts.extend(self.attempt_on(last, &id, false, &text, Priority::End));
+        }
+        tracing::info!(attempts = attempts.len(), "timing: live whole text raced");
+        if !attempts.is_empty() {
+            let now = Instant::now();
+            let job = Job { pieces: 0..0, text, rest: String::new(), attempts, first_sent: now, last_sent: now };
+            self.whole = Some(Guess { key: String::new(), job, answer: None });
+        }
     }
 
     /// Waits for the answers until `deadline`. Cleanup: pieces without an answer go as heard
@@ -514,12 +561,22 @@ impl PieceProcessor {
         self.finishing = true;
         let key = normalize(tail);
         self.guess_twice(tail);
+        let race_at = self.released_at.unwrap_or(released) + RACE_AFTER;
         loop {
             self.poll();
             if self.complete(tail) {
                 break;
             }
+            if let Some(text) = self.whole.as_ref().and_then(|w| w.answer.clone()) {
+                let pieces = self.segments.len() + usize::from(!key.is_empty());
+                tracing::info!(ready_ms = released.elapsed().as_millis() as u64, pieces, "timing: live end (whole text)");
+                return Ok(Ends { text: text.trim().to_string(), pieces, raw_pieces: 0, requests: self.requests });
+            }
             let now = Instant::now();
+            if self.kind == Kind::Translate && !self.raced && (now >= race_at || self.running() == 0) {
+                self.race_whole(tail);
+                continue;
+            }
             // Nothing is running and nothing could be sent (budget, failures): no answer will come.
             let stuck = self.running() == 0;
             if now >= deadline || stuck {
@@ -582,7 +639,7 @@ impl Drop for PieceProcessor {
         for j in &self.jobs {
             abort(&j.attempts);
         }
-        if let Some(g) = &self.guess {
+        for g in [&self.guess, &self.whole].into_iter().flatten() {
             abort(&g.job.attempts);
         }
     }
@@ -665,6 +722,10 @@ mod tests {
     }
 
     fn rig_kind(main: &Arc<Fake>, backup: Option<&Arc<Fake>>, kind: Kind) -> Rig {
+        rig_full(main, backup, None, kind)
+    }
+
+    fn rig_full(main: &Arc<Fake>, backup: Option<&Arc<Fake>>, last: Option<&Arc<Fake>>, kind: Kind) -> Rig {
         let budget: SharedBudget = Arc::new(Mutex::new(RequestBudget::new(14, 3)));
         let health = Arc::new(Mutex::new(RouteHealth::new(3)));
         let models = Models {
@@ -672,6 +733,8 @@ mod tests {
             main_id: "main".into(),
             backup: backup.map(|b| b.clone() as Arc<dyn TextModel>),
             backup_id: "backup".into(),
+            last: last.map(|l| l.clone() as Arc<dyn TextModel>),
+            last_id: "last".into(),
         };
         let p = PieceProcessor::new(models, "sys".into(), kind, budget.clone(), health.clone());
         Rig { p, budget, health }
@@ -1132,7 +1195,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn translate_gives_up_at_its_deadline() {
-        let main = Fake::new(&[10_000, 10_000, 10_000, 10_000]);
+        let main = Fake::new(&[10_000; 12]);
         let mut r = rig_kind(&main, None, Kind::Translate);
         r.p.push("раз".into());
         r.p.release("");
@@ -1140,6 +1203,66 @@ mod tests {
         let out = r.p.finish("", t + Duration::from_secs(4)).await;
         assert_eq!(out, Err(ProviderError::Timeout));
         assert_eq!(t.elapsed(), Duration::from_secs(4));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn late_translation_races_the_whole_text() {
+        // Google translated pieces in 5 s (live check 2026-11-11): after 2 s the whole text goes
+        // to three models at once and the first answer wins.
+        let main = Fake::new(&[10_000; 12]);
+        let backup = Fake::tagged("B:", &[10_000; 12]);
+        let last = Fake::tagged("L:", &[300]);
+        let mut r = rig_full(&main, Some(&backup), Some(&last), Kind::Translate);
+        r.p.push("раз".into());
+        r.p.push("два".into());
+        let t = Instant::now();
+        r.p.release("");
+        let ends = r.p.finish("", t + TRANSLATE_WAIT).await.unwrap();
+        assert_eq!(ends.text, "L:EN[раз два]");
+        assert!(main.inputs().contains(&"раз два".to_string()), "the main model is raced too");
+        assert!(t.elapsed() >= RACE_AFTER && t.elapsed() <= RACE_AFTER + Duration::from_millis(320), "{:?}", t.elapsed());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_whole_text_includes_the_tail() {
+        let main = Fake::new(&[10_000; 12]);
+        let last = Fake::tagged("L:", &[100]);
+        let mut r = rig_full(&main, None, Some(&last), Kind::Translate);
+        r.p.push("раз".into());
+        let t = Instant::now();
+        r.p.release("и хвост");
+        let ends = r.p.finish("и хвост", t + TRANSLATE_WAIT).await.unwrap();
+        assert_eq!(ends.text, "L:EN[раз и хвост]");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn quick_pieces_need_no_race() {
+        let main = Fake::new(&[500, 500, 500]);
+        let last = Fake::new(&[]);
+        let mut r = rig_full(&main, None, Some(&last), Kind::Translate);
+        r.p.push("раз".into());
+        let t = Instant::now();
+        r.p.release("");
+        let ends = r.p.finish("", t + TRANSLATE_WAIT).await.unwrap();
+        assert_eq!(ends.text, "EN[раз]");
+        assert!(last.inputs().is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn no_room_races_at_once() {
+        let main = Fake::new(&[]);
+        let last = Fake::tagged("L:", &[100]);
+        let mut r = rig_full(&main, None, Some(&last), Kind::Translate);
+        let now = Instant::now();
+        for _ in 0..14 {
+            assert!(r.budget.lock().unwrap().try_take("main", Priority::End, now));
+        }
+        r.p.push("раз".into());
+        r.p.release("");
+        let t = Instant::now();
+        let ends = r.p.finish("", t + TRANSLATE_WAIT).await.unwrap();
+        assert_eq!(ends.text, "L:EN[раз]");
+        assert!(t.elapsed() <= Duration::from_millis(120), "{:?}", t.elapsed());
     }
 
     #[tokio::test(start_paused = true)]

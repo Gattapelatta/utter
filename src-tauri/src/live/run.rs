@@ -22,8 +22,9 @@ pub const FINAL_WAIT: Duration = Duration::from_millis(1_500);
 /// Dictation with cleanup: release → text ready, final pieces included (spec 2026-11-10 §4.2;
 /// the user's limit is 1 s to the paste, ~50 ms go to delivery).
 pub const DICTATION_LIMIT: Duration = Duration::from_millis(950);
-/// Translation: release → every piece translated, else the batch path (spec §4.3).
-pub const TRANSLATE_LIMIT: Duration = Duration::from_secs(4);
+/// Translation: release → every piece translated (or the whole text raced on three models
+/// from 2 s on), else the batch path (spec §4.3).
+pub const TRANSLATE_LIMIT: Duration = Duration::from_secs(5);
 /// A draft tail with no voice this long is sent for processing ahead (spec §4.1 p. 4).
 pub const GUESS_QUIET: Duration = Duration::from_millis(400);
 /// Google sends the last final piece ~0.4 s after the stream ends but no `turnComplete`
@@ -449,7 +450,7 @@ mod tests {
 
     /// A processing finisher over one fake model, with a fresh budget and health.
     fn text(model: Arc<FakeModel>, kind: Kind) -> Finisher {
-        let models = Models { main: model, main_id: "main".into(), backup: None, backup_id: "backup".into() };
+        let models = Models { main: model, main_id: "main".into(), backup: None, backup_id: "backup".into(), last: None, last_id: "last".into() };
         let budget = Arc::new(Mutex::new(crate::providers::budget::RequestBudget::new(14, 3)));
         let health = Arc::new(Mutex::new(crate::pipeline::routes::RouteHealth::new(3)));
         Finisher::Text { models, system: "sys".into(), kind, budget, health }
