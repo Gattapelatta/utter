@@ -6,7 +6,7 @@ import { Island } from "./drop/Island";
 import type { Notch, View } from "./drop/islandMotion";
 import type { Level } from "./drop/Drop";
 import type { AgentView, DraftParts, OverlayState } from "../lib/types";
-import { agentShow, DIZZY_MS, dizzyNow, pokes } from "./agents/agentIsland";
+import { agentShow, DIZZY_MS, dizzyNow, hitZone, pokes } from "./agents/agentIsland";
 import { useT } from "../i18n";
 import { AgentCard, agentHeight, AgentList, AgentNote } from "./agents/AgentCard";
 import { AgentEars } from "./agents/AgentEars";
@@ -86,10 +86,7 @@ export function Stage({ state, rest, notch, level, now, onClick, draft = null, a
     const island = root.current?.querySelector("[data-island]");
     const zones: { x: number; y: number; w: number; h: number }[] = [];
     if (agentOpen && !visible && island) {
-      for (const el of island.querySelectorAll("[data-hit]")) {
-        const r = el.getBoundingClientRect();
-        zones.push({ x: r.left, y: r.top, w: r.width, h: r.height });
-      }
+      for (const el of island.querySelectorAll("[data-hit]")) zones.push(hitZone(el.getBoundingClientRect()));
       const box = island.getBoundingClientRect();
       const c = agentDropCentre(notch);
       zones.push({ x: box.left + c.x - 22, y: box.top + c.y - 22, w: 44, h: 44 });

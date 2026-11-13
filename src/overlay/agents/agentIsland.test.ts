@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentRow, AgentView, PlanStep, SessionState } from "../../lib/types";
-import { agentShow, ladderOf } from "./agentIsland";
+import { agentShow, hitZone, ladderOf } from "./agentIsland";
 
 const row = (id: string, state: SessionState, seen = false): AgentRow => ({
   key: { agent: "claude_code", id },
@@ -109,4 +109,14 @@ describe("ladderOf", () => {
   it("ladder_out_of_order_prev_is_nearest_done", () => expect(ladderOf(P("dpap"))).toMatchObject({ n: 3, prev: "s1", next: "s4" }));
   it("ladder_all_done", () => expect(ladderOf(P("ddd"))).toEqual({ n: 3, m: 3, prev: null, current: null, next: null, allDone: true }));
   it("ladder_no_plan", () => expect(ladderOf([])).toBeNull());
+});
+
+describe("hitZone", () => {
+  it("hit_zone_has_slack_around_the_button", () => {
+    // Live 2026-11-14: clicks 1–3 pt under «Открыть» (the card's last row) fell through.
+    expect(hitZone({ left: 94, top: 74, width: 82, height: 28 })).toEqual({ x: 86, y: 66, w: 98, h: 44 });
+  });
+  it("hit_zone_never_starts_above_the_window", () => {
+    expect(hitZone({ left: 0, top: 4, width: 10, height: 10 })).toEqual({ x: 0, y: 0, w: 18, h: 22 });
+  });
 });
