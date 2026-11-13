@@ -73,3 +73,5 @@ pnpm tauri dev
 ## License
 
 [MIT](LICENSE) — take it and use it.
+
+Claude is a trademark of Anthropic; OpenAI, Codex and the OpenAI logo (Blossom) are trademarks of OpenAI. Utter is not affiliated with them and only shows their marks beside the agents' names.
