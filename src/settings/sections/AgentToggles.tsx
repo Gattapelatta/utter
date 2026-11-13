@@ -8,7 +8,11 @@ import { ClaudeIcon, CodexIcon } from "./agentIcons";
 
 const AGENT_NAME = { claude_code: "Claude Code", codex: "Codex" } as const;
 
-/** Where the agents stand (detected, connected, broken), read again after every change. */
+/**
+ * Where the agents stand (detected, connected, broken, Codex heard), read again after every
+ * change and whenever the window comes back: the user trusts Codex's hooks in another app
+ * (final review 2026-11-14).
+ */
 function useAgentsStatus(): [AgentsStatus | null, () => void] {
   const [status, setStatus] = useState<AgentsStatus | null>(null);
   const read = useCallback(() => {
@@ -17,7 +21,16 @@ function useAgentsStatus(): [AgentsStatus | null, () => void] {
       .then((s) => setStatus(s ?? null))
       .catch(() => {});
   }, []);
-  useEffect(read, [read]);
+  useEffect(() => {
+    read();
+    const back = () => document.visibilityState !== "hidden" && read();
+    window.addEventListener("focus", back);
+    document.addEventListener("visibilitychange", back);
+    return () => {
+      window.removeEventListener("focus", back);
+      document.removeEventListener("visibilitychange", back);
+    };
+  }, [read]);
   return [status, read];
 }
 
@@ -42,7 +55,8 @@ export function AgentToggles({ onboarding = false }: { onboarding?: boolean }) {
   const s = useApp((a) => a.settings);
   const update = useApp((a) => a.update);
   const [status, reread] = useAgentsStatus();
-  if (!s) return null;
+  // Onboarding shows only the agents found: wait for the answer, or a missing one would flash.
+  if (!s || (onboarding && !status)) return null;
   const agents: AgentSettings = s.agents ?? AGENTS_OFF;
   const set = (patch: Partial<AgentSettings>) => update({ agents: { ...agents, ...patch } }).then(reread, reread);
 

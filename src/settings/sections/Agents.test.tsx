@@ -129,4 +129,30 @@ describe("Agents section", () => {
     await mount();
     expect(hint()).toBeNull();
   });
+
+  it("trust_hint_goes_when_the_window_comes_back", async () => {
+    // Final review 2026-11-14: the user trusts the hooks in Codex and comes back to the open
+    // window; the hint must go without reopening the section.
+    useApp.setState({ settings: { ...base, agents: { claude_code: false, codex: true } } });
+    await mount();
+    expect(screen.getByText("В Codex: Settings → Hooks → доверить Utter")).toBeTruthy();
+    status = { ...status, codex_heard: true };
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(screen.queryByText("В Codex: Settings → Hooks → доверить Utter")).toBeNull();
+  });
+
+  it("onboarding_waits_for_the_status", async () => {
+    // Final review 2026-11-14: both columns showed for a moment, then the missing one vanished.
+    let answer: (s: AgentsStatus) => void = () => {};
+    invoke.mockImplementation(async (cmd: string) => (cmd === "agents_status" ? new Promise((r) => (answer = r)) : undefined));
+    render(<AgentToggles onboarding />);
+    await act(async () => {});
+    expect(document.querySelectorAll("[data-agent-col]").length).toBe(0);
+    await act(async () => answer({ ...status, detected: { claude_code: true, codex: false } }));
+    expect(document.querySelectorAll("[data-agent-col]").length).toBe(1);
+    invoke.mockImplementation(async (cmd: string) => (cmd === "agents_status" ? status : undefined));
+  });
 });
+
