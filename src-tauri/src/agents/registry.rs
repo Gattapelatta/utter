@@ -187,10 +187,7 @@ impl Registry {
                 let extra = row.actions.len().saturating_sub(ACTIONS);
                 row.actions.drain(..extra);
             }
-            EventKind::Steps { done, total } => {
-                working(row);
-                row.steps = Some((done, total));
-            }
+            EventKind::Plan(_) => working(row),
             EventKind::Waiting(_) => {
                 row.state = SessionState::Waiting;
                 notice = Some(Card::Waiting { key: key.clone() });
@@ -390,6 +387,7 @@ impl Registry {
 mod tests {
     use super::*;
     use crate::agents::event::{Agent, AgentEvent, EventKind, SessionKey};
+    use crate::agents::plan::PlanUpdate;
     use serde_json::json;
 
     fn key(id: &str) -> SessionKey {
@@ -480,10 +478,9 @@ mod tests {
         for a in ["Читает a.rs", "Правит b.rs", "Запускает npm test"] {
             r.apply(ev("a", EventKind::Action(a.into())), t);
         }
-        r.apply(ev("a", EventKind::Steps { done: 2, total: 4 }), t);
+        r.apply(ev("a", EventKind::Plan(PlanUpdate::Advance)), t);
         let v = r.view();
         assert_eq!(row(&v, "a").actions, vec!["Правит b.rs".to_string(), "Запускает npm test".to_string()]);
-        assert_eq!(row(&v, "a").steps, Some((2, 4)));
         assert_eq!(row(&v, "a").state, SessionState::Working);
     }
 
@@ -492,13 +489,12 @@ mod tests {
         let t = Instant::now();
         let mut r = Registry::default();
         r.apply(ev("a", EventKind::Action("Правит b.rs".into())), t);
-        r.apply(ev("a", EventKind::Steps { done: 4, total: 4 }), t);
+        r.apply(ev("a", EventKind::Plan(PlanUpdate::Finish)), t);
         r.apply(finished("a"), t);
         r.apply(ev("a", EventKind::Started), t);
         let v = r.view();
         assert_eq!(row(&v, "a").state, SessionState::Working);
         assert!(row(&v, "a").actions.is_empty());
-        assert_eq!(row(&v, "a").steps, None);
         assert_eq!(v.card, None);
     }
 

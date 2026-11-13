@@ -1,6 +1,7 @@
 //! Agent events in one shape: Claude Code hook input (stdin JSON) and Codex `notify` payloads.
 //! Formats checked against the Claude Code hooks reference on 2026-11-10.
 
+use crate::agents::plan::{PlanStatus, PlanStep, PlanUpdate, MAX_STEPS, MAX_TITLE};
 use crate::app::tray::Lang;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -25,8 +26,8 @@ pub enum EventKind {
     Started,
     /// What the agent is doing, short: «Правит billing.ts».
     Action(String),
-    /// Its task list: `done` of `total`.
-    Steps { done: u32, total: u32 },
+    /// Its task list changed: the whole list, or a mark on it (spec 2026-11-13 §3.3).
+    Plan(PlanUpdate),
     /// It stopped and waits for the user (the message Claude Code shows).
     Waiting(String),
     /// It asks to run a tool. `suggestion` is Claude Code's own "don't ask again" rule, if any.
@@ -127,11 +128,34 @@ fn action(tool: &str, input: &Value, lang: Lang) -> Option<String> {
     Some(if detail.is_empty() { verb.to_string() } else { format!("{verb} {detail}") })
 }
 
-/// `TodoWrite` (`todos`) and the desktop app's plan tool (`items`) both send the whole list.
-fn steps(input: &Value) -> Option<EventKind> {
-    let list = input.get("todos").or(input.get("items"))?.as_array()?;
-    let done = list.iter().filter(|t| text(t, "status") == Some("completed")).count() as u32;
-    Some(EventKind::Steps { done, total: list.len() as u32 })
+/// One step of a whole list; an unknown status counts as waiting.
+fn plan_step(item: &Value) -> PlanStep {
+    let status = match text(item, "status") {
+        Some("completed") => PlanStatus::Done,
+        Some("in_progress") => PlanStatus::Active,
+        _ => PlanStatus::Pending,
+    };
+    PlanStep { title: text(item, "content").unwrap_or("").chars().take(MAX_TITLE).collect(), status }
+}
+
+/// What a task-list tool call does to the plan. `TodoWrite` (`todos`) and the desktop app's plan
+/// tool (`items`) send the whole list; the plan tool's `advance` / `done` / `start` and `wrap_up`
+/// only mark it (spec 2026-11-13 §2: 52 % of the calls carry no list).
+fn plan_update(tool: &str, input: &Value) -> Option<PlanUpdate> {
+    if tool.ends_with("__wrap_up") {
+        return Some(PlanUpdate::Finish);
+    }
+    if let Some(list) = input.get("todos").or(input.get("items")) {
+        let list = list.as_array()?;
+        return Some(PlanUpdate::Replace(list.iter().take(MAX_STEPS).map(plan_step).collect()));
+    }
+    if input.get("advance").and_then(Value::as_bool) == Some(true) {
+        return Some(PlanUpdate::Advance);
+    }
+    let number = |v: &Value| v.as_u64().and_then(|n| u32::try_from(n).ok());
+    let done: Vec<u32> = input.get("done").and_then(Value::as_array).map(|a| a.iter().filter_map(number).collect()).unwrap_or_default();
+    let start = input.get("start").and_then(number);
+    (input.get("done").is_some() || start.is_some()).then_some(PlanUpdate::Mark { done, start })
 }
 
 /// One Claude Code hook input. `None` for events and inputs the Drop does not show.
@@ -142,7 +166,7 @@ pub fn parse_claude(hook_event: &str, payload: &Value, lang: Lang) -> Option<Age
     let kind = match hook_event {
         "UserPromptSubmit" => EventKind::Started,
         "PreToolUse" => EventKind::Action(action(tool, input, lang)?),
-        "PostToolUse" => steps(input)?,
+        "PostToolUse" => EventKind::Plan(plan_update(tool, input)?),
         "Notification" => match text(payload, "notification_type") {
             Some("idle_prompt" | "agent_needs_input") => {
                 EventKind::Waiting(text(payload, "message").unwrap_or("").to_string())
@@ -182,6 +206,7 @@ pub fn parse_codex(payload: &Value) -> Option<AgentEvent> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agents::plan::{PlanStatus, PlanStep, MAX_STEPS, MAX_TITLE};
     use crate::app::tray::Lang;
     use serde_json::{json, Value};
 
@@ -190,6 +215,7 @@ mod tests {
             "user_prompt_submit" => include_str!("fixtures/claude_user_prompt_submit.json"),
             "pre_tool_use" => include_str!("fixtures/claude_pre_tool_use.json"),
             "post_tool_use_todo" => include_str!("fixtures/claude_post_tool_use_todo.json"),
+            "post_tool_use_plan_advance" => include_str!("fixtures/claude_post_tool_use_plan_advance.json"),
             "notification" => include_str!("fixtures/claude_notification.json"),
             "permission_request" => include_str!("fixtures/claude_permission_request.json"),
             "stop" => include_str!("fixtures/claude_stop.json"),
@@ -220,15 +246,49 @@ mod tests {
     }
 
     #[test]
-    fn todo_write_gives_steps() {
-        assert_eq!(claude("PostToolUse", "post_tool_use_todo").kind, EventKind::Steps { done: 3, total: 5 });
+    fn todo_write_replaces_the_plan() {
+        let EventKind::Plan(PlanUpdate::Replace(v)) = claude("PostToolUse", "post_tool_use_todo").kind else { panic!() };
+        assert_eq!(v.len(), 5);
+        assert_eq!(v[3], PlanStep { title: "d".into(), status: PlanStatus::Active });
+        assert_eq!(v[0].status, PlanStatus::Done);
+        assert_eq!(v[4].status, PlanStatus::Pending);
+    }
+
+    fn plan_up(tool: &str, input: Value) -> Option<PlanUpdate> {
+        let p = json!({"session_id":"s","cwd":"/p","tool_name":tool,"tool_input":input});
+        match parse_claude("PostToolUse", &p, Lang::En).map(|e| e.kind) {
+            Some(EventKind::Plan(u)) => Some(u),
+            _ => None,
+        }
     }
 
     #[test]
-    fn plan_items_give_steps_too() {
-        let p = json!({"session_id":"s","cwd":"/p","tool_name":"mcp__ccd_turn__update_plan",
-            "tool_input":{"items":[{"content":"a","status":"completed"},{"content":"b","status":"in_progress"}]}});
-        assert_eq!(parse_claude("PostToolUse", &p, Lang::En).unwrap().kind, EventKind::Steps { done: 1, total: 2 });
+    fn plan_tool_calls_as_measured() {
+        // The four shapes of the desktop app's plan tool seen in 332 real calls (spec 2026-11-13 §2).
+        let plan = "mcp__ccd_turn__update_plan";
+        let items = json!({"items":[{"content":"a","status":"in_progress"}],"scope":"continuation"});
+        assert!(matches!(plan_up(plan, items), Some(PlanUpdate::Replace(v)) if v[0].title == "a" && v[0].status == PlanStatus::Active));
+        assert_eq!(claude("PostToolUse", "post_tool_use_plan_advance").kind, EventKind::Plan(PlanUpdate::Advance));
+        assert_eq!(plan_up(plan, json!({"done":[2],"start":4})), Some(PlanUpdate::Mark { done: vec![2], start: Some(4) }));
+        assert_eq!(plan_up(plan, json!({"done":[1]})), Some(PlanUpdate::Mark { done: vec![1], start: None }));
+        assert_eq!(plan_up("mcp__ccd_turn__wrap_up", json!({"recap":"r"})), Some(PlanUpdate::Finish));
+        assert_eq!(plan_up(plan, json!({})), None);
+    }
+
+    #[test]
+    fn odd_plan_input_does_not_break() {
+        let list = |input: Value| match plan_up("TodoWrite", input) {
+            Some(PlanUpdate::Replace(v)) => Some(v),
+            _ => None,
+        };
+        assert_eq!(list(json!({"todos":"x"})), None);
+        let v = list(json!({"todos":[{}, {"content":"b","status":"weird"}]})).unwrap();
+        assert_eq!((v[0].title.as_str(), v[0].status, v[1].status), ("", PlanStatus::Pending, PlanStatus::Pending));
+        let many: Vec<Value> = (0..60).map(|i| json!({"content": "x".repeat(300 + i), "status":"pending"})).collect();
+        let v = list(json!({"todos": many})).unwrap();
+        assert_eq!(v.len(), MAX_STEPS);
+        assert_eq!(v[0].title.chars().count(), MAX_TITLE);
+        assert_eq!(plan_up("mcp__ccd_turn__update_plan", json!({"done":["x", 2]})), Some(PlanUpdate::Mark { done: vec![2], start: None }));
     }
 
     #[test]
