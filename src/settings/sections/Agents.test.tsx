@@ -13,6 +13,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: (cmd: string, args?: unknown) =
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}) }));
 
 const { Agents } = await import("./Agents");
+const { AgentToggles } = await import("./AgentToggles");
 
 const base: Settings = {
   schema_version: 1,
@@ -37,7 +38,7 @@ const saved = () => invoke.mock.calls.filter((c) => c[0] === "save_settings").ma
 
 beforeEach(() => {
   invoke.mockClear();
-  status = { detected: { claude_code: true, codex: true }, claude_code: { kind: "off" }, codex: { kind: "off" } };
+  status = { detected: { claude_code: true, codex: true }, claude_code: { kind: "off" }, codex: { kind: "off" }, codex_heard: false };
   useApp.setState({ settings: { ...base }, lang: "ru", theme: "dark", systemDark: true });
 });
 afterEach(cleanup);
@@ -51,7 +52,6 @@ describe("Agents section", () => {
   it("toggles_call_update_settings", async () => {
     await mount();
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Агенты");
-    expect(screen.getByText("Капля скажет, когда Claude Code закончил или ждёт тебя, и даст разрешить из острова")).toBeTruthy();
     await act(async () => fireEvent.click(screen.getByRole("switch", { name: "Claude Code" })));
     expect(saved().slice(-1)[0].agents).toEqual({ claude_code: true, codex: false });
     await act(async () => fireEvent.click(screen.getByRole("switch", { name: "Codex" })));
@@ -79,5 +79,54 @@ describe("Agents section", () => {
     // «Итог одной строкой» is gone (the user's call 2026-11-13).
     await mount();
     expect(screen.queryByText(/Итог одной строкой/)).toBeNull();
+  });
+
+  it("two_columns_with_icons_and_names", async () => {
+    await mount();
+    const cols = Array.from(document.querySelectorAll("[data-agent-col]"));
+    expect(cols.map((c) => c.textContent)).toEqual(["Claude Code", "Codex"]);
+    for (const c of cols) expect(c.querySelector("svg")).toBeTruthy();
+    // No explanations under the names (the user 2026-11-13).
+    expect(screen.queryByText(/Капля скажет/)).toBeNull();
+  });
+
+  it("onboarding_hides_missing_agent", async () => {
+    status = { ...status, detected: { claude_code: true, codex: false } };
+    render(<AgentToggles onboarding />);
+    await act(async () => {});
+    expect(Array.from(document.querySelectorAll("[data-agent-col]")).map((c) => c.textContent)).toEqual(["Claude Code"]);
+    cleanup();
+    await mount();
+    expect(document.querySelectorAll("[data-agent-col]").length).toBe(2);
+    expect((screen.getByRole("switch", { name: "Codex" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("Не нашёл Codex на этом Mac")).toBeTruthy();
+  });
+
+  it("switch_takes_brand_colour_when_on", async () => {
+    useApp.setState({ settings: { ...base, agents: { claude_code: true, codex: true } } });
+    await mount();
+    const bg = (name: string) => (screen.getByRole("switch", { name }) as HTMLElement).style.background;
+    expect(bg("Claude Code")).toBe("rgb(217, 119, 87)");
+    expect(bg("Codex")).toBe("rgb(76, 110, 245)");
+    cleanup();
+    useApp.setState({ settings: { ...base } });
+    await mount();
+    expect(bg("Claude Code")).toBe("");
+  });
+
+  it("codex_trust_hint_only_while_unheard", async () => {
+    const hint = () => screen.queryByText("В Codex: Settings → Hooks → доверить Utter");
+    useApp.setState({ settings: { ...base, agents: { claude_code: false, codex: true } } });
+    await mount();
+    expect(hint()).toBeTruthy();
+    cleanup();
+    status = { ...status, codex_heard: true };
+    await mount();
+    expect(hint()).toBeNull();
+    cleanup();
+    status = { ...status, codex_heard: false };
+    useApp.setState({ settings: { ...base } });
+    await mount();
+    expect(hint()).toBeNull();
   });
 });
