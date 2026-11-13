@@ -49,7 +49,40 @@ fn claude_file(home: &Path) -> PathBuf {
 }
 
 fn codex_file(home: &Path) -> PathBuf {
+    home.join(".codex/hooks.json")
+}
+
+/// Codex's config: Utter only takes its older `notify` entry out of it.
+fn codex_config_file(home: &Path) -> PathBuf {
     home.join(".codex/config.toml")
+}
+
+/// The link Codex's hooks run: Utter points it at its own helper at every start, so the hooks'
+/// text — and the user's trust in it — never changes when Utter moves.
+pub fn codex_helper_link(home: &Path) -> PathBuf {
+    home.join(".codex/utter/utter-agent")
+}
+
+/// Points `link` at `helper` (atomically: a new link renamed over the old one).
+fn point_link(link: &Path, helper: &str) -> Result<(), String> {
+    if std::fs::read_link(link).is_ok_and(|t| t == Path::new(helper)) {
+        return Ok(());
+    }
+    let dir = link.parent().ok_or("no folder")?;
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let tmp = dir.join(".utter-agent.new");
+    let _ = std::fs::remove_file(&tmp);
+    std::os::unix::fs::symlink(helper, &tmp).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, link).map_err(|e| e.to_string())
+}
+
+fn remove_link(link: &Path) {
+    if std::fs::symlink_metadata(link).is_ok_and(|m| m.file_type().is_symlink()) {
+        let _ = std::fs::remove_file(link);
+        if let Some(dir) = link.parent() {
+            let _ = std::fs::remove_dir(dir); // only when empty
+        }
+    }
 }
 
 /// `Ok(None)`: no file.
@@ -93,21 +126,22 @@ fn claude_link(home: &Path, helper: &str, on: bool, found: bool) -> Link {
     }
 }
 
-fn codex_link(home: &Path, helper: &str, on: bool, found: bool) -> Link {
+fn codex_link(home: &Path, on: bool, found: bool) -> Link {
     if !on {
         return Link::Off;
     }
     if !found {
         return Link::Missing;
     }
+    let link = codex_helper_link(home).to_string_lossy().into_owned();
     match read(&codex_file(home)) {
         Err(e) => Link::Broken(e),
         Ok(text) => {
             let text = text.unwrap_or_default();
-            if install::codex_installed(&text, helper) {
+            if install::codex_hooks_installed(&text, &link) {
                 Link::On
             } else {
-                match install::codex_install(Some(&text), helper) {
+                match install::codex_hooks_install(Some(&text), &link) {
                     Err(install::InstallError::Corrupt(e)) => Link::Broken(e),
                     Ok(_) => Link::Broken("not connected".into()),
                 }
@@ -121,7 +155,7 @@ pub fn status_in(home: &Path, helper: &str, s: &AgentSettings, detected: Detecte
     AgentsStatus {
         detected,
         claude_code: claude_link(home, helper, s.claude_code, detected.claude_code),
-        codex: codex_link(home, helper, s.codex, detected.codex),
+        codex: codex_link(home, s.codex, detected.codex),
     }
 }
 
@@ -150,24 +184,40 @@ pub fn apply_in(
             }
         }
     }
-    let codex = codex_file(home);
-    let mut kept = None;
-    if let Ok(text) = read(&codex) {
-        if s.codex && detected.codex {
+    let link = codex_helper_link(home);
+    let link_text = link.to_string_lossy().into_owned();
+    let hooks = codex_file(home);
+    if s.codex && detected.codex {
+        if let Err(e) = point_link(&link, helper) {
+            tracing::warn!("codex helper link not made: {e}");
+        }
+        if let Ok(text) = read(&hooks) {
             let current = text.unwrap_or_default();
-            if install::codex_installed(&current, helper) {
-                kept = prev;
-            } else if let Ok((out, p)) = install::codex_install(Some(&current), helper) {
-                match write(&codex, &out) {
-                    Ok(()) => kept = p,
-                    Err(e) => tracing::warn!("codex config not written: {e}"),
+            if !install::codex_hooks_installed(&current, &link_text) {
+                if let Ok(out) = install::codex_hooks_install(Some(&current), &link_text) {
+                    let _ = write(&hooks, &out).map_err(|e| tracing::warn!("codex hooks not written: {e}"));
                 }
             }
-        } else if let Some(current) = text.filter(|t| t.contains(MARK)) {
+        }
+    } else {
+        if let Ok(Some(current)) = read(&hooks) {
+            if current.contains(MARK) {
+                if let Ok(out) = install::codex_hooks_uninstall(&current) {
+                    let _ = write(&hooks, &out).map_err(|e| tracing::warn!("codex hooks not written: {e}"));
+                }
+            }
+        }
+        remove_link(&link);
+    }
+    // Before 2026-11-13 Utter sat in Codex's `notify`: give it back as it was.
+    let config = codex_config_file(home);
+    if let Ok(Some(current)) = read(&config) {
+        if current.contains(MARK) {
             let out = install::codex_uninstall(&current, prev.as_deref());
-            let _ = write(&codex, &out).map_err(|e| tracing::warn!("codex config not written: {e}"));
+            let _ = write(&config, &out).map_err(|e| tracing::warn!("codex config not written: {e}"));
         }
     }
+    let kept = None;
     (status_in(home, helper, s, detected), kept)
 }
 
@@ -855,26 +905,60 @@ mod tests {
     fn apply_settings_on_off_round_trip() {
         let home = home();
         let claude = home.path().join(".claude/settings.json");
-        let codex = home.path().join(".codex/config.toml");
+        let config = home.path().join(".codex/config.toml");
+        let hooks = home.path().join(".codex/hooks.json");
         std::fs::write(&claude, "{\n  \"model\": \"opus\"\n}\n").unwrap();
-        let codex_before = format!("model = \"gpt-5\"\nnotify = [\"{SKY}\", \"turn-ended\"]\n");
-        std::fs::write(&codex, &codex_before).unwrap();
+        // Codex's own `notify` (Computer Use) is not Utter's business any more.
+        let config_before = format!("model = \"gpt-5\"\nnotify = [\"{SKY}\", \"turn-ended\"]\n");
+        std::fs::write(&config, &config_before).unwrap();
 
         let (status, prev) = apply_in(home.path(), HELPER, &on(true, true), None, BOTH);
         assert_eq!(status.claude_code, Link::On);
         assert_eq!(status.codex, Link::On);
-        assert_eq!(prev, Some(vec![SKY.to_string(), "turn-ended".to_string()]));
+        assert_eq!(prev, None);
         assert!(install::claude_installed(&std::fs::read_to_string(&claude).unwrap(), HELPER));
-        assert!(install::codex_installed(&std::fs::read_to_string(&codex).unwrap(), HELPER));
+        let link = codex_helper_link(home.path());
+        assert!(install::codex_hooks_installed(&std::fs::read_to_string(&hooks).unwrap(), &link.to_string_lossy()));
+        assert_eq!(std::fs::read_link(&link).unwrap(), Path::new(HELPER));
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), config_before);
         // The check alone says the same and changes nothing.
         assert_eq!(status_in(home.path(), HELPER, &on(true, true), BOTH), status);
 
-        let (status, prev) = apply_in(home.path(), HELPER, &on(false, false), prev, BOTH);
+        let (status, _) = apply_in(home.path(), HELPER, &on(false, false), None, BOTH);
         assert_eq!((status.claude_code, status.codex), (Link::Off, Link::Off));
-        assert_eq!(prev, None);
         let claude_after: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&claude).unwrap()).unwrap();
         assert_eq!(claude_after, json!({"model": "opus"}));
-        assert_eq!(std::fs::read_to_string(&codex).unwrap(), codex_before);
+        assert_eq!(std::fs::read_to_string(&hooks).unwrap(), "{}\n");
+        assert!(std::fs::symlink_metadata(&link).is_err(), "the link goes with the hooks");
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), config_before);
+    }
+
+    #[test]
+    fn codex_migrates_from_notify() {
+        // Before 2026-11-13 Utter sat first in Codex's `notify` and chained the previous command.
+        let home = home();
+        let config = home.path().join(".codex/config.toml");
+        let before = format!("model = \"gpt-5\"\nnotify = [\"{SKY}\", \"turn-ended\"]\n");
+        let (old, prev) = install::codex_install(Some(&before), HELPER).unwrap();
+        std::fs::write(&config, &old).unwrap();
+        let (status, kept) = apply_in(home.path(), HELPER, &on(false, true), prev, BOTH);
+        assert_eq!(status.codex, Link::On);
+        assert_eq!(kept, None);
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), before);
+        assert!(home.path().join(".codex/hooks.json").exists());
+    }
+
+    #[test]
+    fn codex_link_follows_a_moved_helper() {
+        let home = home();
+        let hooks = home.path().join(".codex/hooks.json");
+        apply_in(home.path(), HELPER, &on(false, true), None, BOTH);
+        let text = std::fs::read_to_string(&hooks).unwrap();
+        let moved = "/Users/me/Desktop/Translate/target/Utter.app/Contents/MacOS/utter-agent";
+        let (status, _) = apply_in(home.path(), moved, &on(false, true), None, BOTH);
+        assert_eq!(status.codex, Link::On);
+        assert_eq!(std::fs::read_link(codex_helper_link(home.path())).unwrap(), Path::new(moved));
+        assert_eq!(std::fs::read_to_string(&hooks).unwrap(), text, "the hooks' text, and so Codex's trust, stays");
     }
 
     #[test]
@@ -884,7 +968,8 @@ mod tests {
         assert_eq!((status.claude_code, status.codex), (Link::On, Link::On));
         assert_eq!(prev, None);
         assert!(home.path().join(".claude/settings.json").exists());
-        assert!(home.path().join(".codex/config.toml").exists());
+        assert!(home.path().join(".codex/hooks.json").exists());
+        assert!(!home.path().join(".codex/config.toml").exists(), "nothing to take out, nothing written");
     }
 
     #[test]
