@@ -2,7 +2,7 @@ import { ipc } from "../../lib/ipc";
 import { useT } from "../../i18n";
 import type { AgentCard as Card, AgentKind, AgentRow } from "../../lib/types";
 import type { Notch } from "../drop/islandMotion";
-import { DOT_COLOR, dotOf, type Dot } from "./agentIsland";
+import { DOT_COLOR, dotOf, ladderOf, type Dot } from "./agentIsland";
 
 /**
  * The agents' open island (the user's mockup 2026-11-09, asked for again 2026-11-10): the big Drop
@@ -294,7 +294,8 @@ export function AgentList({ rows, notch }: { rows: AgentRow[]; notch: Notch }) {
     <Panel notch={notch} dot={rows[0] ? dotOf(rows[0].state) : null}>
       {rows.length === 0 && <div style={{ color: DIM, lineHeight: `${TITLE_H}px` }}>{t("agents.free")}</div>}
       {rows.slice(0, 3).map((r, i) => {
-        const steps = r.steps ? ` · ${t("agents.step", { n: r.steps[0], m: r.steps[1] })}` : "";
+        const ladder = ladderOf(r.plan);
+        const steps = ladder && !ladder.allDone ? ` · ${t("agents.step", { n: ladder.n, m: ladder.m })}` : "";
         const [older, newest] = r.actions.length > 1 ? [r.actions[r.actions.length - 2], r.actions[r.actions.length - 1]] : [null, r.actions[0] ?? null];
         return (
           <div

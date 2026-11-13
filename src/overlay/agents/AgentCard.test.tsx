@@ -20,7 +20,7 @@ const row: AgentRow = {
   agent: "claude_code",
   project: "shop",
   state: "done",
-  steps: [2, 4],
+  plan: [],
   actions: ["Читает a.rs", "Правит billing.ts"],
   summary: "Исправил округление в billing.ts",
   seen: false,
@@ -129,7 +129,8 @@ describe("AgentCard", () => {
 
   it("list_rows_show_step_and_actions_and_open", () => {
     render(<AgentList rows={[{ ...row, state: "working" }]} notch={notch} />);
-    expect(title()).toBe("shop Claude Code · step 2 of 4");
+    // No plan: no step in the title (spec 2026-11-13 §3.2 п. 4).
+    expect(title()).toBe("shop Claude Code");
     // The older action done (✓, past tense), the newest one going on (›).
     expect(screen.getByText("Прочитал a.rs")).toBeTruthy();
     expect(screen.getByText("Правит billing.ts")).toBeTruthy();
