@@ -11,7 +11,7 @@ use tokio::sync::oneshot;
 
 pub use super::broker::Reply;
 use super::broker::Broker;
-use super::event::{parse_claude, parse_codex, EventKind, SessionKey};
+use super::event::{parse_claude, parse_codex, parse_hook, Agent, EventKind, SessionKey};
 use super::install::{self, Detected};
 use super::registry::{AgentView, Card, Registry};
 use super::wire::{Request, Source};
@@ -19,8 +19,6 @@ use crate::app::overlay_rest::Rect;
 use crate::app::tray::Lang;
 use crate::settings::{AgentSettings, Settings};
 
-/// Waiting for the provider's summary line.
-const SUMMARY_TIMEOUT: Duration = Duration::from_secs(3);
 /// The longest line `utter-agent` may send (a huge last message is still well below this).
 const LINE_MAX: u64 = 4 << 20;
 
@@ -42,6 +40,8 @@ pub struct AgentsStatus {
     pub detected: Detected,
     pub claude_code: Link,
     pub codex: Link,
+    /// Codex has run one of Utter's hooks at least once: the user trusted them.
+    pub codex_heard: bool,
 }
 
 const MARK: &str = "utter-agent";
@@ -51,7 +51,59 @@ fn claude_file(home: &Path) -> PathBuf {
 }
 
 fn codex_file(home: &Path) -> PathBuf {
+    home.join(".codex/hooks.json")
+}
+
+/// Codex's config: Utter only takes its older `notify` entry out of it.
+fn codex_config_file(home: &Path) -> PathBuf {
     home.join(".codex/config.toml")
+}
+
+/// The link Codex's hooks run: Utter points it at its own helper at every start, so the hooks'
+/// text — and the user's trust in it — never changes when Utter moves.
+pub fn codex_helper_link(home: &Path) -> PathBuf {
+    home.join(".codex/utter/utter-agent")
+}
+
+/// Points `link` at `helper` (atomically: a new link renamed over the old one).
+fn point_link(link: &Path, helper: &str) -> Result<(), String> {
+    if std::fs::read_link(link).is_ok_and(|t| t == Path::new(helper)) {
+        return Ok(());
+    }
+    let dir = link.parent().ok_or("no folder")?;
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let tmp = dir.join(".utter-agent.new");
+    let _ = std::fs::remove_file(&tmp);
+    std::os::unix::fs::symlink(helper, &tmp).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, link).map_err(|e| e.to_string())
+}
+
+/// Kept next to the link (not in the settings, which the page saves whole): Codex has run a hook.
+fn heard_marker(home: &Path) -> PathBuf {
+    home.join(".codex/utter/heard")
+}
+
+/// The first hook event from Codex leaves the marker; `notify` and Claude Code's events do not.
+pub fn mark_heard(home: &Path, req: &Request) {
+    if req.source != Source::Codex || req.event == "notify" {
+        return;
+    }
+    let marker = heard_marker(home);
+    if !marker.exists() {
+        if let Some(dir) = marker.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&marker, b"");
+    }
+}
+
+fn remove_link(link: &Path) {
+    if std::fs::symlink_metadata(link).is_ok_and(|m| m.file_type().is_symlink()) {
+        let _ = std::fs::remove_file(link);
+        if let Some(dir) = link.parent() {
+            let _ = std::fs::remove_dir(dir); // only when empty
+        }
+    }
 }
 
 /// `Ok(None)`: no file.
@@ -95,21 +147,22 @@ fn claude_link(home: &Path, helper: &str, on: bool, found: bool) -> Link {
     }
 }
 
-fn codex_link(home: &Path, helper: &str, on: bool, found: bool) -> Link {
+fn codex_link(home: &Path, on: bool, found: bool) -> Link {
     if !on {
         return Link::Off;
     }
     if !found {
         return Link::Missing;
     }
+    let link = codex_helper_link(home).to_string_lossy().into_owned();
     match read(&codex_file(home)) {
         Err(e) => Link::Broken(e),
         Ok(text) => {
             let text = text.unwrap_or_default();
-            if install::codex_installed(&text, helper) {
+            if install::codex_hooks_installed(&text, &link) {
                 Link::On
             } else {
-                match install::codex_install(Some(&text), helper) {
+                match install::codex_hooks_install(Some(&text), &link) {
                     Err(install::InstallError::Corrupt(e)) => Link::Broken(e),
                     Ok(_) => Link::Broken("not connected".into()),
                 }
@@ -123,7 +176,8 @@ pub fn status_in(home: &Path, helper: &str, s: &AgentSettings, detected: Detecte
     AgentsStatus {
         detected,
         claude_code: claude_link(home, helper, s.claude_code, detected.claude_code),
-        codex: codex_link(home, helper, s.codex, detected.codex),
+        codex: codex_link(home, s.codex, detected.codex),
+        codex_heard: heard_marker(home).exists(),
     }
 }
 
@@ -152,24 +206,40 @@ pub fn apply_in(
             }
         }
     }
-    let codex = codex_file(home);
-    let mut kept = None;
-    if let Ok(text) = read(&codex) {
-        if s.codex && detected.codex {
+    let link = codex_helper_link(home);
+    let link_text = link.to_string_lossy().into_owned();
+    let hooks = codex_file(home);
+    if s.codex && detected.codex {
+        if let Err(e) = point_link(&link, helper) {
+            tracing::warn!("codex helper link not made: {e}");
+        }
+        if let Ok(text) = read(&hooks) {
             let current = text.unwrap_or_default();
-            if install::codex_installed(&current, helper) {
-                kept = prev;
-            } else if let Ok((out, p)) = install::codex_install(Some(&current), helper) {
-                match write(&codex, &out) {
-                    Ok(()) => kept = p,
-                    Err(e) => tracing::warn!("codex config not written: {e}"),
+            if !install::codex_hooks_installed(&current, &link_text) {
+                if let Ok(out) = install::codex_hooks_install(Some(&current), &link_text) {
+                    let _ = write(&hooks, &out).map_err(|e| tracing::warn!("codex hooks not written: {e}"));
                 }
             }
-        } else if let Some(current) = text.filter(|t| t.contains(MARK)) {
+        }
+    } else {
+        if let Ok(Some(current)) = read(&hooks) {
+            if current.contains(MARK) {
+                if let Ok(out) = install::codex_hooks_uninstall(&current) {
+                    let _ = write(&hooks, &out).map_err(|e| tracing::warn!("codex hooks not written: {e}"));
+                }
+            }
+        }
+        remove_link(&link);
+    }
+    // Before 2026-11-13 Utter sat in Codex's `notify`: give it back as it was.
+    let config = codex_config_file(home);
+    if let Ok(Some(current)) = read(&config) {
+        if current.contains(MARK) {
             let out = install::codex_uninstall(&current, prev.as_deref());
-            let _ = write(&codex, &out).map_err(|e| tracing::warn!("codex config not written: {e}"));
+            let _ = write(&config, &out).map_err(|e| tracing::warn!("codex config not written: {e}"));
         }
     }
+    let kept = None;
     (status_in(home, helper, s, detected), kept)
 }
 
@@ -215,7 +285,7 @@ pub fn status(s: &AgentSettings) -> AgentsStatus {
         Some(helper) => status_in(&home, &helper, s, detected),
         None => {
             let broken = |on| if on { Link::Broken("utter-agent not found".into()) } else { Link::Off };
-            AgentsStatus { detected, claude_code: broken(s.claude_code), codex: broken(s.codex) }
+            AgentsStatus { detected, claude_code: broken(s.claude_code), codex: broken(s.codex), codex_heard: heard_marker(&home).exists() }
         }
     }
 }
@@ -241,8 +311,6 @@ pub enum Incoming {
     Reply(Reply),
     /// A permission request: answer the helper when `rx` resolves.
     Ask { id: u64, rx: oneshot::Receiver<Reply> },
-    /// The agent finished: write the summary line.
-    Finished { key: SessionKey, last_message: String },
 }
 
 #[derive(Default)]
@@ -261,7 +329,9 @@ impl Core {
     pub fn receive(&self, req: Request, lang: Lang, now: Instant) -> Incoming {
         let event = match req.source {
             Source::Claude => parse_claude(&req.event, &req.payload, lang),
-            Source::Codex => parse_codex(&req.payload),
+            // `notify`: Utter's older way in, until the first start of this version takes it out.
+            Source::Codex if req.event == "notify" => parse_codex(&req.payload),
+            Source::Codex => parse_hook(Agent::Codex, &req.event, &req.payload, lang),
         };
         let Some(event) = event else {
             return if req.wants_reply { Incoming::Reply(Reply::NoDecision) } else { Incoming::Ignored };
@@ -271,10 +341,6 @@ impl Core {
                 a.insert(event.key.clone(), req.ancestors.clone());
             }
         }
-        let finished = match &event.kind {
-            EventKind::Finished { last_message } => Some((event.key.clone(), last_message.clone())),
-            _ => None,
-        };
         if event.kind == EventKind::Ended {
             // The session's open requests end with it; nobody will click them.
             let open = self.reg().permission_ids(&event.key);
@@ -294,10 +360,7 @@ impl Core {
         if req.wants_reply {
             return Incoming::Reply(Reply::NoDecision);
         }
-        match finished {
-            Some((key, last_message)) => Incoming::Finished { key, last_message },
-            None => Incoming::Updated,
-        }
+        Incoming::Updated
     }
 
     /// `idle`: no dictation on screen, so the top card is visible and its time runs.
@@ -352,10 +415,6 @@ impl Core {
                 }
             }
         }
-    }
-
-    pub fn set_summary(&self, key: &SessionKey, s: Option<String>) {
-        self.reg().set_summary(key, s);
     }
 
     pub fn dismiss(&self, now: Instant) {
@@ -470,11 +529,10 @@ pub use glue::*;
 
 mod glue {
     use super::*;
-    use crate::agents::{host, summary, wire};
+    use crate::agents::{host, wire};
     use crate::app::commands::AppState;
     use crate::app::orchestrator::AppStatus;
     use crate::app::{overlay, overlay_rest, tray};
-    use crate::providers::TextModel;
     use tauri::{AppHandle, Emitter, Manager, State};
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
@@ -584,6 +642,9 @@ mod glue {
         }
         let Ok(req) = serde_json::from_str::<Request>(&line) else { return };
         let s = settings(&app);
+        if enabled(&s, req.source) {
+            mark_heard(&home_dir(), &req);
+        }
         let incoming = if enabled(&s, req.source) {
             core.receive(req, lang(&app), Instant::now())
         } else if req.wants_reply {
@@ -612,37 +673,10 @@ mod glue {
                 publish(&app);
                 Some(r)
             }
-            Incoming::Finished { key, last_message } => {
-                tauri::async_runtime::spawn(summarize(app.clone(), core.clone(), key, last_message, s));
-                None
-            }
         };
         if let Some(r) = reply {
             let _ = write.write_all(r.to_line().as_bytes()).await;
         }
-    }
-
-    async fn summarize(app: AppHandle, core: Arc<Core>, key: SessionKey, message: String, s: Settings) {
-        let model = if s.agents.summary {
-            let state = app.try_state::<AppState>();
-            let (secrets, providers, budget) = match state {
-                Some(st) => (st.secrets.clone(), st.providers.clone(), st.shared.budget.clone()),
-                None => return,
-            };
-            let kind = s.provider;
-            // No room left beside the dictation's reserve: the plain summary.
-            let room = super::summary_may_use_model(kind, &budget, tokio::time::Instant::now());
-            // Reading the key may wait for a Keychain prompt: never on this thread.
-            let key_text = tokio::task::spawn_blocking(move || secrets.get(kind)).await.ok().flatten();
-            key_text.filter(|_| room).map(|k| providers.make(kind, k))
-        } else {
-            None
-        };
-        let started = Instant::now();
-        let line = summary::summarize(&message, lang(&app), model.as_deref().map(|p| p as &dyn TextModel), SUMMARY_TIMEOUT).await;
-        tracing::info!(ms = started.elapsed().as_millis() as u64, smart = model.is_some(), "agent summary");
-        core.set_summary(&key, line);
-        publish(&app);
     }
 
     fn busy(app: &AppHandle) -> bool {
@@ -808,15 +842,16 @@ mod glue {
     /// Brings the app the session runs in forward, with its desktop.
     fn open_host(app: &AppHandle, key: &SessionKey) {
         let Some(agents) = app.try_state::<Agents>() else { return };
-        let Some(ancestors) = agents.core.ancestors(key) else { return };
+        let ancestors = agents.core.ancestors(key).unwrap_or_default();
+        let agent = key.agent;
         let _ = app.run_on_main_thread(move || {
             let chain = host::parent_chain(&ancestors);
-            match host::pick_host(&chain) {
+            match host::host_to_open(agent, &chain) {
                 Some(h) => {
                     tracing::info!(?h, "opening the agent's app");
                     host::activate(&h);
                 }
-                None => tracing::info!("no app found for the agent session"),
+                None => tracing::info!(parents = ancestors.len(), "no app found for the agent session"),
             }
         });
     }
@@ -848,6 +883,7 @@ mod glue {
 
     #[tauri::command]
     pub fn agent_open(app: AppHandle, agents: State<Agents>, key: SessionKey) {
+        tracing::info!(?key, "agent open clicked");
         agents.core.seen(&key);
         open_host(&app, &key);
         publish(&app);
@@ -872,32 +908,8 @@ mod glue {
     }
 }
 
-/// An agent summary may use the model only while the dictation's reserve stays free
-/// (spec 2026-11-10 §4.5); other providers have no shared budget.
-pub fn summary_may_use_model(provider: crate::settings::ProviderKind, budget: &crate::providers::budget::SharedBudget, now: tokio::time::Instant) -> bool {
-    use crate::providers::budget::Priority;
-    use crate::providers::defaults::GEMINI_TEXT_MODEL;
-    provider != crate::settings::ProviderKind::Gemini || budget.lock().is_ok_and(|mut b| b.try_take(GEMINI_TEXT_MODEL, Priority::Agent, now))
-}
-
 #[cfg(test)]
 mod tests {
-    #[tokio::test(start_paused = true)]
-    async fn agent_summary_leaves_the_dictation_reserve() {
-        use crate::providers::budget::{Priority, RequestBudget};
-        use crate::providers::defaults::GEMINI_TEXT_MODEL;
-        use crate::settings::ProviderKind;
-        let budget = Arc::new(Mutex::new(RequestBudget::new(14, 3)));
-        let now = tokio::time::Instant::now();
-        assert!(summary_may_use_model(ProviderKind::Gemini, &budget, now));
-        for _ in 0..10 {
-            assert!(budget.lock().unwrap().try_take(GEMINI_TEXT_MODEL, Priority::Speech, now));
-        }
-        assert!(!summary_may_use_model(ProviderKind::Gemini, &budget, now), "only the reserve is left");
-        assert!(summary_may_use_model(ProviderKind::Groq, &budget, now));
-        assert!(budget.lock().unwrap().try_take(GEMINI_TEXT_MODEL, Priority::End, now), "Groq took nothing");
-    }
-
     use super::*;
     use crate::agents::wire::{Request, Source};
     use serde_json::json;
@@ -914,33 +926,68 @@ mod tests {
     }
 
     fn on(claude_code: bool, codex: bool) -> AgentSettings {
-        AgentSettings { claude_code, codex, summary: true }
+        AgentSettings { claude_code, codex }
     }
+
 
     #[test]
     fn apply_settings_on_off_round_trip() {
         let home = home();
         let claude = home.path().join(".claude/settings.json");
-        let codex = home.path().join(".codex/config.toml");
+        let config = home.path().join(".codex/config.toml");
+        let hooks = home.path().join(".codex/hooks.json");
         std::fs::write(&claude, "{\n  \"model\": \"opus\"\n}\n").unwrap();
-        let codex_before = format!("model = \"gpt-5\"\nnotify = [\"{SKY}\", \"turn-ended\"]\n");
-        std::fs::write(&codex, &codex_before).unwrap();
+        // Codex's own `notify` (Computer Use) is not Utter's business any more.
+        let config_before = format!("model = \"gpt-5\"\nnotify = [\"{SKY}\", \"turn-ended\"]\n");
+        std::fs::write(&config, &config_before).unwrap();
 
         let (status, prev) = apply_in(home.path(), HELPER, &on(true, true), None, BOTH);
         assert_eq!(status.claude_code, Link::On);
         assert_eq!(status.codex, Link::On);
-        assert_eq!(prev, Some(vec![SKY.to_string(), "turn-ended".to_string()]));
+        assert_eq!(prev, None);
         assert!(install::claude_installed(&std::fs::read_to_string(&claude).unwrap(), HELPER));
-        assert!(install::codex_installed(&std::fs::read_to_string(&codex).unwrap(), HELPER));
+        let link = codex_helper_link(home.path());
+        assert!(install::codex_hooks_installed(&std::fs::read_to_string(&hooks).unwrap(), &link.to_string_lossy()));
+        assert_eq!(std::fs::read_link(&link).unwrap(), Path::new(HELPER));
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), config_before);
         // The check alone says the same and changes nothing.
         assert_eq!(status_in(home.path(), HELPER, &on(true, true), BOTH), status);
 
-        let (status, prev) = apply_in(home.path(), HELPER, &on(false, false), prev, BOTH);
+        let (status, _) = apply_in(home.path(), HELPER, &on(false, false), None, BOTH);
         assert_eq!((status.claude_code, status.codex), (Link::Off, Link::Off));
-        assert_eq!(prev, None);
         let claude_after: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&claude).unwrap()).unwrap();
         assert_eq!(claude_after, json!({"model": "opus"}));
-        assert_eq!(std::fs::read_to_string(&codex).unwrap(), codex_before);
+        assert_eq!(std::fs::read_to_string(&hooks).unwrap(), "{}\n");
+        assert!(std::fs::symlink_metadata(&link).is_err(), "the link goes with the hooks");
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), config_before);
+    }
+
+    #[test]
+    fn codex_migrates_from_notify() {
+        // Before 2026-11-13 Utter sat first in Codex's `notify` and chained the previous command.
+        let home = home();
+        let config = home.path().join(".codex/config.toml");
+        let before = format!("model = \"gpt-5\"\nnotify = [\"{SKY}\", \"turn-ended\"]\n");
+        let (old, prev) = install::codex_install(Some(&before), HELPER).unwrap();
+        std::fs::write(&config, &old).unwrap();
+        let (status, kept) = apply_in(home.path(), HELPER, &on(false, true), prev, BOTH);
+        assert_eq!(status.codex, Link::On);
+        assert_eq!(kept, None);
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), before);
+        assert!(home.path().join(".codex/hooks.json").exists());
+    }
+
+    #[test]
+    fn codex_link_follows_a_moved_helper() {
+        let home = home();
+        let hooks = home.path().join(".codex/hooks.json");
+        apply_in(home.path(), HELPER, &on(false, true), None, BOTH);
+        let text = std::fs::read_to_string(&hooks).unwrap();
+        let moved = "/Users/me/Desktop/Translate/target/Utter.app/Contents/MacOS/utter-agent";
+        let (status, _) = apply_in(home.path(), moved, &on(false, true), None, BOTH);
+        assert_eq!(status.codex, Link::On);
+        assert_eq!(std::fs::read_link(codex_helper_link(home.path())).unwrap(), Path::new(moved));
+        assert_eq!(std::fs::read_to_string(&hooks).unwrap(), text, "the hooks' text, and so Codex's trust, stays");
     }
 
     #[test]
@@ -950,7 +997,8 @@ mod tests {
         assert_eq!((status.claude_code, status.codex), (Link::On, Link::On));
         assert_eq!(prev, None);
         assert!(home.path().join(".claude/settings.json").exists());
-        assert!(home.path().join(".codex/config.toml").exists());
+        assert!(home.path().join(".codex/hooks.json").exists());
+        assert!(!home.path().join(".codex/config.toml").exists(), "nothing to take out, nothing written");
     }
 
     #[test]
@@ -1082,7 +1130,7 @@ mod tests {
     fn period_is_fast_only_when_needed() {
         use crate::agents::registry::{AgentRow, SessionState};
         let key = SessionKey { agent: crate::agents::event::Agent::Codex, id: "t".into() };
-        let row = AgentRow { key: key.clone(), agent: key.agent, project: "p".into(), state: SessionState::Done, plan: vec![], actions: vec![], summary: None, seen: false };
+        let row = AgentRow { key: key.clone(), agent: key.agent, project: "p".into(), state: SessionState::Done, plan: vec![], actions: vec![], seen: false };
         let none = AgentView { rows: vec![], card: None, paused: false, connected: false };
         let dots = AgentView { rows: vec![row.clone()], card: None, paused: false, connected: false };
         let card = AgentView { rows: vec![row], card: Some(Card::Done { key }), paused: false, connected: false };
@@ -1138,13 +1186,52 @@ mod tests {
         assert!(matches!(core.receive(req, Lang::En, t), Incoming::Reply(Reply::NoDecision)));
     }
 
+    fn codex_request(event: &str, payload: serde_json::Value) -> Request {
+        Request { v: 1, source: Source::Codex, event: event.into(), payload, ancestors: vec![10, 1], wants_reply: event == "PermissionRequest" }
+    }
+
     #[test]
-    fn finished_asks_for_a_summary_and_keeps_ancestors() {
+    fn codex_hook_request_is_parsed_as_hook() {
+        let t = Instant::now();
+        let core = Core::default();
+        let req = codex_request("Stop", json!({"session_id":"cx","cwd":"/p","last_assistant_message":"Done."}));
+        assert!(matches!(core.receive(req, Lang::En, t), Incoming::Updated));
+        let v = core.view();
+        assert_eq!(v.rows[0].key, SessionKey { agent: crate::agents::event::Agent::Codex, id: "cx".into() });
+        assert_eq!(v.rows[0].state, crate::agents::registry::SessionState::Done);
+    }
+
+    #[test]
+    fn codex_notify_still_parsed() {
+        let t = Instant::now();
+        let core = Core::default();
+        let req = codex_request("notify", json!({"type":"agent-turn-complete","thread-id":"th","cwd":"/p"}));
+        assert!(matches!(core.receive(req, Lang::En, t), Incoming::Updated));
+    }
+
+    #[test]
+    fn first_codex_hook_event_marks_heard() {
+        // Until Codex has run a hook, the user has likely not trusted Utter's hooks yet (spec
+        // 2026-11-13 agents-look-and-codex-hooks §3.1): the page shows where to do it.
+        let home = home();
+        assert!(!status_in(home.path(), HELPER, &on(false, true), BOTH).codex_heard);
+        mark_heard(home.path(), &request("Stop", json!({"session_id":"s"})));
+        mark_heard(home.path(), &codex_request("notify", json!({})));
+        assert!(!status_in(home.path(), HELPER, &on(false, true), BOTH).codex_heard, "Claude and notify do not count");
+        mark_heard(home.path(), &codex_request("PreToolUse", json!({"session_id":"cx"})));
+        assert!(status_in(home.path(), HELPER, &on(false, true), BOTH).codex_heard);
+        // Turning Codex off keeps it: the hooks' text, and so the trust, stays the same.
+        apply_in(home.path(), HELPER, &on(false, false), None, BOTH);
+        assert!(status_in(home.path(), HELPER, &on(false, true), BOTH).codex_heard);
+    }
+
+    #[test]
+    fn finished_keeps_ancestors() {
         let t = Instant::now();
         let core = Core::default();
         let req = request("Stop", json!({"session_id":"s","cwd":"/p","last_assistant_message":"All done."}));
-        let Incoming::Finished { key, last_message } = core.receive(req, Lang::En, t) else { panic!() };
-        assert_eq!(last_message, "All done.");
+        assert!(matches!(core.receive(req, Lang::En, t), Incoming::Updated));
+        let key = SessionKey { agent: crate::agents::event::Agent::ClaudeCode, id: "s".into() };
         assert_eq!(core.ancestors(&key), Some(vec![10, 1]));
         assert!(matches!(core.receive(request("Nope", json!({"session_id":"s"})), Lang::En, t), Incoming::Ignored));
     }

@@ -1,5 +1,5 @@
-//! Connecting the Drop to agents: Utter's hooks in `~/.claude/settings.json` and its `notify`
-//! line in `~/.codex/config.toml`. Pure functions over the file's text; the caller reads and writes.
+//! Connecting the Drop to agents: Utter's hooks in `~/.claude/settings.json` and `~/.codex/hooks.json`
+//! (and taking out the older `notify` line in `~/.codex/config.toml`). Pure functions over the file's text; the caller reads and writes.
 //! Utter's entries are recognised by `utter-agent` in the command; everything else is left as it is.
 
 use serde_json::{json, Map, Value};
@@ -87,22 +87,30 @@ fn ends_line(current: Option<&str>) -> bool {
     current.is_none_or(|t| t.trim().is_empty() || t.ends_with('\n'))
 }
 
-/// Adds Utter's hook to every event in `CLAUDE_EVENTS` (replacing an older one, e.g. after the app moved).
-pub fn claude_install(current: Option<&str>, helper: &str) -> Result<String, InstallError> {
+/// One agent's set of Utter hooks: which events, the command for each, and the `PostToolUse`
+/// matcher for its task-list tools. Claude Code and Codex share the file format (Codex's hooks
+/// reference, 2026-11-13).
+struct HookSet<'a> {
+    events: &'a [&'a str],
+    command: &'a dyn Fn(&str) -> String,
+    steps_matcher: &'a str,
+}
+
+fn hooks_install(current: Option<&str>, set: &HookSet) -> Result<String, InstallError> {
     let mut settings = parse_settings(current)?;
     remove_ours(&mut settings)?;
     let hooks = settings.entry("hooks").or_insert_with(|| json!({}));
     let hooks = hooks.as_object_mut().ok_or_else(|| InstallError::Corrupt("`hooks` is not an object".into()))?;
-    for event in CLAUDE_EVENTS {
-        let mut hook = json!({"type": "command", "command": claude_command(helper, event)});
-        if event == "PermissionRequest" {
+    for event in set.events {
+        let mut hook = json!({"type": "command", "command": (set.command)(event)});
+        if *event == "PermissionRequest" {
             hook["timeout"] = json!(PERMISSION_TIMEOUT);
         }
         let mut group = json!({"hooks": [hook]});
-        if event == "PostToolUse" {
-            group = json!({"matcher": STEPS_MATCHER, "hooks": group["hooks"].take()});
+        if *event == "PostToolUse" {
+            group = json!({"matcher": set.steps_matcher, "hooks": group["hooks"].take()});
         }
-        let groups = hooks.entry(event).or_insert_with(|| json!([]));
+        let groups = hooks.entry(*event).or_insert_with(|| json!([]));
         groups
             .as_array_mut()
             .ok_or_else(|| InstallError::Corrupt(format!("`hooks.{event}` is not a list")))?
@@ -111,17 +119,11 @@ pub fn claude_install(current: Option<&str>, helper: &str) -> Result<String, Ins
     Ok(to_text(settings, ends_line(current)))
 }
 
-pub fn claude_uninstall(current: &str) -> Result<String, InstallError> {
-    let mut settings = parse_settings(Some(current))?;
-    remove_ours(&mut settings)?;
-    Ok(to_text(settings, ends_line(Some(current))))
-}
-
-/// Every event has Utter's hook with exactly this helper path.
-pub fn claude_installed(current: &str, helper: &str) -> bool {
+/// Every event has Utter's hook with exactly this command (and the current `PostToolUse` matcher).
+fn hooks_installed(current: &str, set: &HookSet) -> bool {
     let Ok(settings) = parse_settings(Some(current)) else { return false };
-    CLAUDE_EVENTS.iter().all(|event| {
-        let wanted = claude_command(helper, event);
+    set.events.iter().all(|event| {
+        let wanted = (set.command)(event);
         settings
             .get("hooks")
             .and_then(|h| h.get(*event))
@@ -132,13 +134,71 @@ pub fn claude_installed(current: &str, helper: &str) -> bool {
                         hs.iter().any(|h| h.get("command").and_then(Value::as_str) == Some(wanted.as_str()))
                     });
                     // An older Utter's `PostToolUse` matcher missed tools: rewrite it (spec 2026-11-13 §3.3).
-                    ours && (*event != "PostToolUse" || g.get("matcher").and_then(Value::as_str) == Some(STEPS_MATCHER))
+                    ours && (*event != "PostToolUse" || g.get("matcher").and_then(Value::as_str) == Some(set.steps_matcher))
                 })
             })
     })
 }
 
-// ---------- Codex: the top-level `notify = [...]` in ~/.codex/config.toml ----------
+fn hooks_uninstall(current: &str) -> Result<String, InstallError> {
+    let mut settings = parse_settings(Some(current))?;
+    remove_ours(&mut settings)?;
+    Ok(to_text(settings, ends_line(Some(current))))
+}
+
+fn claude_set(helper: &str) -> impl Fn(&str) -> String + '_ {
+    move |event| claude_command(helper, event)
+}
+
+/// Adds Utter's hook to every event in `CLAUDE_EVENTS` (replacing an older one, e.g. after the app moved).
+pub fn claude_install(current: Option<&str>, helper: &str) -> Result<String, InstallError> {
+    hooks_install(current, &HookSet { events: &CLAUDE_EVENTS, command: &claude_set(helper), steps_matcher: STEPS_MATCHER })
+}
+
+pub fn claude_uninstall(current: &str) -> Result<String, InstallError> {
+    hooks_uninstall(current)
+}
+
+/// Every event has Utter's hook with exactly this helper path.
+pub fn claude_installed(current: &str, helper: &str) -> bool {
+    hooks_installed(current, &HookSet { events: &CLAUDE_EVENTS, command: &claude_set(helper), steps_matcher: STEPS_MATCHER })
+}
+
+// ---------- Codex: its hooks in ~/.codex/hooks.json ----------
+
+pub const CODEX_EVENTS: [&str; 6] = ["UserPromptSubmit", "PreToolUse", "PostToolUse", "PermissionRequest", "Stop", "SessionEnd"];
+/// Codex's plan tool.
+const CODEX_STEPS_MATCHER: &str = "^update_plan$";
+
+/// The hook runs the stable link Utter keeps pointing at itself, never Utter's own path: Codex
+/// trusts a hook by the hash of its text, so the text must not change when Utter moves. No shell
+/// syntax (how Codex runs it is not documented); quotes only when the path has a space.
+fn codex_command(link: &str, event: &str) -> String {
+    if link.contains(' ') {
+        format!("\"{link}\" codex-hook {event}")
+    } else {
+        format!("{link} codex-hook {event}")
+    }
+}
+
+fn codex_set(link: &str) -> impl Fn(&str) -> String + '_ {
+    move |event| codex_command(link, event)
+}
+
+pub fn codex_hooks_install(current: Option<&str>, link: &str) -> Result<String, InstallError> {
+    hooks_install(current, &HookSet { events: &CODEX_EVENTS, command: &codex_set(link), steps_matcher: CODEX_STEPS_MATCHER })
+}
+
+pub fn codex_hooks_installed(current: &str, link: &str) -> bool {
+    hooks_installed(current, &HookSet { events: &CODEX_EVENTS, command: &codex_set(link), steps_matcher: CODEX_STEPS_MATCHER })
+}
+
+pub fn codex_hooks_uninstall(current: &str) -> Result<String, InstallError> {
+    hooks_uninstall(current)
+}
+
+// ---------- Codex before 2026-11-13: the top-level `notify = [...]` in ~/.codex/config.toml ----------
+// Only taken out now (`codex_uninstall`); `codex_install` stays for the tests that build such a file.
 
 /// A top-level `notify` statement: its strings and the lines it spans (inclusive).
 type NotifyAt = (Vec<String>, usize, usize);
@@ -280,6 +340,7 @@ fn splice(text: &str, range: Option<(usize, usize)>, with: &str) -> String {
 
 /// Puts Utter first in `notify` and passes the event on to the previous command.
 /// Returns the new text and the previous command (`None` when there was none).
+#[cfg(test)]
 pub fn codex_install(current: Option<&str>, helper: &str) -> Result<(String, Option<Vec<String>>), InstallError> {
     let text = current.unwrap_or("");
     let found = read_notify(text)?;
@@ -310,6 +371,7 @@ pub fn codex_uninstall(current: &str, prev: Option<&[String]>) -> String {
     splice(current, Some((from, to)), &line)
 }
 
+#[cfg(test)]
 pub fn codex_installed(current: &str, helper: &str) -> bool {
     matches!(read_notify(current), Ok(Some((v, ..))) if v.first().map(String::as_str) == Some(helper) && v.get(1).map(String::as_str) == Some("codex"))
 }
@@ -467,6 +529,49 @@ mod tests {
 
     fn notify_of(text: &str) -> Vec<String> {
         read_notify(text).unwrap().unwrap().0
+    }
+
+    const LINK: &str = "/Users/me/.codex/utter/utter-agent";
+
+    #[test]
+    fn codex_hooks_install_creates_file() {
+        let out = json_of(&codex_hooks_install(None, LINK).unwrap());
+        for event in CODEX_EVENTS {
+            assert_eq!(commands(&out, event), vec![format!("{LINK} codex-hook {event}")], "{event}");
+        }
+        assert_eq!(out["hooks"]["PostToolUse"][0]["matcher"], "^update_plan$");
+        assert_eq!(out["hooks"]["PermissionRequest"][0]["hooks"][0]["timeout"], 120);
+        assert!(codex_hooks_installed(&out.to_string(), LINK));
+        assert!(!codex_hooks_installed("{}", LINK));
+    }
+
+    #[test]
+    fn codex_hooks_keep_foreign_and_do_not_duplicate() {
+        let current = r#"{"description":"mine","hooks":{"Stop":[{"hooks":[{"type":"command","command":"say done"}]}]}}"#;
+        let once = codex_hooks_install(Some(current), LINK).unwrap();
+        let twice = codex_hooks_install(Some(&once), LINK).unwrap();
+        assert_eq!(once, twice);
+        let v = json_of(&twice);
+        assert_eq!(v["description"], "mine");
+        assert_eq!(commands(&v, "Stop"), vec!["say done".to_string(), format!("{LINK} codex-hook Stop")]);
+    }
+
+    #[test]
+    fn codex_hooks_uninstall_gives_back_the_same_text() {
+        let current = "{\n  \"hooks\": {\n    \"Stop\": [\n      {\n        \"hooks\": [\n          {\n            \"command\": \"say done\",\n            \"type\": \"command\"\n          }\n        ]\n      }\n    ]\n  }\n}\n";
+        let installed = codex_hooks_install(Some(current), LINK).unwrap();
+        assert_eq!(codex_hooks_uninstall(&installed).unwrap(), current);
+    }
+
+    #[test]
+    fn codex_hooks_same_text_for_any_helper() {
+        // Codex trusts a hook by the hash of its definition: the text must not follow Utter's path
+        // (spec 2026-11-13 agents-look-and-codex-hooks §3.3). It names only the stable link.
+        let out = codex_hooks_install(None, LINK).unwrap();
+        assert!(!out.contains("Utter.app"));
+        assert!(!out.contains("[ -x"), "no shell syntax: how Codex runs the command is not documented");
+        let spaced = codex_hooks_install(None, "/Users/my name/.codex/utter/utter-agent").unwrap();
+        assert!(spaced.contains(r#"\"/Users/my name/.codex/utter/utter-agent\" codex-hook Stop"#));
     }
 
     #[test]

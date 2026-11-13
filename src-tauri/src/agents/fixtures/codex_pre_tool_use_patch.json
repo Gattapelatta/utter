@@ -1,0 +1,1 @@
+{"session_id": "cx1", "transcript_path": null, "cwd": "/Users/me/Projects/shop", "model": "gpt-5.3-codex", "turn_id": "t1", "permission_mode": "default", "hook_event_name": "PreToolUse", "tool_name": "apply_patch", "tool_use_id": "call_1", "tool_input": {"command": "*** Begin Patch\n*** Update File: src/a/billing.ts\n@@\n-a\n+b\n*** End Patch\n"}}

@@ -32,7 +32,7 @@ pub enum EventKind {
     Waiting(String),
     /// It asks to run a tool. `suggestion` is Claude Code's own "don't ask again" rule, if any.
     Permission { tool: String, detail: String, suggestion: Option<Value> },
-    Finished { last_message: String },
+    Finished,
     Ended,
 }
 
@@ -79,6 +79,7 @@ fn tool_detail(tool: &str, input: &Value) -> String {
         "Read" | "Edit" | "Write" | "MultiEdit" | "NotebookEdit" => {
             return text(input, "file_path").or(text(input, "notebook_path")).map(basename).unwrap_or("").to_string()
         }
+        "apply_patch" => return text(input, "command").and_then(patch_file).map(basename).unwrap_or("").to_string(),
         "Bash" => "command",
         "Grep" | "Glob" => "pattern",
         "WebFetch" => "url",
@@ -88,13 +89,20 @@ fn tool_detail(tool: &str, input: &Value) -> String {
     text(input, field).map(shorten).unwrap_or_default()
 }
 
+/// The first file a Codex patch touches (`*** Update File: src/a.ts`).
+fn patch_file(patch: &str) -> Option<&str> {
+    patch.lines().find_map(|l| {
+        ["*** Update File: ", "*** Add File: ", "*** Delete File: "].iter().find_map(|p| l.strip_prefix(p)).map(str::trim)
+    })
+}
+
 /// What a permission card shows: everything the user is asked to allow — the whole command,
 /// the full path, or the tool's arguments. Never shortened (review 2026-11-10).
 fn permission_detail(tool: &str, input: &Value) -> String {
     let field = match tool {
         "Read" | "Edit" | "Write" | "MultiEdit" => "file_path",
         "NotebookEdit" => "notebook_path",
-        "Bash" => "command",
+        "Bash" | "apply_patch" => "command",
         "Grep" | "Glob" => "pattern",
         "WebFetch" => "url",
         "WebSearch" => "query",
@@ -116,8 +124,8 @@ fn action(tool: &str, input: &Value, lang: Lang) -> Option<String> {
     let verb = match (tool, lang) {
         ("Read", Lang::Ru) => "Читает",
         ("Read", Lang::En) => "Reading",
-        ("Edit" | "Write" | "MultiEdit" | "NotebookEdit", Lang::Ru) => "Правит",
-        ("Edit" | "Write" | "MultiEdit" | "NotebookEdit", Lang::En) => "Editing",
+        ("Edit" | "Write" | "MultiEdit" | "NotebookEdit" | "apply_patch", Lang::Ru) => "Правит",
+        ("Edit" | "Write" | "MultiEdit" | "NotebookEdit" | "apply_patch", Lang::En) => "Editing",
         ("Bash", Lang::Ru) => "Запускает",
         ("Bash", Lang::En) => "Running",
         ("Grep" | "Glob", Lang::Ru) => "Ищет",
@@ -135,7 +143,9 @@ fn plan_step(item: &Value) -> PlanStep {
         Some("in_progress") => PlanStatus::Active,
         _ => PlanStatus::Pending,
     };
-    PlanStep { title: text(item, "content").unwrap_or("").chars().take(MAX_TITLE).collect(), status }
+    // `content`: Claude Code's lists; `step`: Codex's `update_plan`.
+    let title = text(item, "content").or(text(item, "step")).unwrap_or("");
+    PlanStep { title: title.chars().take(MAX_TITLE).collect(), status }
 }
 
 /// What a task-list tool call does to the plan. `TodoWrite` (`todos`) and the desktop app's plan
@@ -148,7 +158,7 @@ fn plan_update(tool: &str, input: &Value) -> Option<PlanUpdate> {
         let asks = text(input, "ask").is_some_and(|q| !q.trim().is_empty());
         return (!asks).then_some(PlanUpdate::Finish);
     }
-    if let Some(list) = input.get("todos").or(input.get("items")) {
+    if let Some(list) = input.get("todos").or(input.get("items")).or(input.get("plan")) {
         let list = list.as_array()?;
         return Some(PlanUpdate::Replace(list.iter().take(MAX_STEPS).map(plan_step).collect()));
     }
@@ -163,9 +173,25 @@ fn plan_update(tool: &str, input: &Value) -> Option<PlanUpdate> {
 
 /// One Claude Code hook input. `None` for events and inputs the Drop does not show.
 pub fn parse_claude(hook_event: &str, payload: &Value, lang: Lang) -> Option<AgentEvent> {
+    parse_hook(Agent::ClaudeCode, hook_event, payload, lang)
+}
+
+/// One hook input of Claude Code or Codex: their hooks share names and fields (spec 2026-11-13
+/// agents-look-and-codex-hooks §2). Codex differs in its tools (`apply_patch`, `update_plan`),
+/// in having no «Always» for permissions, and may pass a function tool's arguments as JSON text.
+pub fn parse_hook(agent: Agent, hook_event: &str, payload: &Value, lang: Lang) -> Option<AgentEvent> {
     let id = text(payload, "session_id").filter(|s| !s.is_empty())?;
     let tool = text(payload, "tool_name").unwrap_or("");
-    let input = payload.get("tool_input").unwrap_or(&Value::Null);
+    let parsed;
+    let input = match payload.get("tool_input") {
+        Some(Value::String(t)) => {
+            parsed = serde_json::from_str::<Value>(t).unwrap_or(Value::Null);
+            &parsed
+        }
+        Some(v) => v,
+        None => &Value::Null,
+    };
+    let codex = agent == Agent::Codex;
     let kind = match hook_event {
         "UserPromptSubmit" => EventKind::Started,
         "PreToolUse" => EventKind::Action(action(tool, input, lang)?),
@@ -179,15 +205,20 @@ pub fn parse_claude(hook_event: &str, payload: &Value, lang: Lang) -> Option<Age
         "PermissionRequest" if QUESTION_TOOLS.contains(&tool) => EventKind::Waiting(String::new()),
         "PermissionRequest" => EventKind::Permission {
             tool: tool.to_string(),
-            detail: permission_detail(tool, input),
-            suggestion: payload.get("permission_suggestions").and_then(|s| s.get(0)).cloned(),
+            detail: match text(input, "description") {
+                // Codex describes the request itself when there is no command (its hooks reference).
+                Some(d) if codex && text(input, "command").is_none() => d.to_string(),
+                _ => permission_detail(tool, input),
+            },
+            // Codex fails closed on `updatedPermissions`: no «Always» for it.
+            suggestion: if codex { None } else { payload.get("permission_suggestions").and_then(|s| s.get(0)).cloned() },
         },
-        "Stop" => EventKind::Finished { last_message: text(payload, "last_assistant_message").unwrap_or("").to_string() },
+        "Stop" => EventKind::Finished,
         "SessionEnd" => EventKind::Ended,
         _ => return None,
     };
     Some(AgentEvent {
-        key: SessionKey { agent: Agent::ClaudeCode, id: id.to_string() },
+        key: SessionKey { agent, id: id.to_string() },
         project: project_of(text(payload, "cwd")),
         kind,
     })
@@ -202,7 +233,7 @@ pub fn parse_codex(payload: &Value) -> Option<AgentEvent> {
     Some(AgentEvent {
         key: SessionKey { agent: Agent::Codex, id: id.to_string() },
         project: project_of(text(payload, "cwd")),
-        kind: EventKind::Finished { last_message: text(payload, "last-assistant-message").unwrap_or("").to_string() },
+        kind: EventKind::Finished,
     })
 }
 
@@ -244,7 +275,7 @@ mod tests {
             EventKind::Waiting("Claude is waiting for your input".into())
         );
         assert!(matches!(claude("PermissionRequest", "permission_request").kind, EventKind::Permission { .. }));
-        assert!(matches!(claude("Stop", "stop").kind, EventKind::Finished { .. }));
+        assert_eq!(claude("Stop", "stop").kind, EventKind::Finished);
         assert_eq!(claude("SessionEnd", "session_end").kind, EventKind::Ended);
     }
 
@@ -384,14 +415,68 @@ mod tests {
         assert_eq!(parse_claude("Notification", &p, Lang::En).unwrap().kind, EventKind::Waiting("m".into()));
     }
 
+    fn codex_fixture(name: &str) -> Value {
+        let text = match name {
+            "patch" => include_str!("fixtures/codex_pre_tool_use_patch.json"),
+            "plan" => include_str!("fixtures/codex_post_tool_use_plan.json"),
+            "permission" => include_str!("fixtures/codex_permission_request.json"),
+            "stop" => include_str!("fixtures/codex_stop.json"),
+            _ => unreachable!(),
+        };
+        serde_json::from_str(text).unwrap()
+    }
+
+    fn codex(event: &str, payload: &Value, lang: Lang) -> Option<EventKind> {
+        parse_hook(Agent::Codex, event, payload, lang).map(|e| e.kind)
+    }
+
     #[test]
-    fn stop_uses_last_assistant_message() {
-        assert_eq!(
-            claude("Stop", "stop").kind,
-            EventKind::Finished { last_message: "I've fixed the rounding in billing.ts. Tests pass.".into() }
-        );
-        let p = json!({"session_id":"s","cwd":"/p"});
-        assert_eq!(parse_claude("Stop", &p, Lang::En).unwrap().kind, EventKind::Finished { last_message: String::new() });
+    fn codex_hook_events() {
+        let ev = parse_hook(Agent::Codex, "Stop", &codex_fixture("stop"), Lang::En).unwrap();
+        assert_eq!(ev.key, SessionKey { agent: Agent::Codex, id: "cx1".into() });
+        assert_eq!(ev.project, "shop");
+        assert_eq!(ev.kind, EventKind::Finished);
+        let p = json!({"session_id":"cx1","cwd":"/p","prompt":"fix it"});
+        assert_eq!(codex("UserPromptSubmit", &p, Lang::En), Some(EventKind::Started));
+        assert_eq!(codex("SessionEnd", &p, Lang::En), Some(EventKind::Ended));
+    }
+
+    #[test]
+    fn codex_apply_patch_names_the_file() {
+        assert_eq!(codex("PreToolUse", &codex_fixture("patch"), Lang::Ru), Some(EventKind::Action("Правит billing.ts".into())));
+        let p = json!({"session_id":"s","cwd":"/p","tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** End Patch"}});
+        assert_eq!(codex("PreToolUse", &p, Lang::Ru), Some(EventKind::Action("Правит".into())));
+    }
+
+    #[test]
+    fn codex_bash_runs() {
+        let p = json!({"session_id":"s","cwd":"/p","tool_name":"Bash","tool_input":{"command":"npm test"}});
+        assert_eq!(codex("PreToolUse", &p, Lang::En), Some(EventKind::Action("Running npm test".into())));
+    }
+
+    #[test]
+    fn codex_update_plan_replaces() {
+        let want = Some(EventKind::Plan(PlanUpdate::Replace(vec![
+            PlanStep { title: "a".into(), status: PlanStatus::Done },
+            PlanStep { title: "b".into(), status: PlanStatus::Active },
+        ])));
+        let p = codex_fixture("plan");
+        assert_eq!(codex("PostToolUse", &p, Lang::En), want);
+        // Function tools may hand their arguments over as a JSON string.
+        let mut as_text = p.clone();
+        as_text["tool_input"] = Value::String(p["tool_input"].to_string());
+        assert_eq!(codex("PostToolUse", &as_text, Lang::En), want);
+    }
+
+    #[test]
+    fn codex_permission_has_no_always() {
+        let mut p = codex_fixture("permission");
+        p["permission_suggestions"] = json!([{"type":"addRules"}]);
+        let Some(EventKind::Permission { tool, detail, suggestion }) = codex("PermissionRequest", &p, Lang::En) else { panic!() };
+        assert_eq!((tool.as_str(), detail.as_str(), suggestion), ("Bash", "git push", None));
+        let p = json!({"session_id":"s","cwd":"/p","tool_name":"mcp__x__y","tool_input":{"description":"Open the page"}});
+        let Some(EventKind::Permission { detail, .. }) = codex("PermissionRequest", &p, Lang::En) else { panic!() };
+        assert_eq!(detail, "Open the page");
     }
 
     #[test]
@@ -399,7 +484,7 @@ mod tests {
         let ev = parse_codex(&fixture("codex")).unwrap();
         assert_eq!(ev.key, SessionKey { agent: Agent::Codex, id: "th_42".into() });
         assert_eq!(ev.project, "shop");
-        assert_eq!(ev.kind, EventKind::Finished { last_message: "Fixed the rounding bug in billing.ts.".into() });
+        assert_eq!(ev.kind, EventKind::Finished);
         assert_eq!(parse_codex(&json!({"type":"something-else","thread-id":"t"})), None);
     }
 

@@ -225,11 +225,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
           </div>
         );
       case "agents":
-        return (
-          <div className="mx-auto w-[440px] text-left">
-            <AgentToggles onboarding />
-          </div>
-        );
+        return <AgentToggles onboarding />;
       case "trial":
         return <Trial onResult={celebrate} />;
     }

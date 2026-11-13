@@ -17,8 +17,6 @@ pub enum Priority {
     Speech,
     /// The end of a dictation and guesses: may take everything left.
     End,
-    /// An agent summary: like `Speech`.
-    Agent,
 }
 
 pub struct RequestBudget {
@@ -46,7 +44,7 @@ impl RequestBudget {
         }
         let limit = match p {
             Priority::End => self.per_minute,
-            Priority::Speech | Priority::Agent => self.per_minute.saturating_sub(self.reserve),
+            Priority::Speech => self.per_minute.saturating_sub(self.reserve),
         };
         if sent.len() as u32 >= limit {
             return false;
@@ -75,15 +73,6 @@ mod tests {
         let now = Instant::now();
         assert_eq!(take(&mut b, "m", Priority::Speech, 12, now), 11);
         assert_eq!(take(&mut b, "m", Priority::End, 4, now), 3);
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn agent_is_like_speech() {
-        let mut b = RequestBudget::new(14, 3);
-        let now = Instant::now();
-        assert_eq!(take(&mut b, "m", Priority::Speech, 11, now), 11);
-        assert!(!b.try_take("m", Priority::Agent, now));
-        assert!(b.try_take("m", Priority::End, now));
     }
 
     #[tokio::test(start_paused = true)]

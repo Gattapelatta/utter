@@ -5,7 +5,6 @@ pub mod plan;
 pub mod install;
 pub mod host;
 pub mod wire;
-pub mod summary;
 pub mod registry;
 pub mod broker;
 pub mod service;

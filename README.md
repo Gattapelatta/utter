@@ -73,3 +73,5 @@ pnpm tauri dev
 ## Лицензия
 
 [MIT](LICENSE) — бери и пользуйся.
+
+Claude — товарный знак Anthropic; OpenAI, Codex и знак OpenAI (Blossom) — товарные знаки OpenAI. Utter с ними не связан и лишь показывает их значки рядом с названиями агентов.

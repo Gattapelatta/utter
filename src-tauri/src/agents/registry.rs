@@ -36,7 +36,6 @@ pub struct AgentRow {
     pub plan: Vec<PlanStep>,
     /// At most two, the newest last.
     pub actions: Vec<String>,
-    pub summary: Option<String>,
     /// The user has looked at this finished session (opened the agent or pressed OK).
     pub seen: bool,
 }
@@ -156,7 +155,6 @@ impl Registry {
                 state: SessionState::Working,
                 plan: Vec::new(),
                 actions: Vec::new(),
-                summary: None,
                 seen: true,
             },
             last_event: now,
@@ -183,7 +181,6 @@ impl Registry {
                 if plan::finished(&row.plan) {
                     row.plan.clear();
                 }
-                row.summary = None;
                 row.seen = true;
             }
             EventKind::Action(a) => {
@@ -217,9 +214,8 @@ impl Registry {
                     });
                 }
             }
-            EventKind::Finished { .. } => {
+            EventKind::Finished => {
                 row.state = SessionState::Done;
-                row.summary = None;
                 row.seen = false;
                 notice = Some(Card::Done { key: key.clone() });
             }
@@ -278,11 +274,6 @@ impl Registry {
             .collect()
     }
 
-    pub fn set_summary(&mut self, key: &SessionKey, s: Option<String>) {
-        if let Some(session) = self.sessions.get_mut(key) {
-            session.row.summary = s;
-        }
-    }
 
     /// The permission was answered (or timed out): its card goes, the session works again.
     pub fn resolve_permission(&mut self, id: u64) {
@@ -407,7 +398,7 @@ mod tests {
     }
 
     fn finished(id: &str) -> AgentEvent {
-        ev(id, EventKind::Finished { last_message: "done".into() })
+        ev(id, EventKind::Finished)
     }
 
     fn permission(id: &str, suggestion: bool) -> AgentEvent {
@@ -437,8 +428,6 @@ mod tests {
         assert_eq!(row(&v, "a").state, SessionState::Done);
         assert_eq!(row(&v, "a").project, "proj-a");
         assert_eq!(v.card, Some(Card::Done { key: key("a") }));
-        r.set_summary(&key("a"), Some("Fixed it".into()));
-        assert_eq!(row(&r.view(), "a").summary.as_deref(), Some("Fixed it"));
     }
 
     #[test]
@@ -703,7 +692,7 @@ mod tests {
         let t = Instant::now();
         let mut r = Registry::default();
         let k = SessionKey { agent: Agent::Codex, id: "th".into() };
-        r.apply(AgentEvent { key: k.clone(), project: "shop".into(), kind: EventKind::Finished { last_message: "x".into() } }, t);
+        r.apply(AgentEvent { key: k.clone(), project: "shop".into(), kind: EventKind::Finished }, t);
         let v = r.view();
         assert_eq!(v.rows[0].agent, Agent::Codex);
         assert_eq!(v.rows[0].state, SessionState::Done);
@@ -730,7 +719,7 @@ mod tests {
         r.apply(ev("a", EventKind::Started), t);
         let id = r.apply(permission("b", true), t).unwrap();
         let codex = SessionKey { agent: Agent::Codex, id: "c".into() };
-        r.apply(AgentEvent { key: codex.clone(), project: "p".into(), kind: EventKind::Finished { last_message: "x".into() } }, t);
+        r.apply(AgentEvent { key: codex.clone(), project: "p".into(), kind: EventKind::Finished }, t);
         assert_eq!(r.forget_agent(Agent::ClaudeCode), vec![id]);
         let v = r.view();
         assert_eq!(v.rows.iter().map(|r| r.key.clone()).collect::<Vec<_>>(), vec![codex.clone()]);

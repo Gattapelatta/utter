@@ -23,8 +23,6 @@ const BUTTONS_TOP = 4;
 const RULE_H = 14;
 /** Characters of the command per line in the mono box (300 pt at 12 px). */
 const MONO_PER_LINE = 40;
-/** Characters of plain 13 px text per line in the column. */
-const TEXT_PER_LINE = 46;
 const MONO_LINES = 3;
 
 const TEXT = "#e6e8ea";
@@ -47,7 +45,7 @@ function rgb(hex: string): string {
 const detailLines = (detail: string) => Math.min(MONO_LINES, Math.max(1, Math.ceil(detail.length / MONO_PER_LINE)));
 
 /** Heights of the column's items, in order (the column flows from the top; the island is cut to fit). */
-type Shown = { card: Card; summary?: string | null } | { rows: AgentRow[] } | { note: true };
+type Shown = { card: Card } | { rows: AgentRow[] } | { note: true };
 const lines = (s: string, per: number, max: number) => Math.min(max, Math.max(1, Math.ceil(s.length / per)));
 
 function items(show: Shown): number[] {
@@ -61,10 +59,7 @@ function items(show: Shown): number[] {
       return [2 * LINE_H];
     case "permission":
       return [TITLE_H, detailLines(c.detail || c.tool) * LINE_H + 12, ...(c.can_always && c.rule ? [lines(`«Всегда» разрешит: ${c.rule}`, 52, 3) * RULE_H] : []), buttons];
-    case "done": {
-      const s = "summary" in show ? show.summary : null;
-      return s ? [TITLE_H, lines(s, TEXT_PER_LINE, 2) * LINE_H, buttons] : [TITLE_H, buttons];
-    }
+    case "done":
     case "waiting":
       return [TITLE_H, buttons];
   }
@@ -265,11 +260,6 @@ export function AgentCard({ card, rows, notch }: { card: Card; rows: AgentRow[];
   return (
     <Panel notch={notch} dot={done ? "done" : "waiting"}>
       <Title project={project} rest={`${name(card.key.agent)} ${t(done ? "agents.finished" : "agents.waiting")}`} />
-      {done && row?.summary && (
-        <div data-agent-summary style={{ color: TEXT, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-          {row.summary}
-        </div>
-      )}
       <Buttons>
         <Button label={t("agents.open")} onClick={() => ipc.agentOpen(card.key).catch(() => {})} strong />
         <Button label={t("agents.ok")} onClick={() => ipc.agentDismiss().catch(() => {})} />

@@ -73,3 +73,13 @@ export function ladderOf(plan: PlanStep[]): Ladder | null {
   const next = plan.slice(i + 1).find((s) => s.status !== "done");
   return { n: i + 1, m, prev: p >= 0 ? plan[p].title : null, current: plan[i].title, next: next?.title ?? null, allDone: false };
 }
+
+/** Slack around a button or row where a click still counts (live 2026-11-14: clicks 1–3 pt under «Открыть» fell through to the app below). */
+export const HIT_SLACK = 8;
+
+/** Where the window takes a click for one `[data-hit]` element: its box and `HIT_SLACK` around it, never above the window's top. */
+export function hitZone(r: { left: number; top: number; width: number; height: number }): { x: number; y: number; w: number; h: number } {
+  const x = Math.max(0, r.left - HIT_SLACK);
+  const y = Math.max(0, r.top - HIT_SLACK);
+  return { x, y, w: r.left + r.width + HIT_SLACK - x, h: r.top + r.height + HIT_SLACK - y };
+}

@@ -316,6 +316,15 @@ pub fn configure(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn overlay_takes_the_first_click() {
+        // Live 2026-11-14: the island never becomes the active window, and WebKit spent the first
+        // click on an inactive window on activating it — «Открыть» never fired on a single click.
+        let conf: serde_json::Value = serde_json::from_str(include_str!("../../tauri.conf.json")).unwrap();
+        let overlay = conf["app"]["windows"].as_array().unwrap().iter().find(|w| w["label"] == LABEL).unwrap();
+        assert_eq!(overlay["acceptFirstMouse"], true);
+    }
+
     use super::*;
 
     #[test]

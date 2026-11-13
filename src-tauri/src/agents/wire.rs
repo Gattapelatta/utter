@@ -81,6 +81,11 @@ pub fn hook_output(reply: &Reply, suggestion: Option<&Value>) -> Option<String> 
     Some(out.to_string())
 }
 
+/// What Codex's `Stop` hook prints: it wants JSON on stdout when the hook exits 0.
+pub fn stop_output() -> &'static str {
+    "{}"
+}
+
 /// Parent pids of `pid`, nearest first, up to (not including) launchd.
 pub fn ancestors(pid: i32) -> Vec<i32> {
     let mut chain = Vec::new();
@@ -152,6 +157,19 @@ mod tests {
             out["hookSpecificOutput"]["decision"],
             json!({"behavior":"deny","message":"Denied in Utter"})
         );
+    }
+
+    #[test]
+    fn codex_permission_output_has_no_always() {
+        // Codex fails closed on `updatedPermissions`: its helper passes no suggestion.
+        let out = parsed(hook_output(&Reply::Allow { always: true }, None));
+        assert_eq!(out["hookSpecificOutput"]["decision"], json!({"behavior":"allow"}));
+    }
+
+    #[test]
+    fn codex_stop_prints_json() {
+        // Codex's `Stop` wants JSON on stdout when the hook exits 0.
+        assert_eq!(serde_json::from_str::<Value>(stop_output()).unwrap(), json!({}));
     }
 
     #[test]

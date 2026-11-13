@@ -438,7 +438,7 @@ mod tests {
         assert!(!pause_shown(&s));
         s.agents.codex = true;
         assert!(pause_shown(&s));
-        s.agents = crate::settings::AgentSettings { claude_code: true, codex: false, summary: false };
+        s.agents = crate::settings::AgentSettings { claude_code: true, codex: false };
         assert!(pause_shown(&s));
         assert_eq!(labels(Lang::Ru).agents_pause, "Пауза агентов");
         assert_eq!(labels(Lang::En).agents_pause, "Pause agents");
