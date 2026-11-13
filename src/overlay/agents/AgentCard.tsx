@@ -318,11 +318,11 @@ function LadderLines({ ladder, action }: { ladder: Ladder; action: string | null
         </div>
       )}
       {ladder.current !== null && (
-        // The title gives way first; the action keeps up to 60 % of the line.
+        // The step's title matters most (the user 2026-11-13): it keeps up to 70 % of the line, the action gives way first.
         <div data-agent-step="current" style={{ display: "flex", whiteSpace: "nowrap", color: TEXT }}>
-          <span style={{ flex: "0 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{`› ${ladder.current}`}</span>
+          <span style={{ flex: "0 0 auto", maxWidth: "70%", overflow: "hidden", textOverflow: "ellipsis" }}>{`› ${ladder.current}`}</span>
           {action && (
-            <span data-agent-action style={{ flex: "0 0 auto", maxWidth: "60%", overflow: "hidden", textOverflow: "ellipsis", color: DIM, whiteSpace: "pre" }}>
+            <span data-agent-action style={{ flex: "0 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", color: DIM, whiteSpace: "pre" }}>
               {` · ${lower(action)}`}
             </span>
           )}
