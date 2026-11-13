@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import type { AgentRow, SessionKey } from "../../lib/types";
+import type { AgentRow, PlanStep, SessionKey } from "../../lib/types";
 
 const invoke = vi.fn(async () => undefined);
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invoke(...(a as [])) }));
 
-const { AgentCard, AgentList } = await import("./AgentCard");
+const { AgentCard, AgentList, agentHeight } = await import("./AgentCard");
 const { useApp } = await import("../../lib/store");
 
 afterEach(() => {
@@ -137,4 +137,54 @@ describe("AgentCard", () => {
     fireEvent.click(screen.getByText("shop"));
     expect(invoke).toHaveBeenCalledWith("agent_open", { key });
   });
+
+  it("ladder_shows_prev_current_next", () => {
+    render(<AgentList rows={[planRow("ddapp")]} notch={notch} />);
+    expect(title()).toBe("shop Claude Code · 3 of 5");
+    expect(step("prev")).toBe("✓ s2");
+    expect(step("current")).toBe("› s3 · reading event.rs");
+    expect(step("next")).toBe("s4");
+  });
+
+  it("ladder_first_and_last_step", () => {
+    render(<AgentList rows={[planRow("app")]} notch={notch} />);
+    expect(step("prev")).toBeUndefined();
+    expect(step("next")).toBe("s2");
+    cleanup();
+    render(<AgentList rows={[planRow("dda", { actions: [] })]} notch={notch} />);
+    expect(step("next")).toBeUndefined();
+    expect(step("current")).toBe("› s3");
+  });
+
+  it("ladder_all_done_is_one_line", () => {
+    render(<AgentList rows={[planRow("ddd")]} notch={notch} />);
+    expect(title()).toBe("shop Claude Code");
+    expect(document.querySelectorAll("[data-agent-step]").length).toBe(1);
+    expect(step("all-done")).toBe("✓ All 3 steps done");
+  });
+
+  it("other_agents_get_one_line", () => {
+    render(<AgentList rows={[planRow("ap"), planRow("dap", { key: { agent: "claude_code", id: "s2" }, project: "web" })]} notch={notch} />);
+    const second = document.querySelectorAll("[data-agent-row]")[1] as HTMLElement;
+    expect(second.textContent?.replace(/\s+/g, " ").trim()).toBe("web · 2 of 3 · s2");
+    expect(second.querySelectorAll("[data-agent-step]").length).toBe(0);
+  });
+
+  it("ladder_height_matches_lines", () => {
+    const n = { width: 179, height: 32 };
+    const base = agentHeight({ rows: [planRow("ap")] }, n); // current + next
+    expect(agentHeight({ rows: [planRow("dap")] }, n)).toBe(base + 16); // + prev
+    expect(agentHeight({ rows: [planRow("dap"), planRow("ap", { key: { agent: "claude_code", id: "s2" } })] }, n)).toBe(base + 16 + 18 + 6);
+  });
+
+  it("current_step_stays_one_line", () => {
+    render(<AgentList rows={[planRow("ap", { plan: [{ title: "x".repeat(300), status: "active" }] })]} notch={notch} />);
+    expect((document.querySelector('[data-agent-step="current"]') as HTMLElement).style.whiteSpace).toBe("nowrap");
+  });
 });
+
+/** «ddap» → done, done, active, pending; titles s1…sN. */
+const P = (s: string): PlanStep[] =>
+  s.split("").map((c, i) => ({ title: `s${i + 1}`, status: ({ d: "done", a: "active", p: "pending" } as const)[c as "d" | "a" | "p"] }));
+const planRow = (s: string, over: Partial<AgentRow> = {}): AgentRow => ({ ...row, state: "working", plan: P(s), actions: ["Reading event.rs"], ...over });
+const step = (k: string) => document.querySelector(`[data-agent-step="${k}"]`)?.textContent?.replace(/\s+/g, " ").trim();
