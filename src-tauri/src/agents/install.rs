@@ -11,8 +11,8 @@ pub const CLAUDE_EVENTS: [&str; 7] =
 /// The mark of Utter's own hooks and `notify` entry.
 const MARK: &str = "utter-agent";
 
-/// `PostToolUse` only matters for the task list (whole-list tools, see `event::steps`).
-const STEPS_MATCHER: &str = "TodoWrite|mcp__ccd_turn__update_plan";
+/// `PostToolUse` only matters for the task list (task-list tools, see `event::plan_update`).
+const STEPS_MATCHER: &str = "TodoWrite|mcp__ccd_turn__update_plan|mcp__ccd_turn__wrap_up";
 
 /// Seconds Claude Code waits for the permission hook (Utter itself gives up after 30 s on screen).
 const PERMISSION_TIMEOUT: u64 = 120;
@@ -127,8 +127,12 @@ pub fn claude_installed(current: &str, helper: &str) -> bool {
             .and_then(|h| h.get(*event))
             .and_then(Value::as_array)
             .is_some_and(|groups| {
-                groups.iter().filter_map(|g| g.get("hooks").and_then(Value::as_array)).flatten().any(|h| {
-                    h.get("command").and_then(Value::as_str) == Some(wanted.as_str())
+                groups.iter().any(|g| {
+                    let ours = g.get("hooks").and_then(Value::as_array).is_some_and(|hs| {
+                        hs.iter().any(|h| h.get("command").and_then(Value::as_str) == Some(wanted.as_str()))
+                    });
+                    // An older Utter's `PostToolUse` matcher missed tools: rewrite it (spec 2026-11-13 §3.3).
+                    ours && (*event != "PostToolUse" || g.get("matcher").and_then(Value::as_str) == Some(STEPS_MATCHER))
                 })
             })
     })
@@ -347,6 +351,16 @@ mod tests {
             .flat_map(|g| g["hooks"].as_array().unwrap().iter())
             .map(|h| h["command"].as_str().unwrap().to_string())
             .collect()
+    }
+
+    #[test]
+    fn old_steps_matcher_counts_as_not_installed() {
+        // Spec 2026-11-13 §3.3: an older Utter's hook missed `wrap_up`; it must be rewritten on launch.
+        let new = claude_install(None, HELPER).unwrap();
+        assert!(new.contains("mcp__ccd_turn__wrap_up"));
+        let old = new.replace("|mcp__ccd_turn__wrap_up", "");
+        assert!(!claude_installed(&old, HELPER));
+        assert!(claude_installed(&claude_install(Some(&old), HELPER).unwrap(), HELPER));
     }
 
     #[test]

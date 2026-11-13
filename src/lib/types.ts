@@ -151,12 +151,16 @@ export type AgentKind = "claude_code" | "codex";
 export type SessionKey = { agent: AgentKind; id: string };
 export type SessionState = "permission" | "waiting" | "working" | "done";
 
+/** One step of an agent's plan as Utter follows it (spec 2026-11-13 §3.3). */
+export type PlanStep = { title: string; status: "pending" | "active" | "done" };
+
 export interface AgentRow {
   key: SessionKey;
   agent: AgentKind;
   project: string;
   state: SessionState;
-  steps: [number, number] | null;
+  /** Empty — the agent keeps no plan. */
+  plan: PlanStep[];
   /** At most two, the newest last. */
   actions: string[];
   summary: string | null;

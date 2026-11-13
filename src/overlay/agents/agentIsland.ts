@@ -1,4 +1,4 @@
-import type { AgentCard, AgentRow, AgentView, OverlayState, SessionState } from "../../lib/types";
+import type { AgentCard, AgentRow, AgentView, OverlayState, PlanStep, SessionState } from "../../lib/types";
 
 /** A state dot: blue — works, amber — waits for the user, green — finished, not yet looked at. */
 export type Dot = "working" | "waiting" | "done";
@@ -53,4 +53,23 @@ export function pokes(times: number[], now: number): boolean {
 /** Dizzy for `DIZZY_MS` from `since` (the poke that did it), and never over a dictation. */
 export function dizzyNow(since: number | null, now: number, dictation: OverlayState["kind"]): boolean {
   return since !== null && now - since < DIZZY_MS && dictation === "hidden";
+}
+
+/** The ladder (spec 2026-11-13 §3.1): the current step's number, the step before, the current, the next. */
+export type Ladder = { n: number; m: number; prev: string | null; current: string | null; next: string | null; allDone: boolean };
+
+/**
+ * The current step is the active one, else the first not done; `prev` — the nearest done step
+ * before it, `next` — the first unfinished after it. Null without a plan.
+ */
+export function ladderOf(plan: PlanStep[]): Ladder | null {
+  if (plan.length === 0) return null;
+  const m = plan.length;
+  let i = plan.findIndex((s) => s.status === "active");
+  if (i < 0) i = plan.findIndex((s) => s.status === "pending");
+  if (i < 0) return { n: m, m, prev: null, current: null, next: null, allDone: true };
+  let p = i - 1;
+  while (p >= 0 && plan[p].status !== "done") p--;
+  const next = plan.slice(i + 1).find((s) => s.status !== "done");
+  return { n: i + 1, m, prev: p >= 0 ? plan[p].title : null, current: plan[i].title, next: next?.title ?? null, allDone: false };
 }

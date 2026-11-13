@@ -2,7 +2,7 @@ import { ipc } from "../../lib/ipc";
 import { useT } from "../../i18n";
 import type { AgentCard as Card, AgentKind, AgentRow } from "../../lib/types";
 import type { Notch } from "../drop/islandMotion";
-import { DOT_COLOR, dotOf, type Dot } from "./agentIsland";
+import { DOT_COLOR, dotOf, ladderOf, type Dot, type Ladder } from "./agentIsland";
 
 /**
  * The agents' open island (the user's mockup 2026-11-09, asked for again 2026-11-10): the big Drop
@@ -52,7 +52,8 @@ const lines = (s: string, per: number, max: number) => Math.min(max, Math.max(1,
 
 function items(show: Shown): number[] {
   if ("note" in show) return [2 * LINE_H];
-  if ("rows" in show) return show.rows.length ? show.rows.slice(0, 3).map((r) => TITLE_H + Math.min(2, r.actions.length) * LINE_H) : [TITLE_H];
+  // The first agent gets its ladder (or two actions), the others one line each (spec 2026-11-13 §3.2).
+  if ("rows" in show) return show.rows.length ? show.rows.slice(0, 3).map((r, i) => (i === 0 ? TITLE_H + firstLines(r) * LINE_H : TITLE_H)) : [TITLE_H];
   const c = show.card;
   const buttons = BUTTONS_TOP + BUTTONS_H;
   switch (c.kind) {
@@ -286,6 +287,56 @@ export function AgentNote({ text, notch }: { text: string; notch: Notch }) {
   );
 }
 
+/** Lines under the first agent's title: the ladder's, or (no plan) the last two actions. */
+function firstLines(r: AgentRow): number {
+  const ladder = ladderOf(r.plan);
+  if (!ladder) return Math.min(2, r.actions.length);
+  if (ladder.allDone) return 1;
+  return [ladder.prev, ladder.current, ladder.next].filter((x) => x !== null).length;
+}
+
+/** «Читает event.rs» → «читает event.rs»: the action follows the step after «·». */
+const lower = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+
+const ONE_LINE = { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } as const;
+
+/** The first agent's ladder (spec 2026-11-13 §3.1): the step before, the current one with its live action, the next. */
+function LadderLines({ ladder, action }: { ladder: Ladder; action: string | null }) {
+  const t = useT();
+  if (ladder.allDone) {
+    return (
+      <div data-agent-step="all-done" style={{ color: DIM, ...ONE_LINE }}>
+        {`✓ ${t("agents.all_steps_done", { n: ladder.m })}`}
+      </div>
+    );
+  }
+  return (
+    <>
+      {ladder.prev !== null && (
+        <div data-agent-step="prev" style={{ color: DIM, ...ONE_LINE }}>
+          {`✓ ${ladder.prev}`}
+        </div>
+      )}
+      {ladder.current !== null && (
+        // The title gives way first; the action keeps up to 60 % of the line.
+        <div data-agent-step="current" style={{ display: "flex", whiteSpace: "nowrap", color: TEXT }}>
+          <span style={{ flex: "0 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{`› ${ladder.current}`}</span>
+          {action && (
+            <span data-agent-action style={{ flex: "0 0 auto", maxWidth: "60%", overflow: "hidden", textOverflow: "ellipsis", color: DIM, whiteSpace: "pre" }}>
+              {` · ${lower(action)}`}
+            </span>
+          )}
+        </div>
+      )}
+      {ladder.next !== null && (
+        <div data-agent-step="next" style={{ color: DIM, opacity: 0.6, paddingLeft: "12px", ...ONE_LINE }}>
+          {ladder.next}
+        </div>
+      )}
+    </>
+  );
+}
+
 /** Pointer over the ears: one entry per agent, the most urgent first; a click opens it. */
 export function AgentList({ rows, notch }: { rows: AgentRow[]; notch: Notch }) {
   const t = useT();
@@ -294,8 +345,16 @@ export function AgentList({ rows, notch }: { rows: AgentRow[]; notch: Notch }) {
     <Panel notch={notch} dot={rows[0] ? dotOf(rows[0].state) : null}>
       {rows.length === 0 && <div style={{ color: DIM, lineHeight: `${TITLE_H}px` }}>{t("agents.free")}</div>}
       {rows.slice(0, 3).map((r, i) => {
-        const steps = r.steps ? ` · ${t("agents.step", { n: r.steps[0], m: r.steps[1] })}` : "";
+        const ladder = ladderOf(r.plan);
+        const stepOf = (l: Ladder) => t("agents.step", { n: l.n, m: l.m });
+        const steps = ladder && !ladder.allDone ? ` · ${stepOf(ladder)}` : "";
         const [older, newest] = r.actions.length > 1 ? [r.actions[r.actions.length - 2], r.actions[r.actions.length - 1]] : [null, r.actions[0] ?? null];
+        // Other agents: one line — the step, else the last action, else the agent's name (§3.2 п. 6).
+        const tail = ladder
+          ? `· ${ladder.allDone ? t("agents.all_steps_done", { n: ladder.m }) : `${stepOf(ladder)} · ${ladder.current}`}`
+          : newest
+            ? `· ${newest}`
+            : name(r.agent);
         return (
           <div
             key={`${r.key.agent}:${r.key.id}`}
@@ -305,24 +364,32 @@ export function AgentList({ rows, notch }: { rows: AgentRow[]; notch: Notch }) {
             style={{ cursor: "pointer", display: "flex", flexDirection: "column", marginTop: i ? `${GAP - 6}px` : 0, flex: "none" }}
           >
             {i === 0 ? (
-              <Title project={r.project} rest={`${name(r.agent)}${steps}`} />
+              <>
+                <Title project={r.project} rest={`${name(r.agent)}${steps}`} />
+                {ladder ? (
+                  <LadderLines ladder={ladder} action={newest} />
+                ) : (
+                  <>
+                    {older && (
+                      <div style={{ color: DIM, ...ONE_LINE }}>
+                        {"✓ "}
+                        <span data-agent-action>{pastOf(older)}</span>
+                      </div>
+                    )}
+                    {newest && (
+                      <div style={{ color: TEXT, ...ONE_LINE }}>
+                        {"› "}
+                        <span data-agent-action>{newest}</span>
+                      </div>
+                    )}
+                  </>
+                )}
+              </>
             ) : (
               <div style={{ height: `${TITLE_H}px`, display: "flex", alignItems: "center", gap: "6px", whiteSpace: "nowrap", overflow: "hidden" }}>
                 <span style={{ width: 7, height: 7, borderRadius: 4, background: DOT_COLOR[dotOf(r.state)], flex: "none" }} />
-                <b style={{ fontWeight: 700 }}>{r.project}</b>
-                <span style={{ color: DIM }}>{`${name(r.agent)}${steps}`}</span>
-              </div>
-            )}
-            {older && (
-              <div style={{ color: DIM, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                {"✓ "}
-                <span data-agent-action>{pastOf(older)}</span>
-              </div>
-            )}
-            {newest && (
-              <div style={{ color: TEXT, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                {"› "}
-                <span data-agent-action>{newest}</span>
+                <b style={{ fontWeight: 700, flex: "none" }}>{r.project}</b>{" "}
+                <span style={{ color: DIM, overflow: "hidden", textOverflow: "ellipsis" }}>{tail}</span>
               </div>
             )}
           </div>

@@ -1,0 +1,1 @@
+{"session_id": "abc123", "transcript_path": "/Users/me/.claude/projects/x/abc123.jsonl", "cwd": "/Users/me/Projects/shop", "permission_mode": "default", "hook_event_name": "PostToolUse", "tool_name": "mcp__ccd_turn__update_plan", "tool_input": {"advance": true}, "tool_response": [{"type": "text", "text": "Plan updated."}], "tool_use_id": "toolu_02", "duration_ms": 3}

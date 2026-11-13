@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
-import type { AgentRow, AgentView, SessionState } from "../../lib/types";
-import { agentShow } from "./agentIsland";
+import type { AgentRow, AgentView, PlanStep, SessionState } from "../../lib/types";
+import { agentShow, ladderOf } from "./agentIsland";
 
 const row = (id: string, state: SessionState, seen = false): AgentRow => ({
   key: { agent: "claude_code", id },
   agent: "claude_code",
   project: `p-${id}`,
   state,
-  steps: null,
+  plan: [],
   actions: [],
   summary: null,
   seen,
@@ -96,4 +96,18 @@ describe("colours (chosen by the user 2026-11-10, the Figma logo, variant F2)", 
   it("blue works, coral waits, green is done", () => {
     expect(DOT_COLOR).toEqual({ working: "#1ABCFE", waiting: "#FF7262", done: "#0ACF83" });
   });
+});
+
+/** «ddap» → done, done, active, pending; titles s1…sN. */
+const P = (s: string): PlanStep[] =>
+  s.split("").map((c, i) => ({ title: `s${i + 1}`, status: ({ d: "done", a: "active", p: "pending" } as const)[c as "d" | "a" | "p"] }));
+
+describe("ladderOf", () => {
+  it("ladder_middle_step", () => expect(ladderOf(P("ddapp"))).toEqual({ n: 3, m: 5, prev: "s2", current: "s3", next: "s4", allDone: false }));
+  it("ladder_first_step_has_no_prev", () => expect(ladderOf(P("app"))).toMatchObject({ n: 1, prev: null, next: "s2" }));
+  it("ladder_last_step_has_no_next", () => expect(ladderOf(P("dda"))).toMatchObject({ n: 3, prev: "s2", next: null }));
+  it("ladder_without_active_takes_first_unfinished", () => expect(ladderOf(P("dpp"))).toMatchObject({ n: 2, current: "s2", prev: "s1", next: "s3" }));
+  it("ladder_out_of_order_prev_is_nearest_done", () => expect(ladderOf(P("dpap"))).toMatchObject({ n: 3, prev: "s1", next: "s4" }));
+  it("ladder_all_done", () => expect(ladderOf(P("ddd"))).toEqual({ n: 3, m: 3, prev: null, current: null, next: null, allDone: true }));
+  it("ladder_no_plan", () => expect(ladderOf([])).toBeNull());
 });
