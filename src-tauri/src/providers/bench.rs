@@ -501,3 +501,17 @@ async fn fast_text_candidates() {
         println!("{model:<28} n={} median {} ms, max {} ms, ≤1 s {}", t.len(), t[t.len() / 2], t[t.len() - 1], t.iter().filter(|&&x| x <= 1000).count());
     }
 }
+
+/// Does Google serve this Mac's address? One tiny text request with the user's key; prints only
+/// the status and Google's message. Run: cargo test --release --lib -- --ignored gemini_location_probe --nocapture
+#[tokio::test]
+#[ignore = "live: one tiny request with the user's key"]
+async fn gemini_location_probe() {
+    let key = KeychainStore::new().get(ProviderKind::Gemini).expect("Gemini key in Keychain");
+    let bench = Bench { http: reqwest::Client::new(), key };
+    let (d, out) = bench
+        .interact(json!({"model": "gemini-3.5-flash-lite", "store": false, "input": "Reply with: ok",
+            "generation_config": {"thinking_level": "minimal"}}))
+        .await;
+    println!("probe: {} ms → {}", d.as_millis(), match out { Ok(t) => format!("OK {}", t.trim()), Err(e) => format!("ERROR {e}") });
+}
