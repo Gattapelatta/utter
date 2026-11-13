@@ -1082,7 +1082,7 @@ mod tests {
     fn period_is_fast_only_when_needed() {
         use crate::agents::registry::{AgentRow, SessionState};
         let key = SessionKey { agent: crate::agents::event::Agent::Codex, id: "t".into() };
-        let row = AgentRow { key: key.clone(), agent: key.agent, project: "p".into(), state: SessionState::Done, steps: None, actions: vec![], summary: None, seen: false };
+        let row = AgentRow { key: key.clone(), agent: key.agent, project: "p".into(), state: SessionState::Done, plan: vec![], actions: vec![], summary: None, seen: false };
         let none = AgentView { rows: vec![], card: None, paused: false, connected: false };
         let dots = AgentView { rows: vec![row.clone()], card: None, paused: false, connected: false };
         let card = AgentView { rows: vec![row], card: Some(Card::Done { key }), paused: false, connected: false };

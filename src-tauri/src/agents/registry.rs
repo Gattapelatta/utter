@@ -2,6 +2,7 @@
 //! Pure: time comes in as `now`, nothing here talks to the system.
 
 use crate::agents::event::{Agent, AgentEvent, EventKind, SessionKey};
+use crate::agents::plan::{self, PlanStep};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
@@ -31,7 +32,8 @@ pub struct AgentRow {
     pub agent: Agent,
     pub project: String,
     pub state: SessionState,
-    pub steps: Option<(u32, u32)>,
+    /// The agent's task list as Utter follows it; empty — no plan.
+    pub plan: Vec<PlanStep>,
     /// At most two, the newest last.
     pub actions: Vec<String>,
     pub summary: Option<String>,
@@ -152,7 +154,7 @@ impl Registry {
                 agent: key.agent,
                 project: String::new(),
                 state: SessionState::Working,
-                steps: None,
+                plan: Vec::new(),
                 actions: Vec::new(),
                 summary: None,
                 seen: true,
@@ -177,7 +179,10 @@ impl Registry {
             EventKind::Started => {
                 row.state = SessionState::Working;
                 row.actions.clear();
-                row.steps = None;
+                // A reply mid-task is a prompt too: only a finished plan goes (spec 2026-11-13 §3.2 п. 7).
+                if plan::finished(&row.plan) {
+                    row.plan.clear();
+                }
                 row.summary = None;
                 row.seen = true;
             }
@@ -187,7 +192,10 @@ impl Registry {
                 let extra = row.actions.len().saturating_sub(ACTIONS);
                 row.actions.drain(..extra);
             }
-            EventKind::Plan(_) => working(row),
+            EventKind::Plan(update) => {
+                working(row);
+                plan::apply(&mut row.plan, update);
+            }
             EventKind::Waiting(_) => {
                 row.state = SessionState::Waiting;
                 notice = Some(Card::Waiting { key: key.clone() });
@@ -387,7 +395,7 @@ impl Registry {
 mod tests {
     use super::*;
     use crate::agents::event::{Agent, AgentEvent, EventKind, SessionKey};
-    use crate::agents::plan::PlanUpdate;
+    use crate::agents::plan::{PlanStatus, PlanStep, PlanUpdate};
     use serde_json::json;
 
     fn key(id: &str) -> SessionKey {
@@ -482,6 +490,55 @@ mod tests {
         let v = r.view();
         assert_eq!(row(&v, "a").actions, vec!["Правит b.rs".to_string(), "Запускает npm test".to_string()]);
         assert_eq!(row(&v, "a").state, SessionState::Working);
+    }
+
+    fn step(title: &str, status: PlanStatus) -> PlanStep {
+        PlanStep { title: title.into(), status }
+    }
+
+    fn two_steps() -> AgentEvent {
+        ev("a", EventKind::Plan(PlanUpdate::Replace(vec![step("x", PlanStatus::Active), step("y", PlanStatus::Pending)])))
+    }
+
+    #[test]
+    fn plan_follows_advance() {
+        let t = Instant::now();
+        let mut r = Registry::default();
+        r.apply(two_steps(), t);
+        r.apply(ev("a", EventKind::Plan(PlanUpdate::Advance)), t);
+        let v = r.view();
+        assert_eq!(row(&v, "a").plan.iter().map(|s| s.status).collect::<Vec<_>>(), vec![PlanStatus::Done, PlanStatus::Active]);
+    }
+
+    #[test]
+    fn user_reply_keeps_an_unfinished_plan() {
+        // «Да, верно» mid-task is a UserPromptSubmit too; the next «advance» must still count (spec §3.2 п. 7).
+        let t = Instant::now();
+        let mut r = Registry::default();
+        r.apply(two_steps(), t);
+        r.apply(ev("a", EventKind::Started), t);
+        r.apply(ev("a", EventKind::Plan(PlanUpdate::Advance)), t);
+        assert_eq!(row(&r.view(), "a").plan[1].status, PlanStatus::Active);
+    }
+
+    #[test]
+    fn new_prompt_clears_a_finished_plan() {
+        let t = Instant::now();
+        let mut r = Registry::default();
+        r.apply(two_steps(), t);
+        r.apply(ev("a", EventKind::Plan(PlanUpdate::Finish)), t);
+        r.apply(ev("a", EventKind::Started), t);
+        assert!(row(&r.view(), "a").plan.is_empty());
+    }
+
+    #[test]
+    fn row_serializes_plan_for_the_page() {
+        let t = Instant::now();
+        let mut r = Registry::default();
+        r.apply(ev("a", EventKind::Plan(PlanUpdate::Replace(vec![step("x", PlanStatus::Active)]))), t);
+        let j = serde_json::to_value(row(&r.view(), "a")).unwrap();
+        assert_eq!(j["plan"], json!([{"title":"x","status":"active"}]));
+        assert!(j.get("steps").is_none());
     }
 
     #[test]
