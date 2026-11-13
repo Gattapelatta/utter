@@ -8,7 +8,9 @@ Free, open-source voice-to-text for macOS (Windows later): hold a hotkey, speak,
 
 1. Read `docs/superpowers/HANDOFF.md` («С чего начать следующую сессию»).
 2. Plans 1–3 are done; Utter is **public**, v0.2.1 released; «Капля и ИИ-агенты» is merged to `main` (unreleased).
-3. **Fast paste is merged to `main`** (2026-11-13; spec `2026-11-10-fast-paste-design.md` §9, summary `plans/2026-11-11-fast-paste-summary.md`): dictation ≤ 0.97 s; translation speed is closed by the user's decision (free Google only, a wait note instead). Agent drop and fast paste are unreleased — a release only with the user's yes. Next: Windows (Plan 4) or the deferred minors.
+3. **Fast paste is merged to `main`** (2026-11-13; spec `2026-11-10-fast-paste-design.md` §9, summary `plans/2026-11-11-fast-paste-summary.md`): dictation ≤ 0.97 s; translation speed is closed by the user's decision (free Google only, a wait note instead). Agent drop and fast paste are unreleased — a release only with the user's yes.
+4. **Next (user's choice 2026-11-13): the island shows Claude Code's steps live** (step 1 done, step 2 done, what Claude does on step 3 — not a frozen «0 из 9»); details in HANDOFF «С чего начать».
+5. Dictation on the user's Mac fails since 2026-11-13 with Google's «User location is not supported» — the VPN (incy) path, not Utter (`gemini_location_probe` from the terminal shows it); the user postponed it.
 
 ## Working with the user
 
