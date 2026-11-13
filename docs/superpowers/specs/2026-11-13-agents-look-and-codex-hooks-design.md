@@ -1,0 +1,58 @@
+# Агенты: новый вид и Codex наравне с Claude Code — спецификация
+
+**Дата:** 2026-11-13. **Ветка:** `feat/agents-look-codex` (от `main`). **Основа:** `2026-11-09-agent-drop-design.md` (§3.1 вид переключателей, §2 и §4 про Codex этот документ заменяет), `2026-11-13-agent-steps-live-design.md` (план и «Лесенка»).
+
+## 1. Зачем
+
+Перед выпуском (слова пользователя): шаг знакомства, где новый человек по желанию подключает Claude Code или Codex, должен быть красивым — значок рядом с каждым названием, переключатель окрашивается в цвет агента; так же — раздел «Агенты» в настройках. И Codex должен отдавать те же сигналы, что Claude Code; проверка вживую — вечером 2026-11-13 с пользователем.
+
+## 2. Что выяснили (2026-11-13)
+
+Официальный справочник OpenAI (`developers.openai.com/codex/hooks` → `learn.chatgpt.com/docs/hooks`):
+
+- **Хуки Codex включены по умолчанию** и работают в CLI и в приложении (у пользователя Codex внутри `ChatGPT.app`). Файлы: `~/.codex/hooks.json` или `[hooks]` в `~/.codex/config.toml`. Формат как у Claude Code: событие → группы с `matcher` (регулярное выражение по `tool_name`) → обработчики `{"type":"command","command":…,"timeout":…}`.
+- **События:** `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `PostToolUse`, `Stop`, `Interrupt`, `SubagentStart/Stop`, `Pre/PostCompact`, `Pre/PostModelRequest`. Нет `Notification` («ждёт ответа»).
+- **Вход (stdin, JSON):** `session_id`, `cwd`, `hook_event_name`, `turn_id`; `PreToolUse`/`PostToolUse` — `tool_name`, `tool_input` (для `Bash` и `apply_patch` команда в `tool_input.command`); `PermissionRequest` — `tool_name`, `tool_input`, `tool_input.description`; `Stop` — `last_assistant_message`.
+- **Разрешение:** вывод `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}` или `deny` + `message` — тот же, что Utter уже печатает для Claude Code без «Всегда» (`wire::hook_output(reply, None)`). `updatedPermissions` у Codex не поддержан и «закрывает» решение — поэтому **«Всегда» для Codex нет**.
+- **`Stop`** ждёт JSON на stdout при коде 0 («plain text is invalid»); пустой вывод не описан — печатаем `{}`.
+- **Доверие:** «Before a non-managed hook can run, Codex requires you to review and trust the exact hook definition»; новые и **изменённые** хуки пропускаются, пока пользователь не доверит их (приложение: **Review hooks** в поле ввода или **Settings > Hooks**). Доверие привязано к хешу определения → команда хука не должна меняться при переезде Utter (dev-сборка ↔ `/Applications`).
+- **План Codex** — инструмент `update_plan` (упомянут в справочнике как локальный инструмент); его вход по открытому коду Codex — `{"explanation"?, "plan":[{"step","status":"pending|in_progress|completed"}]}`. В прошлых сессиях пользователя вызовов нет — форма проверяется вживую.
+- Сейчас Utter подключает Codex через `notify` в `config.toml` (только «закончил»); у пользователя `notify` занят «Computer Use» (`SkyComputerUseClient … turn-ended`) — новая схема `notify` больше не трогает.
+
+## 3. Что делаем
+
+### 3.1 Вид (утверждено пользователем 2026-11-13 в виджетах `utter_onboarding_agents_plain_v3`, вариант А, и `utter_settings_agents_section_options`, вариант 1)
+
+- **Знакомство, шаг «Подключи агентов»:** заголовок и строка под ним — как сейчас. Ниже на чёрном фоне, по центру, **две колонки** с промежутком 72 pt: значок (34 pt, без подложки), под ним название (15 px, 500), под ним переключатель. Без карточек, рамок и пояснений. Агента, которого нет на Mac, не показываем (как сейчас); если найден один — одна колонка по центру.
+- **Настройки, раздел «Агенты»:** те же две колонки сверху (без заголовка-строки), под ними тонкая линия и прежняя строка «Итог одной строкой (через {provider})» с пояснением и обычным (зелёным) переключателем. Ненайденный агент в настройках остаётся (переключатель недоступен) и с прежней красной строкой «Не нашёл … на этом Mac» под названием.
+- **Цвета включённого переключателя:** Claude Code — `#D97757`, ручка белая; Codex — `#4C6EF5`, ручка белая (выбор пользователя: синий). Выключенный — как сейчас.
+- **Значки:** настоящие знаки Claude и Codex, векторные, внутри приложения (без загрузки из сети при работе). Источник файлов — официальные или общепринятые наборы знаков брендов; скачивание — только с «да» пользователя (в плане отдельным шагом).
+- **Codex и доверие:** пока Codex включён и Utter ещё не получил от него ни одного события, под его колонкой — одна строка мелко: «В Codex: Settings → Hooks → доверить Utter» / «In Codex: Settings → Hooks → trust Utter». После первого события строки нет.
+- Подписи `agents.claude_code_hint` / `agents.codex_hint` больше не показываются (удаляются).
+
+### 3.2 Codex наравне с Claude Code
+
+- **Установка:** `~/.codex/hooks.json` (создаётся, если нет; чужие хуки сохраняются, наши помечены `utter-agent`, повторная установка не дублирует — как `claude_install`). События: `UserPromptSubmit`, `PreToolUse`, `PostToolUse` (`matcher` `^update_plan$`), `PermissionRequest` (`timeout` 120), `Stop`, `SessionEnd`.
+- **Неизменная команда:** `"<HOME>/.codex/utter/utter-agent" codex-hook <Event>` — путь к ссылке (symlink), которую Utter при каждом запуске направляет на свой `Contents/MacOS/utter-agent`. Текст хука не меняется при переезде Utter → доверие пользователя не слетает. Нет ссылки (Utter удалён) → команда не запускается, Codex продолжает работу (разрешение — обычным путём Codex).
+- **Переход со старой схемы:** если в `config.toml` стоит наш `notify` — снимаем его и возвращаем прежний (`codex_uninstall` с `agents_codex_prev_notify`), затем ставим хуки. Новая схема `config.toml` не трогает.
+- **`utter-agent codex-hook <Event>`:** читает JSON со stdin, отправляет его Utter как `Source::Codex` (`event` = имя события); для `PermissionRequest` ждёт ответ и печатает `wire::hook_output(reply, None)`; для `Stop` печатает `{}`. Ограничения времени — как у Claude Code (300 мс на отправку, 110 с на ответ).
+- **Разбор (`event.rs`):** общий разбор хуков для обоих агентов (`parse_hook(agent, event, payload, lang)`), отличия Codex: `apply_patch` → «Правит <файл>» (первый `*** Update File:` / `*** Add File:` / `*** Delete File:` в `tool_input.command`); `update_plan {plan:[{step,status}]}` → `PlanUpdate::Replace` (как `todos`/`items`, `step` вместо `content`); `PermissionRequest` → `Permission` без подсказки «Всегда» (`suggestion: None`), подробность — `tool_input.command`, иначе `tool_input.description`, иначе аргументы. Старый `parse_codex` (`notify`) остаётся для пользователей, у которых ещё стоит старая схема до первого запуска новой версии.
+- **Остров:** реестр и «Лесенка» общие — у Codex появятся «работает», действия, шаги, разрешения из острова (только «Запретить / Разрешить»), «закончил». «Ждёт ответа» у Codex нет (нет такого события).
+
+## 4. Ошибки и крайние случаи
+
+- `hooks.json` повреждён → не трогаем, «Не смог подключиться: файл настроек Codex повреждён» (как у Claude Code).
+- Пользователь не доверил хуки → событий нет; подсказка про Settings → Hooks остаётся видна.
+- Codex удалён, ссылка висит → хуки не мешают (Codex продолжает), в Utter переключатель недоступен с «Не нашёл Codex».
+- Выключение Codex → наши группы удаляются из `hooks.json`, ссылка удаляется; чужое не трогаем.
+- Неизвестная форма `update_plan` или `apply_patch` → шаги/действие пропускаются, не паника (как у Claude Code).
+
+## 5. Проверки
+
+- **Rust (TDD):** установка/снятие хуков Codex (сохраняет чужое, не дублирует, команда одинаковая при разных путях Utter, переход со старого `notify`); разбор событий Codex по образцам из справочника (`Bash`, `apply_patch`, `update_plan`, `PermissionRequest`, `Stop`, `UserPromptSubmit`, `SessionEnd`); вывод `utter-agent codex-hook` (`Stop` → `{}`, разрешение → JSON без `updatedPermissions`).
+- **Vitest:** шаг знакомства и раздел настроек — две колонки, значки, цвета переключателей, скрытие ненайденного агента в знакомстве, подсказка про доверие только у включённого Codex без событий, строка «Итог» в настройках.
+- **Вживую:** снимки окна настроек (знакомство и раздел); вечером с пользователем — Codex в ChatGPT: доверие хукам, «работает», действия, «Лесенка», разрешение из острова, «закончил».
+
+## 6. Не входит
+
+Вопрос Codex к пользователю как «ждёт ответа» (нет события); «Всегда» для Codex; окраска остальных переключателей настроек; выпуск новой версии (только с «да» пользователя).
