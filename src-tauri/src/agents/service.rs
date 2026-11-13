@@ -744,13 +744,11 @@ mod glue {
             let card = view.card.is_some();
             let connected = with_connection(view.clone(), &settings(&app).agents).connected;
             let open = opens(connected, !view.rows.is_empty(), card, hover);
-            let mut seen = None;
             let (over, clickable) = if needs_pointer(&view, ears) {
                 match (overlay_rest::cursor_point(), frame(&app, &frame_cache)) {
                     (Some(p), Some(win)) => {
                         let over = hover_zone(win, open).contains(p.0, p.1);
                         let hits = agents.hits.lock().unwrap_or_else(|e| e.into_inner()).clone();
-                        seen = Some((p, win, hits.len()));
                         (over, takes_clicks(win, p, &hits))
                     }
                     _ => (false, false),
@@ -781,7 +779,6 @@ mod glue {
                 let _ = app.emit_to(overlay::LABEL, "overlay://agent-hover", serde_json::json!({ "over": over }));
             }
             if clickable_changed {
-                tracing::info!(clickable, ?seen, "agents window takes clicks");
                 if let Some(w) = app.get_webview_window(overlay::LABEL) {
                     let _ = w.set_ignore_cursor_events(!clickable);
                 }
@@ -895,7 +892,6 @@ mod glue {
     /// The island page tells where its buttons, rows and the Drop are (window points).
     #[tauri::command]
     pub fn agent_hit_zones(agents: State<Agents>, zones: Vec<Zone>) {
-        tracing::info!(?zones, "agents hit zones");
         *agents.hits.lock().unwrap_or_else(|e| e.into_inner()) = zones;
     }
 
