@@ -177,6 +177,17 @@ describe("AgentCard", () => {
     expect(agentHeight({ rows: [planRow("dap"), planRow("ap", { key: { agent: "claude_code", id: "s2" } })] }, n)).toBe(base + 16 + 18 + 6);
   });
 
+  it("step_title_wins_the_line_over_the_action", () => {
+    // The user 2026-11-13: a long command cut the step title early («Сборка и живая п…»); the title
+    // keeps up to 70 % of the line and the action gives way first.
+    render(<AgentList rows={[planRow("ap")]} notch={notch} />);
+    const [title, action] = Array.from(document.querySelector('[data-agent-step="current"]')!.children) as HTMLElement[];
+    expect(title.style.flex).toBe("0 0 auto");
+    expect(title.style.maxWidth).toBe("70%");
+    expect(action.style.flex).toBe("0 1 auto");
+    expect(action.style.minWidth).toBe("0px");
+  });
+
   it("current_step_stays_one_line", () => {
     render(<AgentList rows={[planRow("ap", { plan: [{ title: "x".repeat(300), status: "active" }] })]} notch={notch} />);
     expect((document.querySelector('[data-agent-step="current"]') as HTMLElement).style.whiteSpace).toBe("nowrap");
