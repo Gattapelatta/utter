@@ -1,7 +1,11 @@
 //! Which app a session runs in (Claude, Terminal, iTerm, VS Code, ChatGPT…): the first ancestor
 //! of `utter-agent` that is a regular app. «Открыть» brings that app forward.
 
+use crate::agents::event::Agent;
 use serde::{Deserialize, Serialize};
+
+/// The app Codex lives in (ChatGPT; the standalone Codex app has the same id).
+pub const CODEX_APP: &str = "com.openai.codex";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Host {
@@ -19,6 +23,15 @@ pub fn pick_host(chain: &[Ancestor]) -> Option<Host> {
         .iter()
         .find(|(_, bundle, _)| bundle.is_some())
         .map(|(pid, bundle_id, name)| Host { pid: *pid, bundle_id: bundle_id.clone(), name: name.clone() })
+}
+
+/// The app «Открыть» brings forward: the one found among the helper's parents, else (Codex runs
+/// hooks where the helper cannot see its parents — live 2026-11-14) the agent's own app.
+pub fn host_to_open(agent: Agent, chain: &[Ancestor]) -> Option<Host> {
+    pick_host(chain).or_else(|| match agent {
+        Agent::Codex => Some(Host { pid: 0, bundle_id: Some(CODEX_APP.to_string()), name: Some("ChatGPT".to_string()) }),
+        Agent::ClaudeCode => None,
+    })
 }
 
 /// Looks the pids up among running apps; only regular (Dock) apps get a bundle id.
@@ -73,5 +86,17 @@ mod tests {
             Some(Host { pid: 10, bundle_id: Some("com.anthropic.claudefordesktop".into()), name: Some("Claude".into()) })
         );
         assert_eq!(pick_host(&chain[..2]), None);
+    }
+
+    #[test]
+    fn codex_falls_back_to_its_app() {
+        // Live 2026-11-14: Codex runs hooks where the helper cannot see its parents, so «Открыть»
+        // found nothing. Codex lives in the ChatGPT app (bundle id com.openai.codex).
+        let codex = host_to_open(Agent::Codex, &[]).unwrap();
+        assert_eq!(codex.bundle_id.as_deref(), Some(CODEX_APP));
+        assert_eq!(host_to_open(Agent::ClaudeCode, &[]), None);
+        // A found app still wins.
+        let chain = vec![(10, Some("com.googlecode.iterm2".to_string()), Some("iTerm2".to_string()))];
+        assert_eq!(host_to_open(Agent::Codex, &chain).unwrap().bundle_id.as_deref(), Some("com.googlecode.iterm2"));
     }
 }

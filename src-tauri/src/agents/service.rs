@@ -842,15 +842,16 @@ mod glue {
     /// Brings the app the session runs in forward, with its desktop.
     fn open_host(app: &AppHandle, key: &SessionKey) {
         let Some(agents) = app.try_state::<Agents>() else { return };
-        let Some(ancestors) = agents.core.ancestors(key) else { return };
+        let ancestors = agents.core.ancestors(key).unwrap_or_default();
+        let agent = key.agent;
         let _ = app.run_on_main_thread(move || {
             let chain = host::parent_chain(&ancestors);
-            match host::pick_host(&chain) {
+            match host::host_to_open(agent, &chain) {
                 Some(h) => {
                     tracing::info!(?h, "opening the agent's app");
                     host::activate(&h);
                 }
-                None => tracing::info!("no app found for the agent session"),
+                None => tracing::info!(parents = ancestors.len(), "no app found for the agent session"),
             }
         });
     }
