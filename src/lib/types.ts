@@ -48,10 +48,9 @@ export interface Settings {
 export interface AgentSettings {
   claude_code: boolean;
   codex: boolean;
-  summary: boolean;
 }
 
-export const AGENTS_OFF: AgentSettings = { claude_code: false, codex: false, summary: true };
+export const AGENTS_OFF: AgentSettings = { claude_code: false, codex: false };
 
 /** Rust `agents::service::Link`. */
 export type AgentLink = { kind: "off" } | { kind: "on" } | { kind: "missing" } | { kind: "broken"; message: string };
@@ -163,7 +162,6 @@ export interface AgentRow {
   plan: PlanStep[];
   /** At most two, the newest last. */
   actions: string[];
-  summary: string | null;
   seen: boolean;
 }
 

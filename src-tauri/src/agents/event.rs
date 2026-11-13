@@ -32,7 +32,7 @@ pub enum EventKind {
     Waiting(String),
     /// It asks to run a tool. `suggestion` is Claude Code's own "don't ask again" rule, if any.
     Permission { tool: String, detail: String, suggestion: Option<Value> },
-    Finished { last_message: String },
+    Finished,
     Ended,
 }
 
@@ -182,7 +182,7 @@ pub fn parse_claude(hook_event: &str, payload: &Value, lang: Lang) -> Option<Age
             detail: permission_detail(tool, input),
             suggestion: payload.get("permission_suggestions").and_then(|s| s.get(0)).cloned(),
         },
-        "Stop" => EventKind::Finished { last_message: text(payload, "last_assistant_message").unwrap_or("").to_string() },
+        "Stop" => EventKind::Finished,
         "SessionEnd" => EventKind::Ended,
         _ => return None,
     };
@@ -202,7 +202,7 @@ pub fn parse_codex(payload: &Value) -> Option<AgentEvent> {
     Some(AgentEvent {
         key: SessionKey { agent: Agent::Codex, id: id.to_string() },
         project: project_of(text(payload, "cwd")),
-        kind: EventKind::Finished { last_message: text(payload, "last-assistant-message").unwrap_or("").to_string() },
+        kind: EventKind::Finished,
     })
 }
 
@@ -244,7 +244,7 @@ mod tests {
             EventKind::Waiting("Claude is waiting for your input".into())
         );
         assert!(matches!(claude("PermissionRequest", "permission_request").kind, EventKind::Permission { .. }));
-        assert!(matches!(claude("Stop", "stop").kind, EventKind::Finished { .. }));
+        assert_eq!(claude("Stop", "stop").kind, EventKind::Finished);
         assert_eq!(claude("SessionEnd", "session_end").kind, EventKind::Ended);
     }
 
@@ -385,21 +385,11 @@ mod tests {
     }
 
     #[test]
-    fn stop_uses_last_assistant_message() {
-        assert_eq!(
-            claude("Stop", "stop").kind,
-            EventKind::Finished { last_message: "I've fixed the rounding in billing.ts. Tests pass.".into() }
-        );
-        let p = json!({"session_id":"s","cwd":"/p"});
-        assert_eq!(parse_claude("Stop", &p, Lang::En).unwrap().kind, EventKind::Finished { last_message: String::new() });
-    }
-
-    #[test]
     fn codex_turn_complete() {
         let ev = parse_codex(&fixture("codex")).unwrap();
         assert_eq!(ev.key, SessionKey { agent: Agent::Codex, id: "th_42".into() });
         assert_eq!(ev.project, "shop");
-        assert_eq!(ev.kind, EventKind::Finished { last_message: "Fixed the rounding bug in billing.ts.".into() });
+        assert_eq!(ev.kind, EventKind::Finished);
         assert_eq!(parse_codex(&json!({"type":"something-else","thread-id":"t"})), None);
     }
 

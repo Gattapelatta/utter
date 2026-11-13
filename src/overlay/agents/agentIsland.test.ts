@@ -9,7 +9,6 @@ const row = (id: string, state: SessionState, seen = false): AgentRow => ({
   state,
   plan: [],
   actions: [],
-  summary: null,
   seen,
 });
 

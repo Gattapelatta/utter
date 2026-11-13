@@ -71,19 +71,11 @@ impl Hotkeys {
 }
 
 /// Which AI agents the Drop watches (spec 2026-11-09).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentSettings {
     pub claude_code: bool,
     pub codex: bool,
-    /// «Итог одной строкой»: the provider writes the summary line.
-    pub summary: bool,
-}
-
-impl Default for AgentSettings {
-    fn default() -> Self {
-        AgentSettings { claude_code: false, codex: false, summary: true }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -269,16 +261,27 @@ mod tests {
     }
 
     #[test]
-    fn old_settings_get_agents_off_and_summary_on() {
+    fn old_settings_get_agents_off() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
         std::fs::write(&path, r#"{"schema_version":1}"#).unwrap();
         let s = load(&path, None);
-        assert_eq!(s.agents, AgentSettings { claude_code: false, codex: false, summary: true });
+        assert_eq!(s.agents, AgentSettings { claude_code: false, codex: false });
         assert_eq!(s.agents_codex_prev_notify, None);
         // A file that has only some agent fields keeps the rest at their defaults.
         std::fs::write(&path, r#"{"agents":{"codex":true}}"#).unwrap();
-        assert_eq!(load(&path, None).agents, AgentSettings { claude_code: false, codex: true, summary: true });
+        assert_eq!(load(&path, None).agents, AgentSettings { claude_code: false, codex: true });
+    }
+
+    #[test]
+    fn old_settings_with_summary_still_load() {
+        // «Итог одной строкой» is gone (the user's call 2026-11-13): its old field is skipped.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"{"agents":{"claude_code":true,"summary":true},"agents_codex_prev_notify":["x"]}"#).unwrap();
+        let s = load(&path, None);
+        assert_eq!(s.agents, AgentSettings { claude_code: true, codex: false });
+        assert_eq!(s.agents_codex_prev_notify, Some(vec!["x".to_string()]));
     }
 
     #[test]

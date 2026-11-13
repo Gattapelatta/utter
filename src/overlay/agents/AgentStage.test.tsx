@@ -13,7 +13,7 @@ beforeEach(() => useApp.setState({ lang: "en" }));
 const notch = { width: 179, height: 32 };
 const row: AgentRow = {
   key: { agent: "codex", id: "t" }, agent: "codex", project: "shop", state: "done",
-  plan: [], actions: [], summary: "Fixed it", seen: false,
+  plan: [], actions: [], seen: false,
 };
 const hidden = { kind: "hidden" } as const;
 const stage = (agents: AgentView, rest: boolean, hover = false) =>

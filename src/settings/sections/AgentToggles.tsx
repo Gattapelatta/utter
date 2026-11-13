@@ -2,11 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 import { useT } from "../../i18n";
 import { ipc } from "../../lib/ipc";
 import { useApp } from "../../lib/store";
-import { AGENTS_OFF, type AgentLink, type AgentsStatus, type AgentSettings, type ProviderKind } from "../../lib/types";
+import { AGENTS_OFF, type AgentLink, type AgentsStatus, type AgentSettings } from "../../lib/types";
 import { Row } from "../ui/Row";
 import { Switch } from "../ui/Switch";
 
-const PROVIDER_NAME: Record<ProviderKind, string> = { Gemini: "Gemini", Groq: "Groq", OpenAi: "OpenAI" };
 const AGENT_NAME = { claude_code: "Claude Code", codex: "Codex" } as const;
 
 /** Where the agents stand (detected, connected, broken), read again after every change. */
@@ -41,7 +40,6 @@ export function AgentToggles({ onboarding = false }: { onboarding?: boolean }) {
   if (!s) return null;
   const agents: AgentSettings = s.agents ?? AGENTS_OFF;
   const set = (patch: Partial<AgentSettings>) => update({ agents: { ...agents, ...patch } }).then(reread, reread);
-  const provider = PROVIDER_NAME[s.provider];
 
   const note = (agent: keyof typeof AGENT_NAME, link: AgentLink | undefined, found: boolean) => {
     const text = !found ? t("agents.missing", { agent: AGENT_NAME[agent] }) : link?.kind === "broken" ? t("agents.broken", { agent: AGENT_NAME[agent] }) : null;
@@ -61,11 +59,6 @@ export function AgentToggles({ onboarding = false }: { onboarding?: boolean }) {
     <>
       {row("claude_code", t("agents.claude_code_hint"))}
       {row("codex", t("agents.codex_hint"))}
-      {!onboarding && (
-        <Row label={t("agents.summary", { provider })} description={t("agents.summary_hint", { provider })}>
-          <Switch label={t("agents.summary", { provider })} checked={agents.summary} onChange={(v) => set({ summary: v })} />
-        </Row>
-      )}
     </>
   );
 }

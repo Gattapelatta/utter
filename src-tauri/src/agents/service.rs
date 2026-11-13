@@ -19,8 +19,6 @@ use crate::app::overlay_rest::Rect;
 use crate::app::tray::Lang;
 use crate::settings::{AgentSettings, Settings};
 
-/// Waiting for the provider's summary line.
-const SUMMARY_TIMEOUT: Duration = Duration::from_secs(3);
 /// The longest line `utter-agent` may send (a huge last message is still well below this).
 const LINE_MAX: u64 = 4 << 20;
 
@@ -241,8 +239,6 @@ pub enum Incoming {
     Reply(Reply),
     /// A permission request: answer the helper when `rx` resolves.
     Ask { id: u64, rx: oneshot::Receiver<Reply> },
-    /// The agent finished: write the summary line.
-    Finished { key: SessionKey, last_message: String },
 }
 
 #[derive(Default)]
@@ -271,10 +267,6 @@ impl Core {
                 a.insert(event.key.clone(), req.ancestors.clone());
             }
         }
-        let finished = match &event.kind {
-            EventKind::Finished { last_message } => Some((event.key.clone(), last_message.clone())),
-            _ => None,
-        };
         if event.kind == EventKind::Ended {
             // The session's open requests end with it; nobody will click them.
             let open = self.reg().permission_ids(&event.key);
@@ -294,10 +286,7 @@ impl Core {
         if req.wants_reply {
             return Incoming::Reply(Reply::NoDecision);
         }
-        match finished {
-            Some((key, last_message)) => Incoming::Finished { key, last_message },
-            None => Incoming::Updated,
-        }
+        Incoming::Updated
     }
 
     /// `idle`: no dictation on screen, so the top card is visible and its time runs.
@@ -352,10 +341,6 @@ impl Core {
                 }
             }
         }
-    }
-
-    pub fn set_summary(&self, key: &SessionKey, s: Option<String>) {
-        self.reg().set_summary(key, s);
     }
 
     pub fn dismiss(&self, now: Instant) {
@@ -470,11 +455,10 @@ pub use glue::*;
 
 mod glue {
     use super::*;
-    use crate::agents::{host, summary, wire};
+    use crate::agents::{host, wire};
     use crate::app::commands::AppState;
     use crate::app::orchestrator::AppStatus;
     use crate::app::{overlay, overlay_rest, tray};
-    use crate::providers::TextModel;
     use tauri::{AppHandle, Emitter, Manager, State};
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
@@ -612,37 +596,10 @@ mod glue {
                 publish(&app);
                 Some(r)
             }
-            Incoming::Finished { key, last_message } => {
-                tauri::async_runtime::spawn(summarize(app.clone(), core.clone(), key, last_message, s));
-                None
-            }
         };
         if let Some(r) = reply {
             let _ = write.write_all(r.to_line().as_bytes()).await;
         }
-    }
-
-    async fn summarize(app: AppHandle, core: Arc<Core>, key: SessionKey, message: String, s: Settings) {
-        let model = if s.agents.summary {
-            let state = app.try_state::<AppState>();
-            let (secrets, providers, budget) = match state {
-                Some(st) => (st.secrets.clone(), st.providers.clone(), st.shared.budget.clone()),
-                None => return,
-            };
-            let kind = s.provider;
-            // No room left beside the dictation's reserve: the plain summary.
-            let room = super::summary_may_use_model(kind, &budget, tokio::time::Instant::now());
-            // Reading the key may wait for a Keychain prompt: never on this thread.
-            let key_text = tokio::task::spawn_blocking(move || secrets.get(kind)).await.ok().flatten();
-            key_text.filter(|_| room).map(|k| providers.make(kind, k))
-        } else {
-            None
-        };
-        let started = Instant::now();
-        let line = summary::summarize(&message, lang(&app), model.as_deref().map(|p| p as &dyn TextModel), SUMMARY_TIMEOUT).await;
-        tracing::info!(ms = started.elapsed().as_millis() as u64, smart = model.is_some(), "agent summary");
-        core.set_summary(&key, line);
-        publish(&app);
     }
 
     fn busy(app: &AppHandle) -> bool {
@@ -872,32 +829,8 @@ mod glue {
     }
 }
 
-/// An agent summary may use the model only while the dictation's reserve stays free
-/// (spec 2026-11-10 §4.5); other providers have no shared budget.
-pub fn summary_may_use_model(provider: crate::settings::ProviderKind, budget: &crate::providers::budget::SharedBudget, now: tokio::time::Instant) -> bool {
-    use crate::providers::budget::Priority;
-    use crate::providers::defaults::GEMINI_TEXT_MODEL;
-    provider != crate::settings::ProviderKind::Gemini || budget.lock().is_ok_and(|mut b| b.try_take(GEMINI_TEXT_MODEL, Priority::Agent, now))
-}
-
 #[cfg(test)]
 mod tests {
-    #[tokio::test(start_paused = true)]
-    async fn agent_summary_leaves_the_dictation_reserve() {
-        use crate::providers::budget::{Priority, RequestBudget};
-        use crate::providers::defaults::GEMINI_TEXT_MODEL;
-        use crate::settings::ProviderKind;
-        let budget = Arc::new(Mutex::new(RequestBudget::new(14, 3)));
-        let now = tokio::time::Instant::now();
-        assert!(summary_may_use_model(ProviderKind::Gemini, &budget, now));
-        for _ in 0..10 {
-            assert!(budget.lock().unwrap().try_take(GEMINI_TEXT_MODEL, Priority::Speech, now));
-        }
-        assert!(!summary_may_use_model(ProviderKind::Gemini, &budget, now), "only the reserve is left");
-        assert!(summary_may_use_model(ProviderKind::Groq, &budget, now));
-        assert!(budget.lock().unwrap().try_take(GEMINI_TEXT_MODEL, Priority::End, now), "Groq took nothing");
-    }
-
     use super::*;
     use crate::agents::wire::{Request, Source};
     use serde_json::json;
@@ -914,8 +847,9 @@ mod tests {
     }
 
     fn on(claude_code: bool, codex: bool) -> AgentSettings {
-        AgentSettings { claude_code, codex, summary: true }
+        AgentSettings { claude_code, codex }
     }
+
 
     #[test]
     fn apply_settings_on_off_round_trip() {
@@ -1082,7 +1016,7 @@ mod tests {
     fn period_is_fast_only_when_needed() {
         use crate::agents::registry::{AgentRow, SessionState};
         let key = SessionKey { agent: crate::agents::event::Agent::Codex, id: "t".into() };
-        let row = AgentRow { key: key.clone(), agent: key.agent, project: "p".into(), state: SessionState::Done, plan: vec![], actions: vec![], summary: None, seen: false };
+        let row = AgentRow { key: key.clone(), agent: key.agent, project: "p".into(), state: SessionState::Done, plan: vec![], actions: vec![], seen: false };
         let none = AgentView { rows: vec![], card: None, paused: false, connected: false };
         let dots = AgentView { rows: vec![row.clone()], card: None, paused: false, connected: false };
         let card = AgentView { rows: vec![row], card: Some(Card::Done { key }), paused: false, connected: false };
@@ -1139,12 +1073,12 @@ mod tests {
     }
 
     #[test]
-    fn finished_asks_for_a_summary_and_keeps_ancestors() {
+    fn finished_keeps_ancestors() {
         let t = Instant::now();
         let core = Core::default();
         let req = request("Stop", json!({"session_id":"s","cwd":"/p","last_assistant_message":"All done."}));
-        let Incoming::Finished { key, last_message } = core.receive(req, Lang::En, t) else { panic!() };
-        assert_eq!(last_message, "All done.");
+        assert!(matches!(core.receive(req, Lang::En, t), Incoming::Updated));
+        let key = SessionKey { agent: crate::agents::event::Agent::ClaudeCode, id: "s".into() };
         assert_eq!(core.ancestors(&key), Some(vec![10, 1]));
         assert!(matches!(core.receive(request("Nope", json!({"session_id":"s"})), Lang::En, t), Incoming::Ignored));
     }

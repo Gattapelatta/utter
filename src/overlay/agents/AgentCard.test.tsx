@@ -22,7 +22,6 @@ const row: AgentRow = {
   state: "done",
   plan: [],
   actions: ["Читает a.rs", "Правит billing.ts"],
-  summary: "Исправил округление в billing.ts",
   seen: false,
 };
 const notch = { width: 179, height: 32 };
@@ -69,10 +68,14 @@ describe("AgentCard", () => {
     expect(screen.getByText("Allow")).toBeTruthy();
   });
 
-  it("done_card_shows_summary_and_open", () => {
+  it("done_card_has_title_and_buttons_only", () => {
+    // «Итог одной строкой» is gone (the user's call 2026-11-13).
     render(<AgentCard card={{ kind: "done", key }} rows={[row]} notch={notch} />);
     expect(title()).toBe("shop Claude Code finished");
-    expect(screen.getByText("Исправил округление в billing.ts")).toBeTruthy();
+    expect(document.querySelector("[data-agent-summary]")).toBeNull();
+    const n = { width: 179, height: 32 };
+    // top (32 + 14) + title 18 + gap 6 + buttons (4 + 28) + bottom 14
+    expect(agentHeight({ card: { kind: "done", key } }, n)).toBe(Math.max(46 + 44 + 16, 46 + 18 + 6 + 32 + 14));
     fireEvent.click(screen.getByText("Open"));
     expect(invoke).toHaveBeenCalledWith("agent_open", { key });
     fireEvent.click(screen.getByText("OK"));

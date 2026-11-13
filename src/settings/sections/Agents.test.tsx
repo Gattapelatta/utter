@@ -30,7 +30,7 @@ const base: Settings = {
   history_enabled: true,
   onboarding_done: true,
   notch_drop: true,
-  agents: { claude_code: false, codex: false, summary: true },
+  agents: { claude_code: false, codex: false },
   agents_codex_prev_notify: null,
 };
 const saved = () => invoke.mock.calls.filter((c) => c[0] === "save_settings").map((c) => (c[1] as { settings: Settings }).settings);
@@ -53,7 +53,7 @@ describe("Agents section", () => {
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Агенты");
     expect(screen.getByText("Капля скажет, когда Claude Code закончил или ждёт тебя, и даст разрешить из острова")).toBeTruthy();
     await act(async () => fireEvent.click(screen.getByRole("switch", { name: "Claude Code" })));
-    expect(saved().slice(-1)[0].agents).toEqual({ claude_code: true, codex: false, summary: true });
+    expect(saved().slice(-1)[0].agents).toEqual({ claude_code: true, codex: false });
     await act(async () => fireEvent.click(screen.getByRole("switch", { name: "Codex" })));
     expect(saved().slice(-1)[0].agents?.codex).toBe(true);
     // The status is read again after a change: the files were just written.
@@ -69,18 +69,15 @@ describe("Agents section", () => {
   });
 
   it("broken_link_shows_error", async () => {
-    useApp.setState({ settings: { ...base, agents: { claude_code: true, codex: false, summary: true } } });
+    useApp.setState({ settings: { ...base, agents: { claude_code: true, codex: false } } });
     status = { ...status, claude_code: { kind: "broken", message: "expected value at line 1" } };
     await mount();
     expect(screen.getByText("Не смог подключиться: файл настроек Claude Code повреждён")).toBeTruthy();
   });
 
-  it("summary_toggle_names_provider", async () => {
-    useApp.setState({ settings: { ...base, provider: "Groq" } });
+  it("no_summary_row", async () => {
+    // «Итог одной строкой» is gone (the user's call 2026-11-13).
     await mount();
-    expect(screen.getByText("Итог одной строкой (через Groq)")).toBeTruthy();
-    expect(screen.getByText("Последнее сообщение агента уходит в Groq по твоему ключу, чтобы сделать короткую строку")).toBeTruthy();
-    await act(async () => fireEvent.click(screen.getByRole("switch", { name: "Итог одной строкой (через Groq)" })));
-    expect(saved().slice(-1)[0].agents?.summary).toBe(false);
+    expect(screen.queryByText(/Итог одной строкой/)).toBeNull();
   });
 });
