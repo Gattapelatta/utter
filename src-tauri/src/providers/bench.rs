@@ -1,6 +1,7 @@
 //! Live latency benchmark against Gemini with the user's key from the Keychain.
 //! Run: cargo test --release --lib -- --ignored gemini_latency --nocapture
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use base64::Engine;
@@ -255,6 +256,7 @@ async fn live_phrase_latency() {
         });
         let mut released: Option<Instant> = None;
         let mut first_interim = None;
+        let mut last_interim = String::new();
         let mut segments = Vec::new();
         let mut feeder = Some(feeder);
         loop {
@@ -268,6 +270,7 @@ async fn live_phrase_latency() {
             match tokio::time::timeout(wait, s.events.recv()).await {
                 Ok(Some(LiveEvent::Ready)) => println!("  ready {} ms", t0.elapsed().as_millis()),
                 Ok(Some(LiveEvent::Interim(t))) => {
+                    last_interim = t.clone();
                     if first_interim.is_none() {
                         first_interim = Some(t0.elapsed().as_millis());
                         println!("  first interim {} ms: {t}", t0.elapsed().as_millis());
@@ -275,7 +278,10 @@ async fn live_phrase_latency() {
                 }
                 Ok(Some(LiveEvent::Segment(t))) => {
                     let after = released.map(|r| r.elapsed().as_millis() as i64).unwrap_or(-1);
+                    println!("  last interim: {last_interim}");
                     println!("  segment (release→ {after} ms): {t}");
+                    let (a, b) = (crate::pipeline::normalize(&last_interim), crate::pipeline::normalize(&t));
+                    println!("  same words: {} | interim «{a}» | final «{b}»", a == b);
                     segments.push(t);
                 }
                 Ok(Some(LiveEvent::TurnComplete)) => println!("  turnComplete"),
@@ -390,5 +396,108 @@ async fn backup_candidates() {
             }
             break;
         }
+    }
+}
+
+/// Spread of the cleanup request at the end of a dictation: both Lite models get the same text at
+/// once (as the app's hedge would), rounds spaced to stay under 15 requests/minute per model.
+/// Run: cargo test --release --lib -- --ignored cleanup_latency_spread --nocapture
+#[tokio::test]
+#[ignore = "live: ~34 cleanup requests with the user's key"]
+async fn cleanup_latency_spread() {
+    use crate::providers::{defaults, gemini_http_client, GeminiClient, TextModel};
+    let key = KeychainStore::new().get(ProviderKind::Gemini).expect("Gemini key in Keychain");
+    let opts = PipelineOptions { language: Some("ru".into()), cleanup: true, paragraphs: false, style: TranslateStyle::Business };
+    let system = system_prompt(Mode::Dictation, &opts, 0.0).unwrap();
+    let texts = [
+        "ну и в общем давай завтра созвонимся часа в три",
+        "слушай я тут посмотрел отчёт по продажам за сентябрь и ну в целом всё неплохо но вот по рекламе мы как-то э-э перерасходовали бюджет процентов на двадцать наверное и я думаю что надо бы это обсудить с маркетингом до конца недели потому что иначе в октябре будет та же история",
+    ];
+    let http = gemini_http_client();
+    let client = |model: &str| {
+        let mut cfg = defaults::config_for(ProviderKind::Gemini, key.clone());
+        cfg.text_model = model.into();
+        Arc::new(GeminiClient::with_client(cfg, http.clone()))
+    };
+    let (a, b, c) = (client(defaults::GEMINI_TEXT_MODEL), client(defaults::GEMINI_BACKUP_LITE_MODEL), client(defaults::GEMINI_BACKUP_MODEL));
+    a.prewarm().await;
+    let time = |m: Arc<GeminiClient>, text: &'static str, system: String| async move {
+        let t = Instant::now();
+        let r = m.complete(&system, &user_message(text)).await;
+        (t.elapsed().as_millis() as u64, r.map(|c| c.text).map_err(|e| format!("{e:?}")))
+    };
+    let mut rows: Vec<(u64, u64, Option<u64>)> = Vec::new();
+    for round in 0..16 {
+        let started = Instant::now();
+        let text = texts[round % 2];
+        let with_c = round % 4 == 3;
+        let fc = async { if with_c { Some(time(c.clone(), text, system.clone()).await) } else { None } };
+        let ((ta, ra), (tb, rb), rc) = tokio::join!(time(a.clone(), text, system.clone()), time(b.clone(), text, system.clone()), fc);
+        let short = |r: &Result<String, String>| match r { Ok(t) => t.chars().take(50).collect::<String>(), Err(e) => format!("ERR {e}") };
+        println!("round {round:>2} {:<5}  3.5-lite {ta:>5} ms  3.1-lite {tb:>5} ms  {}  | {}", if round % 2 == 0 { "short" } else { "long" },
+            rc.as_ref().map(|(t, _)| format!("3.6-flash {t:>5} ms")).unwrap_or_default(), short(&ra));
+        if rb.is_err() { println!("           3.1-lite: {}", short(&rb)); }
+        rows.push((if ra.is_ok() { ta } else { u64::MAX }, if rb.is_ok() { tb } else { u64::MAX }, rc.map(|(t, r)| if r.is_ok() { t } else { u64::MAX })));
+        let spent = started.elapsed();
+        if spent < Duration::from_secs(5) { tokio::time::sleep(Duration::from_secs(5) - spent).await; }
+    }
+    let stat = |mut v: Vec<u64>, name: &str| {
+        v.sort();
+        let n = v.len();
+        let under = |ms| v.iter().filter(|&&t| t <= ms).count();
+        println!("{name:<22} n={n} median {} ms, max {} ms, ≤1 s {}/{n}, ≤1.5 s {}/{n}", v[n / 2], v[n - 1], under(1000), under(1500));
+    };
+    stat(rows.iter().map(|r| r.0).collect(), "3.5-flash-lite");
+    stat(rows.iter().map(|r| r.1).collect(), "3.1-flash-lite");
+    stat(rows.iter().map(|r| r.0.min(r.1)).collect(), "first of both Lite");
+    stat(rows.iter().filter_map(|r| r.2).collect(), "3.6-flash");
+}
+
+/// Round-trip floor (a request with no model work) and the speed of candidate fast text models
+/// on the last phrase of a dictation: cleanup and business translation.
+/// Run: cargo test --release --lib -- --ignored fast_text_candidates --nocapture
+#[tokio::test]
+#[ignore = "live: ~50 short requests with the user's key"]
+async fn fast_text_candidates() {
+    let key = KeychainStore::new().get(ProviderKind::Gemini).expect("Gemini key in Keychain");
+    let bench = Bench { http: reqwest::Client::new(), key };
+    let models: Value = bench.http.get(format!("{BASE}/models?pageSize=200")).header("x-goog-api-key", &bench.key).send().await.unwrap().json().await.unwrap();
+    let gemma: Vec<String> = models["models"].as_array().into_iter().flatten()
+        .filter_map(|m| m["name"].as_str()).filter(|n| n.contains("gemma")).map(|n| n.trim_start_matches("models/").to_string()).collect();
+    println!("gemma models: {}", gemma.join(", "));
+    let mut rtt = Vec::new();
+    for _ in 0..6 {
+        let t = Instant::now();
+        let _ = bench.http.get(format!("{BASE}/models/gemini-3.5-flash-lite")).header("x-goog-api-key", &bench.key).send().await.map(|r| r.status());
+        rtt.push(t.elapsed().as_millis());
+    }
+    println!("round trip (GET model info, warm): {rtt:?} ms");
+    let opts = PipelineOptions { language: Some("ru".into()), cleanup: true, paragraphs: false, style: TranslateStyle::Business };
+    let cleanup = system_prompt(Mode::Dictation, &opts, 0.0).unwrap();
+    let translate = system_prompt(Mode::Translate, &opts, 0.0).unwrap();
+    let phrase = "ну и в общем давай завтра созвонимся часа в три";
+    let mut candidates: Vec<(String, Option<&str>)> = vec![("gemini-3.5-flash-lite".into(), Some("minimal"))];
+    for g in gemma.iter().filter(|g| g.starts_with("gemma-4")) {
+        candidates.push((g.clone(), None));
+    }
+    let mut times: Vec<Vec<u128>> = vec![Vec::new(); candidates.len()];
+    for round in 0..8 {
+        let started = Instant::now();
+        let (label, sys) = if round % 2 == 0 { ("cleanup", &cleanup) } else { ("translate", &translate) };
+        for (i, (model, level)) in candidates.iter().enumerate() {
+            let body = json!({"model": model, "store": false, "system_instruction": sys, "input": user_message(phrase), "generation_config": thinking(*level)});
+            let (d, out) = bench.interact(body).await;
+            match out {
+                Ok(t) => { times[i].push(d.as_millis()); println!("round {round} {label:<9} {model:<28} {:>5} ms → {}", d.as_millis(), t.trim().replace('\n', " ")); }
+                Err(e) => println!("round {round} {label:<9} {model:<28} ERROR after {} ms: {}", d.as_millis(), e.chars().take(160).collect::<String>()),
+            }
+        }
+        let spent = started.elapsed();
+        if spent < Duration::from_millis(4500) { tokio::time::sleep(Duration::from_millis(4500) - spent).await; }
+    }
+    for ((model, _), mut t) in candidates.iter().zip(times) {
+        t.sort();
+        if t.is_empty() { println!("{model}: no answers"); continue; }
+        println!("{model:<28} n={} median {} ms, max {} ms, ≤1 s {}", t.len(), t[t.len() / 2], t[t.len() - 1], t.iter().filter(|&&x| x <= 1000).count());
     }
 }

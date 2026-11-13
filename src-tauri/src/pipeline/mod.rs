@@ -1,5 +1,6 @@
 //! Speech → text → (cleanup | translation). Pure orchestration over provider traits.
 
+pub mod fillers;
 pub mod routes;
 
 use crate::providers::{AudioLlm, ProviderError, SpeechToText, TextModel};
@@ -36,6 +37,9 @@ pub struct JobOutput {
     pub llm_used: bool,
     /// One audio→text request did both steps (counted once in usage).
     pub direct: bool,
+    /// Live: some pieces went as heard — «without cleanup» in History, a plain «Done» on the
+    /// Drop (spec 2026-11-10 §4.2 p. 4).
+    pub partial: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -77,7 +81,8 @@ pub fn user_message(transcript: &str) -> String {
     format!("<transcript>\n{transcript}\n</transcript>")
 }
 
-fn normalize(text: &str) -> String {
+/// Lower case, no punctuation, single spaces — for comparing two transcripts.
+pub fn normalize(text: &str) -> String {
     text.chars()
         .map(|c| if c.is_alphanumeric() || c.is_whitespace() { c } else { ' ' })
         .collect::<String>()
@@ -149,9 +154,9 @@ pub async fn run(
         return Err(JobError::NothingHeard);
     }
     let Some(system) = system_prompt(mode, opts, audio_secs) else {
-        return Ok(JobOutput { text: raw.clone(), raw, degraded: false, tokens: 0, llm_used: false, direct: false });
+        return Ok(JobOutput { text: raw.clone(), raw, degraded: false, tokens: 0, llm_used: false, direct: false, partial: false });
     };
-    let degraded = |raw: String| JobOutput { text: raw.clone(), raw, degraded: true, tokens: 0, llm_used: true, direct: false };
+    let degraded = |raw: String| JobOutput { text: raw.clone(), raw, degraded: true, tokens: 0, llm_used: true, direct: false, partial: false };
     let t_llm = std::time::Instant::now();
     let llm_result = llm.complete(&system, &user_message(&raw)).await;
     tracing::info!(llm_ms = t_llm.elapsed().as_millis() as u64, "timing: llm");
@@ -161,7 +166,7 @@ pub async fn run(
             if text.is_empty() {
                 return Ok(degraded(raw));
             }
-            Ok(JobOutput { text, raw, degraded: false, tokens: c.total_tokens, llm_used: true, direct: false })
+            Ok(JobOutput { text, raw, degraded: false, tokens: c.total_tokens, llm_used: true, direct: false, partial: false })
         }
         Err(_) => Ok(degraded(raw)),
     }
@@ -194,7 +199,7 @@ pub async fn run_audio_only(
     if text.is_empty() || (mode != Mode::Translate && is_hallucination(&text)) {
         return Err(JobError::NothingHeard);
     }
-    Ok(JobOutput { raw: text.clone(), text, degraded: false, tokens: c.total_tokens, llm_used: true, direct: true })
+    Ok(JobOutput { raw: text.clone(), text, degraded: false, tokens: c.total_tokens, llm_used: true, direct: true, partial: false })
 }
 
 /// One request: audio → cleaned or translated text. Falls back to a plain
@@ -220,7 +225,7 @@ pub async fn run_direct(
             if raw.is_empty() || is_hallucination(&raw) {
                 return Err(JobError::NothingHeard);
             }
-            Ok(JobOutput { text: raw.clone(), raw, degraded: true, tokens: 0, llm_used: false, direct: false })
+            Ok(JobOutput { text: raw.clone(), raw, degraded: true, tokens: 0, llm_used: false, direct: false, partial: false })
         }
         other => other,
     }
@@ -335,7 +340,7 @@ mod tests {
         let out = run(Mode::Dictation, vec![], 3.0, &opts(true, false, TranslateStyle::Business),
             &FakeStt(Ok("ну привет мир".into())), &llm).await.unwrap();
         assert_eq!(out, JobOutput { text: "Привет, мир.".into(), raw: "ну привет мир".into(),
-            degraded: false, tokens: 7, llm_used: true, direct: false });
+            degraded: false, tokens: 7, llm_used: true, direct: false, partial: false });
     }
 
     #[tokio::test]
@@ -413,7 +418,7 @@ mod tests {
         let out = run_direct(Mode::Translate, vec![], 3.0, &opts(true, false, TranslateStyle::Business), &audio, &stt)
             .await
             .unwrap();
-        assert_eq!(out, JobOutput { text: "Hi there.".into(), raw: "Hi there.".into(), degraded: false, tokens: 9, llm_used: true, direct: true });
+        assert_eq!(out, JobOutput { text: "Hi there.".into(), raw: "Hi there.".into(), degraded: false, tokens: 9, llm_used: true, direct: true, partial: false });
         assert_eq!(audio.calls.load(Ordering::SeqCst), 1);
         let sys = audio.last_system.lock().unwrap().clone();
         assert!(sys.contains("English") && sys.contains("audio recording"), "{sys}");

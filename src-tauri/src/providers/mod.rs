@@ -1,3 +1,4 @@
+pub mod budget;
 mod client;
 pub mod defaults;
 mod error;

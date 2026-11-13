@@ -39,6 +39,11 @@ impl RouteHealth {
         self.punished_until[route].is_some_and(|t| now < t)
     }
 
+    /// Not punished at `now`.
+    pub fn healthy(&self, route: usize, now: Instant) -> bool {
+        route < self.punished_until.len() && !self.punished(route, now)
+    }
+
     /// Healthy routes in their order, then punished ones in their order.
     pub fn order(&self, now: Instant) -> Vec<usize> {
         let n = self.punished_until.len();
@@ -241,6 +246,16 @@ mod tests {
         let (r, reports) = run_hedged::<u32>(vec![], HEDGE).await;
         assert!(r.is_err());
         assert!(reports.is_empty());
+    }
+
+    #[test]
+    fn healthy_is_false_while_punished() {
+        let mut h = RouteHealth::new(3);
+        let t = Instant::now();
+        h.punish(1, t);
+        assert!(!h.healthy(1, t));
+        assert!(h.healthy(0, t));
+        assert!(h.healthy(1, t + PUNISH_FOR));
     }
 
     #[test]

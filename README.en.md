@@ -13,7 +13,7 @@ It also translates: speak in your own language and get English pasted instead. P
 ## What it does
 
 - **Dictation.** Hold <kbd>Right ⌥</kbd>, talk in any language, let go — done. The text comes out clean, no "um"s and "uh"s.
-- **Translation to English.** Same thing, just with <kbd>Right ⌘</kbd>. Speak your language, get English. Business or casual style, you pick.
+- **Translation to English.** Same thing, just with <kbd>Right ⌘</kbd>. Speak your language, get English. Business or casual style, you pick. Translation waits for Google: usually 1–3 seconds, sometimes longer on a free key.
 - **You see what it hears.** While you talk, the words show up right under the notch. Let go of the key and a moment later the clean version is pasted.
 - **Cleans up, doesn't rewrite.** It drops the "um"s, "uh"s and repeats and adds the commas and periods. The meaning stays yours. Always.
 - **The Drop.** A tiny character living by the notch. One look and you know what's going on: listening, thinking, or all done.

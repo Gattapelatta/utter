@@ -4,11 +4,11 @@ Free, open-source voice-to-text for macOS (Windows later): hold a hotkey, speak,
 
 **Start of every session:** read `docs/superpowers/HANDOFF.md` — current status, decisions made along the way, deferred issues, and how to begin the next plan. The spec is `docs/superpowers/specs/2026-10-06-utter-design.md`; plans live in `docs/superpowers/plans/`.
 
-## Current focus (2026-11-10) — when the user says «продолжаем работу над utter»
+## Current focus (2026-11-13) — when the user says «продолжаем работу над utter»
 
 1. Read `docs/superpowers/HANDOFF.md` («С чего начать следующую сессию»).
-2. Plans 1–3 are done; Utter is **public**, v0.2.1 released. «Капля и ИИ-агенты» is done and checked live on `feat/agent-drop` (spec `2026-11-09-agent-drop-design.md` §8) — merge only with the user's OK.
-3. **First next: the dictation paste is often slow** (3–7 s on 2026-11-10, all in the live cleanup request) — the user's request; numbers in HANDOFF. Then Windows (Plan 4) or the deferred minors.
+2. Plans 1–3 are done; Utter is **public**, v0.2.1 released; «Капля и ИИ-агенты» is merged to `main` (unreleased).
+3. **Fast paste is merged to `main`** (2026-11-13; spec `2026-11-10-fast-paste-design.md` §9, summary `plans/2026-11-11-fast-paste-summary.md`): dictation ≤ 0.97 s; translation speed is closed by the user's decision (free Google only, a wait note instead). Agent drop and fast paste are unreleased — a release only with the user's yes. Next: Windows (Plan 4) or the deferred minors.
 
 ## Working with the user
 
@@ -56,6 +56,7 @@ open src-tauri/target/release/bundle/macos/Utter.app
 - Motion cannot interpolate between transform strings with different function lists (e.g. `scaleX() scaleY()` → `none` animates to scale 0): keep one template (`overlay/drop/islandMotion.ts`). This includes `transitionEnd: { transform: "none" }` — the next animation then starts from scale 0 (the island "vanished" on fold-back).
 - The top ~32 pt of the screen under the MacBook camera notch are not pixels: nothing in the island may be drawn there (the Drop sits lower, arcs are limited to ±30°, clouds are in the island's left wing).
 - Gemini Live (`gemini-3.5-transcribe-live`, WebSocket `BidiGenerateContent`): send `setup` first and audio only after `setupComplete` (buffer before); interim text arrives in `serverContent.interimInputTranscription` (the whole current piece, until a pause), finals in `serverContent.inputTranscription` (~0.4 s after `audioStreamEnd`); it sends **no `turnComplete`** after the stream ends; `SMART` mode cleans fillers but once wrote «по продам» for «по продажам»; `VERBATIM` is exact. Without the user's VPN Google answers «User location is not supported».
+- Live processing (`live/process.rs`, spec 2026-11-10): pieces go at once within a shared per-model budget (`providers/budget.rs`, 14/min, 3 kept for the end; agents share it); Dictation with cleanup pastes ≤ 950 ms after release, unanswered pieces as heard minus filler sounds (`pipeline/fillers.rs`); Google's drafts lack the last word, so a guess may miss ≤ 3 final words; translation makes no guesses and races the whole text on three models after 2 s (limit 5 s, then the batch path). No re-sends while speaking — they emptied the budget.
 - Live path: every Gemini dictation without paragraphs goes live, also while earlier jobs are processed (user's decision 2026-11-07, checked live) — the job id is taken at release so the ordered queue keeps insertion order; a draft window is closed only by its own dictation (`draft_owner`, `live_ids` in the orchestrator), and the page drops drafts tagged with an earlier recording (`overlay/visibleDraft.ts`).
 - The live draft is shown in the island (420 × 206 window), not in the app's field: an input method worked (fields connected in 11–16 ms) but macOS 15 enables third-party input methods only by the user's hand and lists them in the language switcher (rejected by the user 2026-11-06). Removing an *enabled* input method's bundle leaves a stale entry that keeps mapping its path to the old id — the user must remove it in Settings first.
 - Dev builds: `<app data>/debug-draft.txt` with a phrase plays recording → draft window → processing → done on the real island (for `screencapture -l` checks without a dictation).

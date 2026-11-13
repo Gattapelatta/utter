@@ -13,7 +13,9 @@ use crate::audio::{self, dsp, segment, Captured};
 use crate::controller::{Command, Controller, HotkeyEvent, State};
 use crate::history::{EntryStatus, History, HistoryEntry};
 use crate::jobs::{JobIds, OrderedDelivery};
+use crate::live::process::{Kind as ProcessKind, Models};
 use crate::live::run::{self as live_run, Finisher, LiveHandle, LiveOutcome, LiveRequest};
+use crate::providers::budget::{RequestBudget, SharedBudget};
 use crate::output::{CopyReason, DeliveryOutcome};
 use crate::permissions::PermStatus;
 use crate::pipeline::routes::{self, AttemptOutcome, Route, RouteHealth};
@@ -171,6 +173,8 @@ pub struct Shared {
     pub data_dir: PathBuf,
     /// Onboarding trial: results go to the settings window instead of being pasted.
     pub trial: AtomicBool,
+    /// Text requests per model this minute, shared by dictations and agents (spec 2026-11-10 §5.2).
+    pub budget: SharedBudget,
 }
 
 impl Shared {
@@ -181,6 +185,7 @@ impl Shared {
             settings: Mutex::new(settings),
             data_dir,
             trial: AtomicBool::new(false),
+            budget: Arc::new(Mutex::new(RequestBudget::new(defaults::GEMINI_LITE_PER_MINUTE, defaults::END_RESERVE))),
         }
     }
 
@@ -748,11 +753,24 @@ impl Orchestrator {
             None => Finisher::Plain,
             Some(system) => {
                 let route = Route::Direct { model: defaults::GEMINI_TRANSLATE_MODEL };
-                let model: Arc<dyn TextModel> = self.deps.providers.make_route(s.provider, key.clone(), route);
-                // The other Lite model (own quota) races a slow answer (live check 2026-11-07).
+                let main: Arc<dyn TextModel> = self.deps.providers.make_route(s.provider, key.clone(), route);
+                // The other Lite model (own quota) races a slow answer while it is healthy.
                 let backup = Route::Direct { model: defaults::GEMINI_BACKUP_LITE_MODEL };
                 let backup: Arc<dyn TextModel> = self.deps.providers.make_route(s.provider, key.clone(), backup);
-                Finisher::Text { model, system, backup: Some(backup) }
+                let models = Models {
+                    main,
+                    main_id: defaults::GEMINI_TRANSLATE_MODEL.into(),
+                    backup: Some(backup),
+                    backup_id: defaults::GEMINI_BACKUP_LITE_MODEL.into(),
+                    // Translation cannot paste the words as heard: late pieces race the whole text
+                    // on a third model too (3.6 Flash, its own quota; spec 2026-11-10 §4.3).
+                    last: (mode == Mode::Translate).then(|| -> Arc<dyn TextModel> {
+                        self.deps.providers.make_route(s.provider, key.clone(), Route::Direct { model: defaults::GEMINI_BACKUP_MODEL })
+                    }),
+                    last_id: defaults::GEMINI_BACKUP_MODEL.into(),
+                };
+                let kind = if mode == Mode::Translate { ProcessKind::Translate } else { ProcessKind::Cleanup };
+                Finisher::Text { models, system, kind, budget: self.shared.budget.clone(), health: self.route_health.clone() }
             }
         };
         let cfg = LiveConfig {
@@ -809,8 +827,8 @@ impl Orchestrator {
     fn live_done(&mut self, seq: u64, outcome: LiveOutcome) {
         let Some(job) = self.live_jobs.remove(&seq) else { return };
         match outcome {
-            LiveOutcome::Final { text, raw, requests } => {
-                let out = JobOutput { text, raw, degraded: false, tokens: 0, llm_used: requests > 0, direct: false };
+            LiveOutcome::Final { text, raw, requests, partial } => {
+                let out = JobOutput { text, raw, degraded: false, tokens: 0, llm_used: requests > 0, direct: false, partial };
                 let _ = self.tx.send(Input::JobDone(job.id, Box::new(job.result(Ok(out), 1 + requests))));
             }
             LiveOutcome::Unfinished { raw, requests } => self.finish_text(job, raw, requests),
@@ -823,20 +841,18 @@ impl Orchestrator {
         }
     }
 
-    /// Cleanup or translation of the verbatim text did not come while speaking: one request over
-    /// the backup routes; failing that, Dictation pastes the verbatim text, Translate takes the
-    /// batch path.
+    /// The translation did not come by the live deadline: the batch path with the recording.
+    /// (Dictation never ends here since the 1 s limit; if it does, the verbatim text is pasted.)
     fn finish_text(&mut self, job: LiveJob, raw: String, requests: u32) {
         let s = self.shared.settings();
         let opts = pipeline_options(&s);
         let backend = self.provider_for(&s);
-        let system = live_system(job.mode, &opts);
         let audio_dir = self.shared.audio_dir();
         let tx = self.tx.clone();
         tokio::spawn(async move {
             let (mode, captured) = (job.mode, job.captured.clone());
             // A bug here must fail this job only, never stall the ordered queue.
-            let work = tokio::spawn(finish_text_work(mode, captured, raw, requests, system, opts, backend));
+            let work = tokio::spawn(finish_text_work(mode, captured, raw, requests, opts, backend));
             let (outcome, n) = work.await.unwrap_or_else(|e| {
                 tracing::error!("live job {} crashed: {e}", job.id);
                 (Err(JobError::Provider(ProviderError::BadResponse("internal error".into()))), requests)
@@ -1023,7 +1039,7 @@ impl Orchestrator {
         let (status, text, raw, keep_audio, overlay, visible) = match r.outcome {
             Ok(out) if trial => {
                 self.deps.ui.emit(UiEvent::Trial(TrialOutcome::Text { mode: r.mode, text: out.text.clone() }));
-                let status = if out.degraded { EntryStatus::Degraded } else { EntryStatus::Done };
+                let status = if out.degraded || out.partial { EntryStatus::Degraded } else { EntryStatus::Done };
                 let state = OverlayState::Done { outcome: "shown".into(), degraded: out.degraded };
                 (status, out.text, out.raw, false, state, DONE_VISIBLE)
             }
@@ -1040,7 +1056,7 @@ impl Orchestrator {
                     total_ms = r.submitted.elapsed().as_millis() as u64,
                     "timing: delivered (release → text inserted)"
                 );
-                let status = if out.degraded { EntryStatus::Degraded } else { EntryStatus::Done };
+                let status = if out.degraded || out.partial { EntryStatus::Degraded } else { EntryStatus::Done };
                 let state = OverlayState::Done { outcome: outcome_name(delivered).into(), degraded: out.degraded };
                 (status, out.text, out.raw, false, state, DONE_VISIBLE)
             }
@@ -1135,39 +1151,16 @@ async fn finish_text_work(
     captured: Arc<Captured>,
     raw: String,
     requests: u32,
-    system: Option<String>,
     opts: PipelineOptions,
     backend: Option<Backend>,
 ) -> (Result<JobOutput, JobError>, u32) {
-    let models: Vec<Arc<dyn Provider>> = match &backend {
-        Some(b) if !b.routes.is_empty() => b.routes.iter().map(|(_, p)| p.clone()).collect(),
-        Some(b) => vec![b.single.clone()],
-        None => Vec::new(),
-    };
-    let mut n = requests;
-    let mut text = None;
-    if let Some(system) = system {
-        let attempts: Vec<routes::Attempt<String>> = models
-            .into_iter()
-            .map(|p| {
-                let (system, user) = (system.clone(), pipeline::user_message(&raw));
-                Box::pin(async move { p.complete(&system, &user).await.map(|c| pipeline::postprocess(&c.text)) }) as routes::Attempt<String>
-            })
-            .collect();
-        let (r, reports) = routes::run_hedged(attempts, routes::hedge_after(0.0)).await;
-        n += reports.len() as u32;
-        text = r.ok().filter(|t| !t.trim().is_empty());
+    // No second round of text requests (spec 2026-11-10 §4.2 p. 5, §4.3 p. 3): it only added
+    // seconds after the live deadline.
+    if mode != Mode::Translate {
+        return (Ok(JobOutput { text: raw.clone(), raw, degraded: true, tokens: 0, llm_used: true, direct: false, partial: false }), requests);
     }
-    let outcome = match text {
-        Some(text) => Ok(JobOutput { text, raw, degraded: false, tokens: 0, llm_used: true, direct: false }),
-        None if mode != Mode::Translate => Ok(JobOutput { text: raw.clone(), raw, degraded: true, tokens: 0, llm_used: true, direct: false }),
-        None => {
-            let (o, m) = process_capture(mode, (*captured).clone(), opts, backend).await;
-            n += m;
-            o
-        }
-    };
-    (outcome, n)
+    let (o, m) = process_capture(mode, (*captured).clone(), opts, backend).await;
+    (o, requests + m)
 }
 
 /// The recording as a 16 kHz wav in the audio folder (for Retry); `None` if it has no speech.
@@ -1329,6 +1322,7 @@ fn combine(outs: Vec<Result<JobOutput, JobError>>) -> Result<JobOutput, JobError
         tokens: parts.iter().map(|o| o.tokens).sum(),
         llm_used: parts.iter().any(|o| o.llm_used),
         direct: parts.iter().all(|o| o.direct),
+        partial: false,
     })
 }
 
@@ -1405,6 +1399,7 @@ mod tests {
         /// The text model's answer ("Привет." when unset) and how long it takes.
         text_reply: Option<String>,
         text_delay: Duration,
+        text_calls: AtomicUsize,
     }
     impl FakeProvider {
         fn new(slow: Result<String, ProviderError>, fast: Result<String, ProviderError>) -> Self {
@@ -1421,6 +1416,7 @@ mod tests {
                 text_panic: false,
                 text_reply: None,
                 text_delay: Duration::ZERO,
+                text_calls: AtomicUsize::new(0),
             }
         }
     }
@@ -1452,6 +1448,7 @@ mod tests {
     #[async_trait::async_trait]
     impl TextModel for FakeProvider {
         async fn complete(&self, _: &str, _: &str) -> Result<Completion, ProviderError> {
+            self.text_calls.fetch_add(1, Ordering::SeqCst);
             assert!(!self.text_panic, "simulated bug in the text model");
             tokio::time::sleep(self.text_delay).await;
             if self.text_fail {
@@ -2403,34 +2400,76 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unfinished_cleanup_uses_routes() {
+    async fn unfinished_dictation_pastes_raw_without_requests() {
         let (mut r, _) = live_rig(FakeLive::default());
         r.shared.settings.lock().unwrap().cleanup = true;
-        let t0 = Instant::now();
-        r.orch.handle(Input::Hotkey(HotkeyEvent::Down(Mode::Dictation)), t0).await;
-        r.audio.captures.lock().unwrap().push_back(speech(1.0));
-        r.orch.handle(Input::Hotkey(HotkeyEvent::Up(Mode::Dictation)), t0 + Duration::from_secs(1)).await;
-        r.orch.handle(Input::LiveDone(1, Box::new(LiveOutcome::Unfinished { raw: "сырой текст".into(), requests: 1 })), Instant::now()).await;
+        unfinished(&mut r, Mode::Dictation).await;
         r.settle(1).await;
-        assert_eq!(*r.out.0.lock().unwrap(), vec!["Привет.".to_string()]);
+        assert_eq!(*r.out.0.lock().unwrap(), vec!["сырой текст".to_string()]);
+        assert_eq!(r.provider.text_calls.load(Ordering::SeqCst), 0, "no second cleanup round");
+        let h = r.shared.history.lock().unwrap();
+        assert_eq!(h.entries().front().map(|e| e.status.clone()), Some(EntryStatus::Degraded));
     }
 
     #[tokio::test]
-    async fn unfinished_cleanup_fails_gives_raw_degraded() {
+    async fn unfinished_translate_takes_the_batch_path_at_once() {
+        let (mut r, _) = live_rig(FakeLive::default());
+        unfinished(&mut r, Mode::Translate).await;
+        r.settle(1).await;
+        assert_eq!(r.provider.stt_calls.load(Ordering::SeqCst), 1, "the recording went the batch way");
+        assert!(r.out.0.lock().unwrap().len() == 1);
+    }
+
+    #[tokio::test]
+    async fn slow_live_translation_is_raced_on_the_third_model() {
+        // Live check 2026-11-11: the Lite models translated pieces in 5 s; after 2 s the whole
+        // text also goes to 3.6 Flash.
+        let (mut r, _) = live_rig(heard("Привет."));
+        let slow = Duration::from_secs(20);
+        let f = RouteFactory::texts(vec![(slow, "Lite."), (slow, "Backup."), (Duration::from_millis(50), "Hi.")]);
+        r.orch.set_provider_factory(f.clone());
+        let started = std::time::Instant::now();
+        r.record(Mode::Translate, speech(1.0), Instant::now(), 1).await;
+        r.settle(1).await;
+        assert_eq!(*r.out.0.lock().unwrap(), vec!["Hi.".to_string()]);
+        assert!(started.elapsed() < Duration::from_millis(2_600), "{:?}", started.elapsed());
+    }
+
+    #[tokio::test]
+    async fn live_partial_is_degraded_in_history_only() {
         let (mut r, _) = live_rig(FakeLive::default());
         r.shared.settings.lock().unwrap().cleanup = true;
-        let mut p = FakeProvider::new(Ok("x".into()), Ok("x".into()));
-        p.text_fail = true;
-        r.orch.set_provider_factory(Arc::new(FakeFactory(Arc::new(p))));
         let t0 = Instant::now();
         r.orch.handle(Input::Hotkey(HotkeyEvent::Down(Mode::Dictation)), t0).await;
         r.audio.captures.lock().unwrap().push_back(speech(1.0));
         r.orch.handle(Input::Hotkey(HotkeyEvent::Up(Mode::Dictation)), t0 + Duration::from_secs(1)).await;
-        r.orch.handle(Input::LiveDone(1, Box::new(LiveOutcome::Unfinished { raw: "сырой текст".into(), requests: 1 })), Instant::now()).await;
+        let out = LiveOutcome::Final { text: "Чисто. сыро".into(), raw: "чисто сыро".into(), requests: 2, partial: true };
+        r.orch.handle(Input::LiveDone(1, Box::new(out)), Instant::now()).await;
         r.settle(1).await;
-        assert_eq!(*r.out.0.lock().unwrap(), vec!["сырой текст".to_string()]);
+        assert_eq!(*r.out.0.lock().unwrap(), vec!["Чисто. сыро".to_string()]);
         let h = r.shared.history.lock().unwrap();
         assert_eq!(h.entries().front().map(|e| e.status.clone()), Some(EntryStatus::Degraded));
+        drop(h);
+        let states = r.overlay.0.lock().unwrap().clone();
+        assert!(states.iter().any(|s| matches!(s, OverlayState::Done { degraded: false, .. })), "{states:?}");
+        assert!(!states.iter().any(|s| matches!(s, OverlayState::Done { degraded: true, .. })), "no 'without cleanup' on the Drop");
+    }
+
+    #[tokio::test]
+    async fn live_cleanup_uses_the_shared_budget() {
+        let (mut r, _) = live_rig(heard("привет мир"));
+        r.shared.settings.lock().unwrap().cleanup = true;
+        let now = tokio::time::Instant::now();
+        // Both Lite models are out of room (the backup takes the overflow of the main one).
+        for model in [defaults::GEMINI_TRANSLATE_MODEL, defaults::GEMINI_BACKUP_LITE_MODEL] {
+            for _ in 0..defaults::GEMINI_LITE_PER_MINUTE {
+                assert!(r.shared.budget.lock().unwrap().try_take(model, crate::providers::budget::Priority::End, now));
+            }
+        }
+        r.orch.set_provider_factory(Arc::new(FakeFactory(Arc::new(FakeProvider::new(Ok("x".into()), Ok("x".into()))))));
+        r.record(Mode::Dictation, speech(1.0), Instant::now(), 1).await;
+        r.settle(1).await;
+        assert_eq!(*r.out.0.lock().unwrap(), vec!["привет мир".to_string()], "no room: pasted as heard");
     }
 
     async fn unfinished(r: &mut Rig, mode: Mode) {
@@ -2448,7 +2487,7 @@ mod tests {
         let mut p = FakeProvider::new(Ok("x".into()), Ok("x".into()));
         p.text_panic = true;
         r.orch.set_provider_factory(Arc::new(FakeFactory(Arc::new(p))));
-        unfinished(&mut r, Mode::Dictation).await;
+        unfinished(&mut r, Mode::Translate).await;
         r.settle(1).await;
         assert!(r.out.0.lock().unwrap().is_empty());
         assert!(r.overlay.last_error().is_some(), "an honest error instead of an endless 'processing'");

@@ -27,6 +27,13 @@ pub const GEMINI_ROUTES: [Route; 3] = [
     Route::Direct { model: GEMINI_BACKUP_MODEL },
 ];
 
+/// Position of `GEMINI_BACKUP_LITE_MODEL` in `GEMINI_ROUTES`: the live path reads its health there.
+pub const BACKUP_LITE_ROUTE: usize = 1;
+/// Text requests a Lite model may take a minute (free tier 15, one spare) — spec 2026-11-10 §5.2.
+pub const GEMINI_LITE_PER_MINUTE: u32 = 14;
+/// Requests kept for the end of a dictation: pieces while speaking never take them.
+pub const END_RESERVE: u32 = 3;
+
 /// Translation of live pieces. Measured 2026-11-05, 5 short phrases each: Flash-Lite median
 /// 646 ms (5/5 ok, 500 requests/day); 3.6 Flash 1.0–1.4 s, then 429 (20 requests/day); 3.7 and 3.8 Flash reject
 /// minimal thinking, 3.8 Flash allows 5 requests/minute.
@@ -110,6 +117,11 @@ pub fn route_config(kind: ProviderKind, api_key: String, route: Route) -> Provid
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn backup_lite_route_is_the_backup_model() {
+        assert_eq!(GEMINI_ROUTES[BACKUP_LITE_ROUTE], Route::Direct { model: GEMINI_BACKUP_LITE_MODEL });
+    }
 
     #[test]
     fn free_limits_known_for_free_tiers() {

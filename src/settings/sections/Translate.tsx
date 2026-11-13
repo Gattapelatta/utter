@@ -48,6 +48,7 @@ export function Translate() {
           );
         })}
       </div>
+      <p className="mt-6 text-[13px] leading-normal text-text-secondary">{t("translate.wait_note")}</p>
     </Section>
   );
 }

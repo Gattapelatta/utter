@@ -164,6 +164,11 @@ describe("general, hotkeys and translation sections", () => {
     expect(selected()).toContain("Hey, can you send me");
   });
 
+  it("translation warns that it waits for Google", () => {
+    render(<Translate />);
+    expect(screen.getByText(/Перевод ждёт ответа Google/)).toBeTruthy();
+  });
+
   it("language list starts with Auto and the six main languages", () => {
     expect(SPEECH_LANGUAGES.slice(0, 7).map((l) => l.code)).toEqual([null, "ru", "en", "uk", "de", "es", "fr"]);
     const rest = SPEECH_LANGUAGES.slice(7).map((l) => l.name);
