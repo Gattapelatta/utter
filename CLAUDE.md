@@ -4,11 +4,11 @@ Free, open-source voice-to-text for macOS (Windows later): hold a hotkey, speak,
 
 **Start of every session:** read `docs/superpowers/HANDOFF.md` — current status, decisions made along the way, deferred issues, and how to begin the next plan. The spec is `docs/superpowers/specs/2026-10-06-utter-design.md`; plans live in `docs/superpowers/plans/`.
 
-## Current focus (2026-11-11) — when the user says «продолжаем работу над utter»
+## Current focus (2026-11-13) — when the user says «продолжаем работу над utter»
 
 1. Read `docs/superpowers/HANDOFF.md` («С чего начать следующую сессию»).
 2. Plans 1–3 are done; Utter is **public**, v0.2.1 released; «Капля и ИИ-агенты» is merged to `main` (unreleased).
-3. **Fast paste is done on `feat/fast-paste`** (spec `2026-11-10-fast-paste-design.md` §9): dictation ≤ 0.97 s, translation usually 1–2 s; the translation race on three models is not yet measured live. Merge only with the user's OK. Then Windows (Plan 4) or the deferred minors.
+3. **Fast paste is merged to `main`** (2026-11-13; spec `2026-11-10-fast-paste-design.md` §9, summary `plans/2026-11-11-fast-paste-summary.md`): dictation ≤ 0.97 s; translation speed is closed by the user's decision (free Google only, a wait note instead). Agent drop and fast paste are unreleased — a release only with the user's yes. Next: Windows (Plan 4) or the deferred minors.
 
 ## Working with the user
 
