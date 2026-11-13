@@ -9,7 +9,7 @@ Free, open-source voice-to-text for macOS (Windows later): hold a hotkey, speak,
 1. Read `docs/superpowers/HANDOFF.md` («С чего начать следующую сессию»).
 2. Plans 1–3 are done; Utter is **public**, v0.2.1 released; «Капля и ИИ-агенты» is merged to `main` (unreleased).
 3. **Fast paste is merged to `main`** (2026-11-13; spec `2026-11-10-fast-paste-design.md` §9, summary `plans/2026-11-11-fast-paste-summary.md`): dictation ≤ 0.97 s; translation speed is closed by the user's decision (free Google only, a wait note instead). Agent drop and fast paste are unreleased — a release only with the user's yes.
-4. **Next (user's choice 2026-11-13): the island shows Claude Code's steps live** (step 1 done, step 2 done, what Claude does on step 3 — not a frozen «0 из 9»); details in HANDOFF «С чего начать».
+4. **Claude Code steps live in the island — done on `feat/agent-steps-live`** (2026-11-13; spec `2026-11-13-agent-steps-live-design.md` §8): Utter keeps the plan itself (`agents/plan.rs`), the island shows the ladder; merge to `main` only with the user's yes.
 5. Dictation on the user's Mac fails since 2026-11-13 with Google's «User location is not supported» — the VPN (incy) path, not Utter (`gemini_location_probe` from the terminal shows it); the user postponed it.
 
 ## Working with the user
@@ -69,4 +69,5 @@ open src-tauri/target/release/bundle/macos/Utter.app
 - WebKit does not hand a `linear(…)` easing to the compositor: it resolves it on the main thread every frame (measured 2 % CPU vs 0.01 % for the same spring as keyframes). For anything that runs while idle, give springs as sampled keyframes (`overlay/drop/restMotion.ts`).
 - Agents: Claude Code hooks (`~/.claude/settings.json`) fire live, also in an open session; `UserPromptSubmit` stdout becomes context, so `utter-agent` prints only the permission decision. Tauri bundles every `[[bin]]` into `Contents/MacOS`, but a universal build lipos only the main binary — `scripts/release.sh` lipos `utter-agent` itself.
 - The overlay window must not take clicks where a full-screen app shows its menu and title bar (the top strip, and the open island lying over it): macOS then never hides them. It takes clicks only over the hit zones the island page reports (`agent_hit_zones`) and never in the top 36 pt (`agents::service::takes_clicks`).
+- Hover over the island without the user's hand: Utter polls the cursor position, so `CGWarpMouseCursorPosition` to the ears (overlay window centre x, y ≈ 12) opens it — put the pointer back afterwards. The desktop app's `wrap_up` marks the whole plan done at the end of every turn, so check the ladder mid-turn.
 - The overlay window stays on screen while idle (the Drop in the notch, §4.2a): `app/overlay_rest.rs` decides it; it is ordered out only when the ears are off (setting, full-screen app, locked, display asleep). Synthetic key presses from a helper do not reach Utter — a dictation for a video check needs the user.
