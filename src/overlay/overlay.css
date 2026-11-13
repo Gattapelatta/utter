@@ -53,6 +53,9 @@ body,
   align-items: center;
   justify-content: center;
   gap: 44px;
+  /* It lies over the agents' card and list (18–104 pt): clicks go through to them; the Drop
+     itself takes its pokes (pointer-events: auto on its place). Live 2026-11-14. */
+  pointer-events: none;
 }
 
 .island-timer {
