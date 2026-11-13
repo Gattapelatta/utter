@@ -1,0 +1,1 @@
+{"session_id": "cx1", "transcript_path": null, "cwd": "/Users/me/Projects/shop", "model": "gpt-5.3-codex", "turn_id": "t1", "permission_mode": "default", "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": {"command": "git push", "description": "Push the branch"}}
