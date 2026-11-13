@@ -59,6 +59,8 @@ export interface AgentsStatus {
   detected: { claude_code: boolean; codex: boolean };
   claude_code: AgentLink;
   codex: AgentLink;
+  /** Codex has run one of Utter's hooks: the user trusted them (spec 2026-11-13 §3.1). */
+  codex_heard: boolean;
 }
 
 export type OverlayState =

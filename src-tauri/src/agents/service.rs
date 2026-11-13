@@ -11,7 +11,7 @@ use tokio::sync::oneshot;
 
 pub use super::broker::Reply;
 use super::broker::Broker;
-use super::event::{parse_claude, parse_codex, EventKind, SessionKey};
+use super::event::{parse_claude, parse_codex, parse_hook, Agent, EventKind, SessionKey};
 use super::install::{self, Detected};
 use super::registry::{AgentView, Card, Registry};
 use super::wire::{Request, Source};
@@ -40,6 +40,8 @@ pub struct AgentsStatus {
     pub detected: Detected,
     pub claude_code: Link,
     pub codex: Link,
+    /// Codex has run one of Utter's hooks at least once: the user trusted them.
+    pub codex_heard: bool,
 }
 
 const MARK: &str = "utter-agent";
@@ -74,6 +76,25 @@ fn point_link(link: &Path, helper: &str) -> Result<(), String> {
     let _ = std::fs::remove_file(&tmp);
     std::os::unix::fs::symlink(helper, &tmp).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, link).map_err(|e| e.to_string())
+}
+
+/// Kept next to the link (not in the settings, which the page saves whole): Codex has run a hook.
+fn heard_marker(home: &Path) -> PathBuf {
+    home.join(".codex/utter/heard")
+}
+
+/// The first hook event from Codex leaves the marker; `notify` and Claude Code's events do not.
+pub fn mark_heard(home: &Path, req: &Request) {
+    if req.source != Source::Codex || req.event == "notify" {
+        return;
+    }
+    let marker = heard_marker(home);
+    if !marker.exists() {
+        if let Some(dir) = marker.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&marker, b"");
+    }
 }
 
 fn remove_link(link: &Path) {
@@ -156,6 +177,7 @@ pub fn status_in(home: &Path, helper: &str, s: &AgentSettings, detected: Detecte
         detected,
         claude_code: claude_link(home, helper, s.claude_code, detected.claude_code),
         codex: codex_link(home, s.codex, detected.codex),
+        codex_heard: heard_marker(home).exists(),
     }
 }
 
@@ -263,7 +285,7 @@ pub fn status(s: &AgentSettings) -> AgentsStatus {
         Some(helper) => status_in(&home, &helper, s, detected),
         None => {
             let broken = |on| if on { Link::Broken("utter-agent not found".into()) } else { Link::Off };
-            AgentsStatus { detected, claude_code: broken(s.claude_code), codex: broken(s.codex) }
+            AgentsStatus { detected, claude_code: broken(s.claude_code), codex: broken(s.codex), codex_heard: heard_marker(&home).exists() }
         }
     }
 }
@@ -307,7 +329,9 @@ impl Core {
     pub fn receive(&self, req: Request, lang: Lang, now: Instant) -> Incoming {
         let event = match req.source {
             Source::Claude => parse_claude(&req.event, &req.payload, lang),
-            Source::Codex => parse_codex(&req.payload),
+            // `notify`: Utter's older way in, until the first start of this version takes it out.
+            Source::Codex if req.event == "notify" => parse_codex(&req.payload),
+            Source::Codex => parse_hook(Agent::Codex, &req.event, &req.payload, lang),
         };
         let Some(event) = event else {
             return if req.wants_reply { Incoming::Reply(Reply::NoDecision) } else { Incoming::Ignored };
@@ -618,6 +642,9 @@ mod glue {
         }
         let Ok(req) = serde_json::from_str::<Request>(&line) else { return };
         let s = settings(&app);
+        if enabled(&s, req.source) {
+            mark_heard(&home_dir(), &req);
+        }
         let incoming = if enabled(&s, req.source) {
             core.receive(req, lang(&app), Instant::now())
         } else if req.wants_reply {
@@ -1155,6 +1182,45 @@ mod tests {
         let core = Core::default();
         let req = request("PermissionRequest", json!({"session_id":"s","cwd":"/p","tool_name":"AskUserQuestion"}));
         assert!(matches!(core.receive(req, Lang::En, t), Incoming::Reply(Reply::NoDecision)));
+    }
+
+    fn codex_request(event: &str, payload: serde_json::Value) -> Request {
+        Request { v: 1, source: Source::Codex, event: event.into(), payload, ancestors: vec![10, 1], wants_reply: event == "PermissionRequest" }
+    }
+
+    #[test]
+    fn codex_hook_request_is_parsed_as_hook() {
+        let t = Instant::now();
+        let core = Core::default();
+        let req = codex_request("Stop", json!({"session_id":"cx","cwd":"/p","last_assistant_message":"Done."}));
+        assert!(matches!(core.receive(req, Lang::En, t), Incoming::Updated));
+        let v = core.view();
+        assert_eq!(v.rows[0].key, SessionKey { agent: crate::agents::event::Agent::Codex, id: "cx".into() });
+        assert_eq!(v.rows[0].state, crate::agents::registry::SessionState::Done);
+    }
+
+    #[test]
+    fn codex_notify_still_parsed() {
+        let t = Instant::now();
+        let core = Core::default();
+        let req = codex_request("notify", json!({"type":"agent-turn-complete","thread-id":"th","cwd":"/p"}));
+        assert!(matches!(core.receive(req, Lang::En, t), Incoming::Updated));
+    }
+
+    #[test]
+    fn first_codex_hook_event_marks_heard() {
+        // Until Codex has run a hook, the user has likely not trusted Utter's hooks yet (spec
+        // 2026-11-13 agents-look-and-codex-hooks §3.1): the page shows where to do it.
+        let home = home();
+        assert!(!status_in(home.path(), HELPER, &on(false, true), BOTH).codex_heard);
+        mark_heard(home.path(), &request("Stop", json!({"session_id":"s"})));
+        mark_heard(home.path(), &codex_request("notify", json!({})));
+        assert!(!status_in(home.path(), HELPER, &on(false, true), BOTH).codex_heard, "Claude and notify do not count");
+        mark_heard(home.path(), &codex_request("PreToolUse", json!({"session_id":"cx"})));
+        assert!(status_in(home.path(), HELPER, &on(false, true), BOTH).codex_heard);
+        // Turning Codex off keeps it: the hooks' text, and so the trust, stays the same.
+        apply_in(home.path(), HELPER, &on(false, false), None, BOTH);
+        assert!(status_in(home.path(), HELPER, &on(false, true), BOTH).codex_heard);
     }
 
     #[test]

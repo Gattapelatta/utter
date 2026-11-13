@@ -1,7 +1,8 @@
 //! `utter-agent` — run by AI agents, tells Utter what they do.
 //!
 //!   utter-agent claude <HookEvent>          Claude Code hook: the event's JSON on stdin
-//!   utter-agent codex <prev…> <json>        Codex `notify`: then runs the previous command
+//!   utter-agent codex-hook <HookEvent>      Codex hook: the same, Codex's fields
+//!   utter-agent codex <prev…> <json>        Codex `notify` (Utter before 2026-11-13): then runs the previous command
 //!
 //! Never slows the agent down: no Utter, or a socket that does not take the event within
 //! 300 ms → exit 0 silently. Only `PermissionRequest` waits for an answer, and prints nothing
@@ -50,15 +51,21 @@ fn request(source: Source, event: &str, payload: serde_json::Value, wants_reply:
     }
 }
 
-fn claude(event: &str) {
+/// A Claude Code or Codex hook. Codex gets no «Always» (it fails closed on
+/// `updatedPermissions`) and JSON from `Stop`, which it requires.
+fn hook(source: Source, event: &str) {
+    let codex = source == Source::Codex;
+    if codex && event == "Stop" {
+        println!("{}", wire::stop_output());
+    }
     let mut input = String::new();
     if std::io::stdin().read_to_string(&mut input).is_err() {
         return;
     }
     let Ok(payload) = serde_json::from_str::<serde_json::Value>(&input) else { return };
     let wants_reply = event == "PermissionRequest";
-    let suggestion = payload.get("permission_suggestions").and_then(|s| s.get(0)).cloned();
-    let Some(stream) = send(&request(Source::Claude, event, payload, wants_reply)) else { return };
+    let suggestion = if codex { None } else { payload.get("permission_suggestions").and_then(|s| s.get(0)).cloned() };
+    let Some(stream) = send(&request(source, event, payload, wants_reply)) else { return };
     if !wants_reply {
         return;
     }
@@ -81,9 +88,10 @@ fn codex(args: &[String]) {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.split_first() {
-        Some((mode, rest)) if mode == "claude" => {
+        Some((mode, rest)) if mode == "claude" || mode == "codex-hook" => {
+            let source = if mode == "claude" { Source::Claude } else { Source::Codex };
             if let Some(event) = rest.first() {
-                claude(event);
+                hook(source, event);
             }
         }
         Some((mode, rest)) if mode == "codex" => codex(rest),
