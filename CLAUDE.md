@@ -10,7 +10,7 @@ Free, open-source voice-to-text for macOS (Windows later): hold a hotkey, speak,
 2. Plans 1–3 are done; Utter is **public**, v0.2.1 released; «Капля и ИИ-агенты» is merged to `main` (unreleased).
 3. **Fast paste is merged to `main`** (2026-11-13; spec `2026-11-10-fast-paste-design.md` §9, summary `plans/2026-11-11-fast-paste-summary.md`): dictation ≤ 0.97 s; translation speed is closed by the user's decision (free Google only, a wait note instead). Agent drop and fast paste are unreleased — a release only with the user's yes.
 4. **Claude Code steps live in the island — merged to `main`, unreleased** (2026-11-13; spec `2026-11-13-agent-steps-live-design.md` §8): Utter keeps the plan itself (`agents/plan.rs`), the island shows the ladder. Deferred minors in the spec §8.
-5. **Agents' new look + Codex hooks** — branch `feat/agents-look-codex` (2026-11-14; spec `2026-11-13-agents-look-and-codex-hooks-design.md` §7): checked live with the user; merge to `main` only with the user's yes.
+5. **Agents' new look + Codex hooks — merged to `main`, unreleased** (2026-11-14; spec `2026-11-13-agents-look-and-codex-hooks-design.md` §7, deferred minors there). Next: ask the user (a release needs their yes).
 6. Dictation on the user's Mac fails since 2026-11-13 with Google's «User location is not supported» — the VPN (incy) path, not Utter (`gemini_location_probe` from the terminal shows it); the user postponed it.
 
 ## Working with the user
