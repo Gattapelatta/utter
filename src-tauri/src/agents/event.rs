@@ -143,7 +143,10 @@ fn plan_step(item: &Value) -> PlanStep {
 /// only mark it (spec 2026-11-13 §2: 52 % of the calls carry no list).
 fn plan_update(tool: &str, input: &Value) -> Option<PlanUpdate> {
     if tool.ends_with("__wrap_up") {
-        return Some(PlanUpdate::Finish);
+        // A turn that ends with a question to the user is a pause, not the end: the plan goes on after
+        // the reply (final review 2026-11-13).
+        let asks = text(input, "ask").is_some_and(|q| !q.trim().is_empty());
+        return (!asks).then_some(PlanUpdate::Finish);
     }
     if let Some(list) = input.get("todos").or(input.get("items")) {
         let list = list.as_array()?;
@@ -273,6 +276,14 @@ mod tests {
         assert_eq!(plan_up(plan, json!({"done":[1]})), Some(PlanUpdate::Mark { done: vec![1], start: None }));
         assert_eq!(plan_up("mcp__ccd_turn__wrap_up", json!({"recap":"r"})), Some(PlanUpdate::Finish));
         assert_eq!(plan_up(plan, json!({})), None);
+    }
+
+    #[test]
+    fn wrap_up_with_a_question_leaves_the_plan_open() {
+        // Final review 2026-11-13: the desktop app wraps up every turn, also one that asks the user;
+        // after the reply Claude goes on with `done`/`start` on the same plan (13 of 15 measured cases).
+        assert_eq!(plan_up("mcp__ccd_turn__wrap_up", json!({"recap":"r","ask":"Go on?","blocked":true})), None);
+        assert_eq!(plan_up("mcp__ccd_turn__wrap_up", json!({"recap":"r","ask":""})), Some(PlanUpdate::Finish));
     }
 
     #[test]
