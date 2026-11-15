@@ -8,13 +8,15 @@ const EAR_W = 36;
 const STATE_DOT = 7;
 const DOT = 6;
 
-/** The right ear's three colours, always in this order, as a corner (the user 2026-11-10):
- *  the first, the second to its right, the third under the first. */
-const ALL: Dot[] = ["working", "waiting", "done"];
+/** The right ear's colours, always in this order, as a 2 × 2 grid (the user 2026-11-10; purple
+ *  «asks» fills the last cell, 2026-11-15): the first, the second to its right, the third under
+ *  the first, the fourth under the second. */
+const ALL: Dot[] = ["working", "waiting", "done", "asking"];
 const CORNER: [number, number][] = [
   [0, 0],
   [1, 0],
   [0, 1],
+  [1, 1],
 ];
 
 /**
