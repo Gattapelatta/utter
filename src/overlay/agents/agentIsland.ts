@@ -1,7 +1,7 @@
 import type { AgentCard, AgentRow, AgentView, OverlayState, PlanStep, SessionState } from "../../lib/types";
 
 /** A state dot: blue — works, amber — waits for the user, green — finished, not yet looked at. */
-export type Dot = "working" | "waiting" | "done";
+export type Dot = "working" | "waiting" | "asking" | "done";
 
 /** What the island shows for the agents (spec 2026-11-09 §3.2). */
 export type AgentShow =
@@ -12,7 +12,8 @@ export type AgentShow =
   | { kind: "card"; card: AgentCard };
 
 /** The colours of the Figma logo, chosen by the user 2026-11-10 (variant F2): blue works, coral waits, green is done. */
-export const DOT_COLOR: Record<Dot, string> = { working: "#1ABCFE", waiting: "#FF7262", done: "#0ACF83" };
+/** Purple «asks» (the user's choice 2026-11-15): the Figma logo's fourth colour. */
+export const DOT_COLOR: Record<Dot, string> = { working: "#1ABCFE", waiting: "#FF7262", asking: "#A259FF", done: "#0ACF83" };
 
 /** Dots in the right ear; with more agents, three and a «+». */
 const MAX_DOTS = 4;

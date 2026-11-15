@@ -61,6 +61,7 @@ function items(show: Shown): number[] {
       return [TITLE_H, detailLines(c.detail || c.tool) * LINE_H + 12, ...(c.can_always && c.rule ? [lines(`«Всегда» разрешит: ${c.rule}`, 52, 3) * RULE_H] : []), buttons];
     case "done":
     case "waiting":
+    case "asking":
       return [TITLE_H, buttons];
   }
 }
@@ -256,10 +257,10 @@ export function AgentCard({ card, rows, notch }: { card: Card; rows: AgentRow[];
       </Panel>
     );
   }
-  const done = card.kind === "done";
+  const said = { done: "agents.finished", waiting: "agents.waiting", asking: "agents.asking" } as const;
   return (
-    <Panel notch={notch} dot={done ? "done" : "waiting"}>
-      <Title project={project} rest={`${name(card.key.agent)} ${t(done ? "agents.finished" : "agents.waiting")}`} />
+    <Panel notch={notch} dot={card.kind}>
+      <Title project={project} rest={`${name(card.key.agent)} ${t(said[card.kind])}`} />
       <Buttons>
         <Button label={t("agents.open")} onClick={() => ipc.agentOpen(card.key).catch(() => {})} strong />
         <Button label={t("agents.ok")} onClick={() => ipc.agentDismiss().catch(() => {})} />

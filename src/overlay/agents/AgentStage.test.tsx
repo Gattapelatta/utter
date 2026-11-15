@@ -45,8 +45,9 @@ describe("Stage with agents", () => {
     expect(c.querySelector("[data-agent-dot='done']")).not.toBeNull();
     // The user 2026-11-10: the right ear always shows all three colours, the current one shimmers.
     const ear = [...c.querySelectorAll("[data-agent-ear-dot]")] as HTMLElement[];
-    expect(ear.map((d) => d.getAttribute("data-agent-ear-dot"))).toEqual(["working", "waiting", "done"]);
-    expect(ear.map((d) => d.hasAttribute("data-pulse"))).toEqual([false, false, true]);
+    // The fourth, purple «asks» (the user 2026-11-15), fills the corner's last cell.
+    expect(ear.map((d) => d.getAttribute("data-agent-ear-dot"))).toEqual(["working", "waiting", "done", "asking"]);
+    expect(ear.map((d) => d.hasAttribute("data-pulse"))).toEqual([false, false, true, false]);
     expect(ear.every((d) => d.style.opacity === "" || d.style.opacity === "1")).toBe(true);
     // A corner (the user 2026-11-10): the second right of the first, the third under the first.
     const at = ear.map((d) => [parseFloat(d.style.left), parseFloat(d.style.top)]);
@@ -54,15 +55,16 @@ describe("Stage with agents", () => {
     expect(at[1][1]).toBe(at[0][1]);
     expect(at[2][0]).toBe(at[0][0]);
     expect(at[2][1]).toBeGreaterThan(at[0][1]);
+    expect(at[3]).toEqual([at[1][0], at[2][1]]);
     // Smaller, so it does not cover the Drop's eye.
     expect((c.querySelector("[data-agent-dot]") as HTMLElement).style.width).toBe("7px");
     const none = stage({ rows: [], card: null, paused: false }, true);
     expect(none.querySelector("[data-agent-ears]")).toBeNull();
   });
 
-  it("connected but idle: three colours in the ear, no dot on the Drop, nothing shimmers", () => {
+  it("connected but idle: four colours in the ear, no dot on the Drop, nothing shimmers", () => {
     const c = stage({ rows: [], card: null, paused: false, connected: true }, true);
-    expect(c.querySelectorAll("[data-agent-ear-dot]")).toHaveLength(3);
+    expect(c.querySelectorAll("[data-agent-ear-dot]")).toHaveLength(4);
     expect(c.querySelector("[data-agent-dot]")).toBeNull();
     expect(c.querySelector("[data-pulse]")).toBeNull();
   });

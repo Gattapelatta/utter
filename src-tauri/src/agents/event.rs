@@ -30,6 +30,9 @@ pub enum EventKind {
     Plan(PlanUpdate),
     /// It stopped and waits for the user (the message Claude Code shows).
     Waiting(String),
+    /// It asks a question with options to choose from; the answer is given in the agent's own
+    /// window (the purple Drop, the user 2026-11-15).
+    Asking,
     /// It asks to run a tool. `suggestion` is Claude Code's own "don't ask again" rule, if any.
     Permission { tool: String, detail: String, suggestion: Option<Value> },
     Finished,
@@ -49,6 +52,8 @@ const DETAIL_MAX: usize = 40;
 
 /// Tools that go through the permission flow but are questions to the user, not permissions.
 const QUESTION_TOOLS: [&str; 2] = ["AskUserQuestion", "ExitPlanMode"];
+/// Tools that ask the user a question with options: Claude Code's and Codex's.
+const ASK_TOOLS: [&str; 2] = ["AskUserQuestion", "request_user_input"];
 
 fn text<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
     v.get(key).and_then(Value::as_str)
@@ -194,7 +199,10 @@ pub fn parse_hook(agent: Agent, hook_event: &str, payload: &Value, lang: Lang) -
     let codex = agent == Agent::Codex;
     let kind = match hook_event {
         "UserPromptSubmit" => EventKind::Started,
+        "PreToolUse" if codex && ASK_TOOLS.contains(&tool) => EventKind::Asking,
         "PreToolUse" => EventKind::Action(action(tool, input, lang)?),
+        // The desktop app ends a turn that asks the user with a question (and its options).
+        "PostToolUse" if tool.ends_with("__wrap_up") && text(input, "ask").is_some_and(|q| !q.trim().is_empty()) => EventKind::Asking,
         "PostToolUse" => EventKind::Plan(plan_update(tool, input)?),
         "Notification" => match text(payload, "notification_type") {
             Some("idle_prompt" | "agent_needs_input") => {
@@ -202,6 +210,7 @@ pub fn parse_hook(agent: Agent, hook_event: &str, payload: &Value, lang: Lang) -
             }
             _ => return None,
         },
+        "PermissionRequest" if ASK_TOOLS.contains(&tool) => EventKind::Asking,
         "PermissionRequest" if QUESTION_TOOLS.contains(&tool) => EventKind::Waiting(String::new()),
         "PermissionRequest" => EventKind::Permission {
             tool: tool.to_string(),
@@ -400,11 +409,27 @@ mod tests {
     }
 
     #[test]
-    fn question_tools_wait_instead_of_asking_permission() {
-        // AskUserQuestion / ExitPlanMode go through the permission flow but are questions to the user:
-        // «Разрешить» would make no sense there.
+    fn question_tools_ask_or_wait_instead_of_asking_permission() {
+        // AskUserQuestion is a question with options (the purple Drop, the user 2026-11-15);
+        // ExitPlanMode asks to approve a plan and stays «ждёт тебя». Neither is a permission.
         let p = json!({"session_id":"s","cwd":"/p","tool_name":"AskUserQuestion","tool_input":{}});
+        assert_eq!(parse_claude("PermissionRequest", &p, Lang::En).unwrap().kind, EventKind::Asking);
+        let p = json!({"session_id":"s","cwd":"/p","tool_name":"ExitPlanMode","tool_input":{}});
         assert!(matches!(parse_claude("PermissionRequest", &p, Lang::En).unwrap().kind, EventKind::Waiting(_)));
+    }
+
+    #[test]
+    fn wrap_up_with_a_question_asks() {
+        let p = json!({"session_id":"s","cwd":"/p","tool_name":"mcp__ccd_turn__wrap_up","tool_input":{"recap":"r","ask":"Which colour?","actions":[{"label":"Purple"}]}});
+        assert_eq!(parse_claude("PostToolUse", &p, Lang::En).unwrap().kind, EventKind::Asking);
+        let p = json!({"session_id":"s","cwd":"/p","tool_name":"mcp__ccd_turn__wrap_up","tool_input":{"recap":"r"}});
+        assert_eq!(parse_claude("PostToolUse", &p, Lang::En).unwrap().kind, EventKind::Plan(PlanUpdate::Finish));
+    }
+
+    #[test]
+    fn codex_request_user_input_asks() {
+        let p = json!({"session_id":"s","cwd":"/p","tool_name":"request_user_input","tool_input":{"questions":[]}});
+        assert_eq!(parse_hook(Agent::Codex, "PreToolUse", &p, Lang::En).unwrap().kind, EventKind::Asking);
     }
 
     #[test]

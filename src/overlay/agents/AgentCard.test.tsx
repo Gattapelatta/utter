@@ -82,6 +82,15 @@ describe("AgentCard", () => {
     expect(invoke).toHaveBeenCalledWith("agent_dismiss");
   });
 
+  it("asking_card_is_purple_and_only_opens", () => {
+    // The user 2026-11-15: a question with options is answered in the agent's own window.
+    const { container } = render(<AgentCard card={{ kind: "asking", key }} rows={[{ ...row, state: "asking" }]} notch={notch} />);
+    expect(title()).toBe("shop Claude Code is asking");
+    expect(container.querySelector("[data-agent-tint]")?.getAttribute("data-agent-tint")).toBe("asking");
+    expect(screen.getByText("Open")).toBeTruthy();
+    expect(screen.getByText("OK")).toBeTruthy();
+  });
+
   it("waiting_card_says_it_waits", () => {
     render(<AgentCard card={{ kind: "waiting", key }} rows={[{ ...row, state: "waiting" }]} notch={notch} />);
     expect(title()).toBe("shop Claude Code is waiting for you");

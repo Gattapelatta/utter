@@ -22,6 +22,8 @@ pub enum SessionState {
     // Declaration order is the order of rows: the most urgent first.
     Permission,
     Waiting,
+    /// Asked a question with options; the answer goes in the agent's window.
+    Asking,
     Working,
     Done,
 }
@@ -47,6 +49,7 @@ pub enum Card {
     Permission { id: u64, key: SessionKey, tool: String, detail: String, can_always: bool, rule: Option<String> },
     Done { key: SessionKey },
     Waiting { key: SessionKey },
+    Asking { key: SessionKey },
     AfterPause { done: u32, waiting: u32 },
 }
 
@@ -84,7 +87,7 @@ fn rule_text(s: &serde_json::Value) -> String {
 impl Card {
     fn key(&self) -> Option<&SessionKey> {
         match self {
-            Card::Permission { key, .. } | Card::Done { key } | Card::Waiting { key } => Some(key),
+            Card::Permission { key, .. } | Card::Done { key } | Card::Waiting { key } | Card::Asking { key } => Some(key),
             Card::AfterPause { .. } => None,
         }
     }
@@ -214,6 +217,13 @@ impl Registry {
                     });
                 }
             }
+            EventKind::Asking => {
+                row.state = SessionState::Asking;
+                row.seen = false;
+                notice = Some(Card::Asking { key: key.clone() });
+            }
+            // The desktop app sends the question (wrap_up) and then Stop: it stays a question.
+            EventKind::Finished if row.state == SessionState::Asking => {}
             EventKind::Finished => {
                 row.state = SessionState::Done;
                 row.seen = false;
@@ -226,7 +236,7 @@ impl Registry {
             self.drop_notices_of(&key);
         }
         if self.paused {
-            if matches!(state, SessionState::Done | SessionState::Waiting) {
+            if matches!(state, SessionState::Done | SessionState::Waiting | SessionState::Asking) {
                 self.missed.insert(key);
             }
             return None;
@@ -295,7 +305,7 @@ impl Registry {
         if !self.permissions.is_empty() {
             return;
         }
-        if let Some(Card::Done { key }) = self.notices.pop_front() {
+        if let Some(Card::Done { key } | Card::Asking { key }) = self.notices.pop_front() {
             self.mark_seen(&key);
         }
         self.shown = None;
@@ -345,7 +355,7 @@ impl Registry {
         }
         let state_of = |k: &SessionKey| self.sessions.get(k).map(|s| s.row.state);
         let done = self.missed.iter().filter(|k| state_of(k) == Some(SessionState::Done)).count() as u32;
-        let waiting = self.missed.iter().filter(|k| state_of(k) == Some(SessionState::Waiting)).count() as u32;
+        let waiting = self.missed.iter().filter(|k| matches!(state_of(k), Some(SessionState::Waiting | SessionState::Asking))).count() as u32;
         self.missed.clear();
         if done + waiting > 0 {
             self.notices.push_back(Card::AfterPause { done, waiting });
@@ -371,7 +381,7 @@ impl Registry {
             return AgentView { rows: Vec::new(), card: None, paused: true, connected: false };
         }
         let mut sessions: Vec<&Session> =
-            self.sessions.values().filter(|s| !(s.row.state == SessionState::Done && s.row.seen)).collect();
+            self.sessions.values().filter(|s| !(matches!(s.row.state, SessionState::Done | SessionState::Asking) && s.row.seen)).collect();
         sessions.sort_by_key(|s| (s.row.state, std::cmp::Reverse(s.seq)));
         AgentView {
             rows: sessions.into_iter().map(|s| s.row.clone()).collect(),
@@ -446,6 +456,48 @@ mod tests {
         let v = r.view();
         assert_eq!(row(&v, "a").state, SessionState::Done);
         assert!(!row(&v, "a").seen);
+    }
+
+    #[test]
+    fn asking_then_stop_stays_asking_with_one_card() {
+        // The desktop app sends wrap_up (with its question) and then Stop: one purple card, not a
+        // green «finished» after it (the user 2026-11-15).
+        let t = Instant::now();
+        let mut r = Registry::default();
+        r.apply(ev("a", EventKind::Started), t);
+        r.apply(ev("a", EventKind::Asking), t);
+        assert_eq!(row(&r.view(), "a").state, SessionState::Asking);
+        assert_eq!(r.view().card, Some(Card::Asking { key: key("a") }));
+        r.apply(finished("a"), t);
+        assert_eq!(row(&r.view(), "a").state, SessionState::Asking);
+        assert_eq!(r.view().card, Some(Card::Asking { key: key("a") }));
+        r.dismiss_card(t);
+        assert_eq!(r.view().card, None, "one card only");
+        assert!(r.view().rows.is_empty(), "OK marks it seen");
+    }
+
+    #[test]
+    fn answering_the_question_works_again() {
+        let t = Instant::now();
+        let mut r = Registry::default();
+        r.apply(ev("a", EventKind::Asking), t);
+        r.apply(ev("a", EventKind::Started), t);
+        assert_eq!(row(&r.view(), "a").state, SessionState::Working);
+        assert_eq!(r.view().card, None);
+    }
+
+    #[test]
+    fn asking_sorts_with_the_urgent_and_counts_as_waiting_after_pause() {
+        let t = Instant::now();
+        let mut r = Registry::default();
+        r.apply(finished("d"), t);
+        r.apply(ev("a", EventKind::Asking), t);
+        assert_eq!(r.view().rows[0].key, key("a"));
+        let mut p = Registry::default();
+        p.set_paused(true, t);
+        p.apply(ev("a", EventKind::Asking), t);
+        p.set_paused(false, t);
+        assert_eq!(p.view().card, Some(Card::AfterPause { done: 0, waiting: 1 }));
     }
 
     #[test]

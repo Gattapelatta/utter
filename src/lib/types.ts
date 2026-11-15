@@ -150,7 +150,7 @@ export type UpdateState =
 /** Agents the Drop watches (Rust `agents::*`, spec 2026-11-09). */
 export type AgentKind = "claude_code" | "codex";
 export type SessionKey = { agent: AgentKind; id: string };
-export type SessionState = "permission" | "waiting" | "working" | "done";
+export type SessionState = "permission" | "waiting" | "asking" | "working" | "done";
 
 /** One step of an agent's plan as Utter follows it (spec 2026-11-13 §3.3). */
 export type PlanStep = { title: string; status: "pending" | "active" | "done" };
@@ -172,6 +172,8 @@ export type AgentCard =
   | { kind: "permission"; id: number; key: SessionKey; tool: string; detail: string; can_always: boolean; rule?: string | null }
   | { kind: "done"; key: SessionKey }
   | { kind: "waiting"; key: SessionKey }
+  /** A question with options, answered in the agent's own window (the user 2026-11-15). */
+  | { kind: "asking"; key: SessionKey }
   | { kind: "after_pause"; done: number; waiting: number };
 
 export interface AgentView {

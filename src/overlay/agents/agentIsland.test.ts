@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentRow, AgentView, PlanStep, SessionState } from "../../lib/types";
-import { agentShow, hitZone, ladderOf } from "./agentIsland";
+import { agentShow, dotOf, hitZone, ladderOf } from "./agentIsland";
 
 const row = (id: string, state: SessionState, seen = false): AgentRow => ({
   key: { agent: "claude_code", id },
@@ -92,8 +92,8 @@ describe("pokes", () => {
 import { DOT_COLOR } from "./agentIsland";
 
 describe("colours (chosen by the user 2026-11-10, the Figma logo, variant F2)", () => {
-  it("blue works, coral waits, green is done", () => {
-    expect(DOT_COLOR).toEqual({ working: "#1ABCFE", waiting: "#FF7262", done: "#0ACF83" });
+  it("blue works, coral waits, purple asks (2026-11-15), green is done", () => {
+    expect(DOT_COLOR).toEqual({ working: "#1ABCFE", waiting: "#FF7262", asking: "#A259FF", done: "#0ACF83" });
   });
 });
 
@@ -118,5 +118,12 @@ describe("hitZone", () => {
   });
   it("hit_zone_never_starts_above_the_window", () => {
     expect(hitZone({ left: 0, top: 4, width: 10, height: 10 })).toEqual({ x: 0, y: 0, w: 18, h: 22 });
+  });
+});
+
+describe("asking", () => {
+  it("asking_is_its_own_purple_dot", () => {
+    expect(dotOf("asking")).toBe("asking");
+    expect(DOT_COLOR.asking).toBe("#A259FF");
   });
 });

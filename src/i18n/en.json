@@ -207,6 +207,7 @@
   "agents.always": "Always",
   "agents.finished": "finished",
   "agents.waiting": "is waiting for you",
+  "agents.asking": "is asking",
   "agents.open": "Open",
   "agents.ok": "OK",
   "agents.step": "{n} of {m}",
