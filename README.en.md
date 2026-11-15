@@ -1,6 +1,6 @@
 <p align="right"><a href="README.md"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/lang/ru-link-dark.svg"><img src="docs/media/lang/ru-link-light.svg" width="56" height="22" alt="Русский"></picture></a><picture><source media="(prefers-color-scheme: dark)" srcset="docs/media/lang/en-current-dark.svg"><img src="docs/media/lang/en-current-light.svg" width="76" height="22" alt="· English"></picture></p>
 
-<p align="center"><img src="docs/media/hero-en.png" width="830" alt="Utter: the Drop by the notch listens, shows the words as you speak, and pastes the text"></p>
+<p align="center"><img src="docs/media/hero-en.png" width="830" alt="Utter: the Drop by the notch watches your AI agents — steps, a question, finished — then listens, shows the words as you speak, and pastes the text"></p>
 
 <p align="center"><a href="https://github.com/Gattapelatta/utter/releases/latest"><img src="docs/media/download-en.svg" width="311" alt="Download for Mac · macOS 13+"></a></p>
 
@@ -17,7 +17,7 @@ It also translates: speak in your own language and get English pasted instead. P
 - **You see what it hears.** While you talk, the words show up right under the notch. Let go of the key and a moment later the clean version is pasted.
 - **Cleans up, doesn't rewrite.** It drops the "um"s, "uh"s and repeats and adds the commas and periods. The meaning stays yours. Always.
 - **The Drop.** A tiny character living by the notch. One look and you know what's going on: listening, thinking, or all done.
-- **The Drop watches your AI agents.** Turn on Claude Code or Codex in **Settings → Agents** — once, and the Drop sees every session. You went to another window and the agent finished or is waiting for you — the Drop tells you by the notch, with a short line of what got done. When Claude Code asks for permission, hit "Allow" right on the island, no switching. No notifications to turn on.
+- **The Drop watches your AI agents.** Turn on Claude Code or Codex in **Settings → Agents** — once, and the Drop sees every session. Hover over it to see which step of its plan the agent is on ("2 of 4") and what it is doing this very second. You went to another window and the agent finished, is waiting for you or asked a question with options — the Drop tells you by the notch (a question in purple), and "Open" takes you straight to the agent. When the agent asks for permission, hit "Allow" right on the island, no switching. No notifications to turn on. For Codex, trust Utter's hooks once in the "Review hooks" window Codex shows in a new chat.
 - **A task for your agent, by voice.** Give the **Task** key a key in Settings, ramble with all the "um"s — out comes a neat task: the gist and the points.
 
 You can change the keys in Settings — any key but Esc will do. And yes, you can talk for a long time: Utter works on the recording while you're still speaking, so the text is ready almost as soon as you stop.
@@ -36,7 +36,7 @@ Works on macOS 13 and newer, on any Mac — Apple Silicon or Intel.
 
 - Your voice goes straight from your Mac to the speech service you picked: Google Gemini by default, or Groq, or OpenAI. And it goes **with your own key**. Utter has no servers of its own. None.
 - The key lives in the macOS Keychain. Your dictation history stays on your Mac, and you can turn it off.
-- With AI agents connected, only the agent's last message goes to your service — to make the short "what got done" line. Turn it off in **Settings → Agents** and the line comes straight from the message, on your Mac.
+- With AI agents connected, Utter only watches what the agent does — right on your Mac. Neither the agent's messages nor its files go anywhere.
 - Heads-up: on Gemini's free tier Google may use requests to improve its products. On a paid tier it doesn't. More in [Google's terms](https://ai.google.dev/gemini-api/terms).
 
 ## FAQ
