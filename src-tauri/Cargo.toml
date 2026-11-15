@@ -1,6 +1,6 @@
 [package]
 name = "utter"
-version = "0.2.1"
+version = "0.3.0"
 description = "Press a key, speak, and the text appears."
 authors = ["Gattapelatta"]
 license = "MIT"
