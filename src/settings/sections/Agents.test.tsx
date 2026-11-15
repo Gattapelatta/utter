@@ -81,13 +81,31 @@ describe("Agents section", () => {
     expect(screen.queryByText(/Итог одной строкой/)).toBeNull();
   });
 
-  it("two_columns_with_icons_and_names", async () => {
+  it("settings_list_agents_as_rows_switch_on_the_right", async () => {
+    // The user 2026-11-15: in the settings the agents go one under another, the switch at the right.
     await mount();
-    const cols = Array.from(document.querySelectorAll("[data-agent-col]"));
-    expect(cols.map((c) => c.textContent)).toEqual(["Claude Code", "Codex"]);
-    for (const c of cols) expect(c.querySelector("svg")).toBeTruthy();
+    const rows = Array.from(document.querySelectorAll("[data-agent-row]")) as HTMLElement[];
+    expect(rows.map((r) => r.querySelector("[data-agent-name]")?.textContent)).toEqual(["Claude Code", "Codex"]);
+    for (const r of rows) {
+      expect(r.querySelector("svg, img")).toBeTruthy();
+      expect((r.lastElementChild as HTMLElement).getAttribute("role")).toBe("switch");
+    }
+    expect(document.querySelectorAll("[data-agent-col]").length).toBe(0);
     // No explanations under the names (the user 2026-11-13).
     expect(screen.queryByText(/Капля скажет/)).toBeNull();
+  });
+
+  it("onboarding_keeps_two_columns", async () => {
+    render(<AgentToggles onboarding />);
+    await act(async () => {});
+    expect(Array.from(document.querySelectorAll("[data-agent-col]")).map((c) => c.textContent)).toEqual(["Claude Code", "Codex"]);
+  });
+
+  it("codex_mark_is_the_codex_cloud", async () => {
+    // The user 2026-11-15: Codex's own mark (the blue cloud), visible in both themes.
+    await mount();
+    const img = document.querySelector('[data-agent-row="codex"] img') as HTMLImageElement;
+    expect(img.getAttribute("src")).toMatch(/codex-cloud/);
   });
 
   it("onboarding_hides_missing_agent", async () => {
@@ -97,7 +115,7 @@ describe("Agents section", () => {
     expect(Array.from(document.querySelectorAll("[data-agent-col]")).map((c) => c.textContent)).toEqual(["Claude Code"]);
     cleanup();
     await mount();
-    expect(document.querySelectorAll("[data-agent-col]").length).toBe(2);
+    expect(document.querySelectorAll("[data-agent-row]").length).toBe(2);
     expect((screen.getByRole("switch", { name: "Codex" }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText("Не нашёл Codex на этом Mac")).toBeTruthy();
   });

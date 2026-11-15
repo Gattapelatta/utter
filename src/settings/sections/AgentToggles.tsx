@@ -46,9 +46,9 @@ export const BRAND = { claude_code: "#D97757", codex: "#4C6EF5" } as const;
 const ICON = { claude_code: ClaudeIcon, codex: CodexIcon } as const;
 
 /**
- * The agents as two columns — mark, name, switch in the brand's colour — on the onboarding step
- * and in the Agents section (spec 2026-11-13 agents-look-and-codex-hooks §3.1). Onboarding shows
- * only the agents found on this Mac.
+ * The agents with their marks and brand-coloured switches (spec 2026-11-13
+ * agents-look-and-codex-hooks §3.1): two columns on the onboarding step (only the agents found on
+ * this Mac), rows in the Agents section (the user 2026-11-15).
  */
 export function AgentToggles({ onboarding = false }: { onboarding?: boolean }) {
   const t = useT();
@@ -70,7 +70,35 @@ export function AgentToggles({ onboarding = false }: { onboarding?: boolean }) {
           : null;
     if (!text) return null;
     const danger = !found || link?.kind === "broken";
-    return <div className={`max-w-[200px] text-center text-[12px] leading-snug ${danger ? "text-danger" : "text-text-secondary"}`}>{text}</div>;
+    const place = onboarding ? "max-w-[200px] text-center" : "mt-0.5";
+    return <div className={`${place} text-[12px] leading-snug ${danger ? "text-danger" : "text-text-secondary"}`}>{text}</div>;
+  };
+  const toggle = (agent: keyof typeof AGENT_NAME, found: boolean) => (
+    <Switch
+      label={AGENT_NAME[agent]}
+      checked={agents[agent]}
+      disabled={!found && !agents[agent]}
+      color={BRAND[agent]}
+      knob="#FFFFFF"
+      onChange={(v) => set({ [agent]: v })}
+    />
+  );
+  /** Settings (the user 2026-11-15): one under another — mark and name at the left, the switch at the right. */
+  const row = (agent: keyof typeof AGENT_NAME) => {
+    const found = status ? status.detected[agent] : true;
+    const Icon = ICON[agent];
+    return (
+      <div key={agent} data-agent-row={agent} className="row flex items-center gap-3.5 border-border py-3.5">
+        <Icon size={30} />
+        <div className="min-w-0 flex-1">
+          <div data-agent-name className="text-[15px] font-medium text-text">
+            {AGENT_NAME[agent]}
+          </div>
+          {note(agent, status?.[agent], found)}
+        </div>
+        {toggle(agent, found)}
+      </div>
+    );
   };
   const col = (agent: keyof typeof AGENT_NAME) => {
     const found = status ? status.detected[agent] : true;
@@ -82,19 +110,20 @@ export function AgentToggles({ onboarding = false }: { onboarding?: boolean }) {
           <Icon />
           <div className="text-[15px] font-medium text-text">{AGENT_NAME[agent]}</div>
         </div>
-        <Switch
-          label={AGENT_NAME[agent]}
-          checked={agents[agent]}
-          disabled={!found && !agents[agent]}
-          color={BRAND[agent]}
-          knob="#FFFFFF"
-          onChange={(v) => set({ [agent]: v })}
-        />
+        {toggle(agent, found)}
         {note(agent, status?.[agent], found)}
       </div>
     );
   };
 
+  if (!onboarding) {
+    return (
+      <>
+        {row("claude_code")}
+        {row("codex")}
+      </>
+    );
+  }
   return (
     <div className="flex items-start justify-center gap-[72px] py-4">
       {col("claude_code")}
